@@ -17,7 +17,7 @@ A_RANGE_CUTOFF = 6e9
 
 nDacSamplesPerCycle = 8
 nLutRowsToUse = 2 ** 15
-dacSampleRate = 2.e9
+dacSampleRate = 2.048e9
 nBitsPerSamplePair = 32
 nChannels = 1024
 
@@ -434,3 +434,4 @@ if __name__ == '__main__':
     combdata = generateDacComb(freqList=freqfile.freq, resAttenList=freqfile.atten, phaseList=freqfile.phases,
                                iqRatioList=freqfile.iqRatios, avoidSpikes=True, globalDacAtten=None, lo=lo)
 
+    np.savez('mec_fl8a_dec19_62dB.npz',combdata['comb'])
