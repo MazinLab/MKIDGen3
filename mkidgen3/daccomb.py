@@ -11,7 +11,7 @@ nBitsPerSamplePair = 32
 nChannels = 1024
 
 
-def generateTones(frequencies, nSamples, sampleRate, amplitudes=None, phases=None, iq_ratios=None,
+def generateTones(frequencies, nSamples, sample_rate, amplitudes=None, phases=None, iq_ratios=None,
                   phase_offsets=None, return_merged=True):
     """
     Generate a list of complex signals with amplitudes and phases specified and frequencies quantized
@@ -43,7 +43,7 @@ def generateTones(frequencies, nSamples, sampleRate, amplitudes=None, phases=Non
         phase_offsets = np.zeros_like(frequencies)
 
     # Quantize the frequencies to their closest digital value
-    freq_res = sampleRate / nSamples
+    freq_res = sample_rate / nSamples
     quantized_freqs = np.round(frequencies / freq_res) * freq_res
     phase_offsets_radians = np.deg2rad(phase_offsets)
 
@@ -55,7 +55,7 @@ def generateTones(frequencies, nSamples, sampleRate, amplitudes=None, phases=Non
         qvals = np.zeros((frequencies.size, nSamples))
 
     # generate each signal
-    t = 2 * np.pi * np.arange(nSamples)/sampleRate
+    t = 2 * np.pi * np.arange(nSamples)/sample_rate
     for i in range(frequencies.size):
         phi = t * quantized_freqs[i]
         exp = amplitudes[i] * np.exp(1j * (phi + phases[i]))
@@ -74,7 +74,7 @@ def generateTones(frequencies, nSamples, sampleRate, amplitudes=None, phases=Non
 
 
 def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, spike_percentile_limit=.9,
-             globalDacAtten=None, lo=None, return_full=True, MAX_CHAN=2048):
+             globalDacAtten=None, lo=None, return_full=True, max_chan=2048, sample_rate=4.096e9):
     """
     Creates DAC frequency comb by adding many complex frequencies together with specified amplitudes and phases.
 
@@ -119,16 +119,16 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     if phase_offsets is not None and len(frequencies) != len(phase_offsets):
         raise ValueError("Need exactly one iqPhaseOffs value for each resonant frequency!")
 
-    if len(frequencies) > MAX_CHAN:
-        getLogger(__name__).warning(f"Clipping the last {frequencies.size-MAX_CHAN}. MAX_CHAN={MAX_CHAN}.")
-        frequencies = frequencies[:MAX_CHAN]
-        attenuations = attenuations[:MAX_CHAN]
+    if len(frequencies) > max_chan:
+        getLogger(__name__).warning(f"Clipping the last {frequencies.size-max_chan}. MAX_CHAN={max_chan}.")
+        frequencies = frequencies[:max_chan]
+        attenuations = attenuations[:max_chan]
         if phase_offsets is not None:
-            phase_offsets=phase_offsets[:MAX_CHAN]
+            phase_offsets=phase_offsets[:max_chan]
         if iq_ratios is not None:
-            iq_ratios=iq_ratios[:MAX_CHAN]
+            iq_ratios=iq_ratios[:max_chan]
         if phases is not None:
-            phases=phases[:MAX_CHAN]
+            phases=phases[:max_chan]
 
     getLogger(__name__).debug('Generating DAC comb...')
 
@@ -146,10 +146,10 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     sampleRate = dacSampleRate
 
     # Calculate resonator frequencies for DAC
-    LOFreq = parse_lo(lo, frequencies=frequencies)
+    LOFreq = parse_lo(lo, frequencies=frequencies, sample_rate=sample_rate)
 
     dacFreqList = frequencies - LOFreq
-    dacFreqList[dacFreqList < 0.] += dacSampleRate  # For +/- freq
+    dacFreqList[dacFreqList < 0] += dacSampleRate  # For +/- freq
 
     # Make sure dac tones are unique
     dacFreqList, args, args_inv = np.unique(dacFreqList, return_index=True, return_inverse=True)
@@ -158,12 +158,10 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     np.random.seed(0)
 
     # Generate and add up individual tone time series.
-    toneDict = generateTones(frequencies= dacFreqList, nSamples=nSamples, sampleRate=sampleRate,
-                             amplitudes=amplitudes[args],
-                             phases=None if phases is None else phases[args],
+    toneDict = generateTones(dacFreqList, nSamples, sample_rate, return_merged=True,
+                             amplitudes=amplitudes[args], phases=None if phases is None else phases[args],
                              iq_ratios=None if iq_ratios is None else iq_ratios[args],
-                             phase_offsets=None if phase_offsets is None else phase_offsets[args],
-                             return_merged=True)
+                             phase_offsets=None if phase_offsets is None else phase_offsets[args])
 
     # This part takes the longest
     iValues = toneDict['I']
@@ -174,12 +172,12 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     sig_q = qValues.std()
 
     # 10% of the time there should be a point this many sigmas higher than average
-    expectedHighestVal_sig = scipy.special.erfinv((len(iValues) + spike_percentile_limit -1)/ len(iValues)) * np.sqrt(2)
-    if spike_percentile_limit<1 and sig_i > 0 and sig_q > 0:
-        while max(np.abs(iValues).max() / sig_i, np.abs(qValues).max() / sig_q) >= expectedHighestVal_sig:
+    expectedmax_sig = scipy.special.erfinv((len(iValues) + spike_percentile_limit - 1)/ len(iValues)) * np.sqrt(2)
+    if spike_percentile_limit < 1 and sig_i > 0 and sig_q > 0:
+        while max(np.abs(iValues).max() / sig_i, np.abs(qValues).max() / sig_q) >= expectedmax_sig:
             getLogger(__name__).warning("The freq comb's relative phases may have added up sub-optimally. "
                                         "Calculating with new random phases")
-            toneDict = generateTones(frequencies=dacFreqList, nSamples=nSamples, sampleRate=sampleRate,
+            toneDict = generateTones(dacFreqList, nSamples, sample_rate,
                                      amplitudes=amplitudes[args], phases=None,
                                      iq_ratios=None if iq_ratios is None else iq_ratios[args],
                                      phase_offsets=None if phase_offsets is None else phase_offsets[args],
@@ -221,7 +219,6 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
         qValues = np.round(qValues).astype(np.int)
 
     highestVal = max(np.abs(iValues).max(), np.abs(qValues).max())
-
     dacFreqComb = iValues + 1j * qValues
 
     msg = ('\tGlobal DAC atten: {} dB'.format(globalDacAtten) +
@@ -230,7 +227,7 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
            '\tsigma_I: {}  sigma_Q:{}\n'.format(np.std(iValues), np.std(qValues)) +
            '\tLargest val_I: {} sigma. '.format(np.abs(iValues).max() / np.std(iValues)) +
            'val_Q: {} sigma.\n'.format(np.abs(qValues).max() / np.std(qValues)) +
-           '\tExpected val: {} sigmas\n'.format(expectedHighestVal_sig))
+           '\tExpected val: {} sigmas\n'.format(expectedmax_sig))
     getLogger(__name__).debug(msg)
 
     if globalDacAtten < 0:
@@ -239,7 +236,7 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
 
     if return_full:
         return {'i': iValues, 'q': qValues, 'frequencies': dacQuantizedFreqList, 'attenuation': globalDacAtten,
-                 'comb': dacFreqComb, 'phases': dacPhaseList}
+                'comb': dacFreqComb, 'phases': dacPhaseList}
     else:
         return dacFreqComb
 
