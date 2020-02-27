@@ -119,7 +119,7 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     if phase_offsets is not None and len(frequencies) != len(phase_offsets):
         raise ValueError("Need exactly one iqPhaseOffs value for each resonant frequency!")
 
-    if frequencies > MAX_CHAN:
+    if len(frequencies) > MAX_CHAN:
         getLogger(__name__).warning(f"Clipping the last {frequencies.size-MAX_CHAN}. MAX_CHAN={MAX_CHAN}.")
         frequencies = frequencies[:MAX_CHAN]
         attenuations = attenuations[:MAX_CHAN]

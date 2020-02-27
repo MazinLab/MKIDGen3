@@ -5,7 +5,7 @@ import subprocess
 import numpy
 from setuptools.extension import Extension
 
-#pip install -e git+http://github.com/mazinlab/mkidgen3.git@develop#egg=mkidgen3
+#pip install -e git+https://github.com/mazinlab/mkidgen3.git@develop#egg=mkidgen3
 
 
 with open("README.md", "r") as fh:
