@@ -41,8 +41,8 @@ Utilization:
 The [OPFB subsystem](https://github.com/MazinLab/gen3-opfb) is composed of several blocks: I and Q streams from the
  ADCs are ingested by the 
 [adc-to-opfb](https://github.com/MazinLab/adc-to-opfb) HLS block that, the output is fed into a bank of 16 Xilinx FIR
-Compiler blocks that are controlled by a small HLS channel select block 
-([opfb-fir-control](https://github.com/MazinLab/opfb-fir-control)). The output of each of these blocks is fed through 
+Compiler blocks that are controlled by a small HLS coefficient select block 
+([opfb-fir-cfg](https://github.com/MazinLab/opfb-fir-cfg)). The output of each of these blocks is fed through 
 a [opfb-fir-to-fft](https://github.com/MazinLab/opfb-fir-to-fft) HLS block (16 total) and then these 16 streams are
 fed into a 16x super sample rate 4096 point FFT block from the . The output of the FFT is packaged appropriately by
 TODO and output. 
@@ -51,8 +51,8 @@ TODO and output.
 
 #### adc-to-opfb
 Inputs: 
-- I 256bit AXI4S of 16 bit words
-- Q 256bit AXI4S of 16 bit words
+- I 128bit AXI4S of 16 bit words
+- Q 128bit AXI4S of 16 bit words
 
 Outputs:
 - 16x IQ 32bit AXI4S of 16bit complex words, streams equipped with TLAST.
@@ -98,34 +98,32 @@ The HLS SSR FFT is not used as of HLx 2019.2 as:
 - There are windows/linux compile issues
 - Initial tests show it may not make timing
 
-### Resonator Channel Selection
+### Resonator Channelization 
 Inputs: 
-- 1 576bit AXI4S of 16 18 bit complex equipped with TLAST
-- AXI LITE configuration port for bin to resonator map
+- 2 288bit AXI4S of 16 18 bit numbers equipped with TLAST
+- AXI-Lite resonator map port, in the  (TODO, Need to describe)
 
-Output: 
-- 1 288bit AXI4S of 8 18 bit complex equipped with TLAST and possibly (TODO) TKEEP or TUSER
+Outputs:
+- 1 288bit AXI4S of 8 18 bit complex equipped with TLAST and possibly (TODO) TKEEP
+
+This IP subsystem [gen3-reschan](https://github.com/MazinLab/gen3-reschan)takes the raw bin IQ streams, selects the
+values corresponding to resonators, digitally down-converts each with the 
+[resonator-dds](https://github.com/MazinLab/resonator-dds) HLS block, and then the samples are then run through an
+FIR Compiler core to low-pass and decimate them.
+
+#### opfb-bin-to-res Selection
+Inputs: 
+- 2 288bit AXI4S of 16 18 bit numbers (I and Q streams), both equipped with TLAST
+- AXI-Lite resonator map port (256x8 ap_uint<12> array).
+
+Outputs:
+- 1 288bit AXI4S of 8 18 bit complex equipped with TLAST and possibly (TODO) TKEEP
 
 The resonator selection [HLS block](https://github.com/MazinLab/opfb-bin-to-res) ingests the IQ bins output by the
 OPFB subsystem and extracts and outputs the IQ values corresponding to resonators. This is done by caching the bin
 spectrum (updating the next 16 bins each clock) and fetching 8 bins containing resonators each clock. This is
 implemented as 8 banks of ~147kbit BRAM in order to have sufficient memory ports. The bins used are stored in a bin
 to resonator LUT (2048 x 12 bits) loaded in from python via AXI Lite. 
-
-### Resonator Channelization
-Inputs: 
-- 1 288bit AXI4S of 8 18 bit complex equipped with TLAST and possibly (TODO) TKEEP or TUSER
-- AXI-Lite resonator map port, in the  (TODO, Need to describe)
-
-Outputs:
-- 1 288bit AXI4S of 8 18 bit complex equipped with TLAST and possibly (TODO) TKEEP
-
-Utilization:
-- 24 + 320 (or 240) DSP48
-
-This IP subsystem takes the raw resonator IQ stream and digitally down-converts each with the [resonator-dds
-](https://github.com/MazinLab/resonator-dds) HLS block, the samples are then run through an FIR Compiler core to low
--pass and decimate them.
 
 ####  resonator-dds
 Inputs: 
@@ -137,6 +135,9 @@ Inputs:
 Outputs:
 - 1 288bit AXI4S of 8 18 bit complex equipped with TLAST and possibly (TODO) TKEEP
 
+Utilization:
+- 24 DSP48
+
 The HLS block uses the TLAST on the inbound stream to keep track of the cycle and query phase and phase increment
 LUTs for the received group of resonators. These are used increment/maintain an accumulated phase for each resonator
 which is used to query a quarter-wave sin/cos LUT (stored in ROM). Phase offsets are used to apply a per-resonator 
@@ -145,6 +146,9 @@ there is example Xilinx HLS code for how to implement those features as well. Th
 into a Xilinx complex multiplier (3 DSP slices per IQ, 24 in total) and the results passed out of the block.
 
 #### FIR Core
+Utilization:
+- 320 (or 240) 
+
 The fir is configured for 256 channel, 16 parallel channel (8I, 8Q) operation with 20 taps and 18 bit IO. It is
 configured for a decimation of 2, dropping the sample rate to 1 MHZ. This takes ~320 DSP slices, though the core
 itself should be able to run at ~820MHz, so with a clock crossing we could run with 8 to 6 to 8 lanes for a total of
@@ -165,7 +169,7 @@ IO:
     - FL ID (to convert resonance to resonatorID) (in)
     - Trigger configuration (in)
 
-The [resonator processor subsystem](https://github.com/MazinLab/resonator-processing) takes in the stream from the 
+The [resonator processor subsystem](https://github.com/MazinLab/gen3-resproc) takes in the stream from the 
 channelization and breaks it into separate lanes of 256 resonators which are fed into 8 instances of the resonator
 [lane subsystem](https://github.com/MazinLab/resonator-stream-lane). It breaks the stream via an HLS block and
 implements an Xilinx MCDMA module to route the required configuration streams to the lane subsystems. The lane
@@ -190,7 +194,7 @@ Utilization:
 
 The lane subsystem routes the incoming IQ stream into a Xilinx cordic block configured for arctangent operation, the
 resulting stream is then sent to and FIR Compiler core for matched filtering, finally the resulting filtered stream
-is routed to to the HLS [photon-detect](https://github.com/MazinLab/photon-detect) block which outputs a stream of
+is routed to to the HLS [photon-trigger](https://github.com/MazinLab/photon-trigger) block which outputs a stream of
 photon events.
 
 ##### FIR block and HLS channel config

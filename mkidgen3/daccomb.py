@@ -73,9 +73,8 @@ def generateTones(frequencies, nSamples, sampleRate, amplitudes=None, phases=Non
     return {'I': ivals, 'Q': qvals, 'frequencies': quantized_freqs, 'phases': phases}
 
 
-def generateDacComb(frequencies, attenuations, phases=None, iq_ratios=None,
-                    phase_offsets=None, spike_percentile_limit=.9, globalDacAtten=None, lo=None,
-                    MAX_CHAN=2048):
+def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, spike_percentile_limit=.9,
+             globalDacAtten=None, lo=None, return_full=True, MAX_CHAN=2048):
     """
     Creates DAC frequency comb by adding many complex frequencies together with specified amplitudes and phases.
 
@@ -238,27 +237,27 @@ def generateDacComb(frequencies, attenuations, phases=None, iq_ratios=None,
         raise ValueError("Desired resonator powers are unacheivable. "
                          f"Increase resonator attens by {-1 * globalDacAtten} dB")
 
-    return {'I': iValues, 'Q': qValues, 'quantizedFreqList': dacQuantizedFreqList, 'dacAtten': globalDacAtten,
-            'comb': dacFreqComb, 'dacPhaseList': dacPhaseList}
+    if return_full:
+        return {'i': iValues, 'q': qValues, 'frequencies': dacQuantizedFreqList, 'attenuation': globalDacAtten,
+                 'comb': dacFreqComb, 'phases': dacPhaseList}
+    else:
+        return dacFreqComb
 
 
-def get_gen2_dac_comb(mec_freqfile, lo):
-
+def generate_from_MEC(mec_freqfile, lo):
     freqfile = SweepFile(mec_freqfile)
-
-    combdata = generateDacComb(frequencies=freqfile.freq, attenuations=freqfile.atten, phases=freqfile.phases,
-                               iq_ratios=freqfile.iqRatios, globalDacAtten=None, lo=lo)
-
-    return combdata['comb']
+    combdata = generate(frequencies=freqfile.freq, attenuations=freqfile.atten, phases=freqfile.phases,
+                        iq_ratios=freqfile.iqRatios, globalDacAtten=None, lo=lo)
+    return combdata
 
 
 if __name__ == '__main__':
+
     mec_freqfile='/Users/one/Desktop/untitled folder/psfreqs_FL8a_clip.txt'
     lo=4428029278.278099
 
     freqfile = SweepFile(mec_freqfile)
     logging.basicConfig()
-    combdata = generateDacComb(frequencies=freqfile.freq, attenuations=freqfile.atten, phases=freqfile.phases,
-                               iq_ratios=freqfile.iqRatios, globalDacAtten=None, lo=lo)
-
-    np.savez('mec_fl8a_dec19_62dB.npz',combdata['comb'])
+    combdata = generate(frequencies=freqfile.freq, attenuations=freqfile.atten, phases=freqfile.phases,
+                        iq_ratios=freqfile.iqRatios, globalDacAtten=None, lo=lo)
+    np.savez('mec_fl8a_dec19_62dB.npz', combdata['comb'])
