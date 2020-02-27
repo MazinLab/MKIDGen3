@@ -4,14 +4,8 @@ from logging import getLogger
 import logging
 from mkidgen3.gen2 import SweepFile, parse_lo
 
-nDacSamplesPerCycle = 8
-nLutRowsToUse = 2 ** 15
-dacSampleRate = 2.048e9
-nBitsPerSamplePair = 32
-nChannels = 1024
 
-
-def generateTones(frequencies, nSamples, sample_rate, amplitudes=None, phases=None, iq_ratios=None,
+def generateTones(frequencies, n_samples, sample_rate, amplitudes=None, phases=None, iq_ratios=None,
                   phase_offsets=None, return_merged=True):
     """
     Generate a list of complex signals with amplitudes and phases specified and frequencies quantized
@@ -20,7 +14,7 @@ def generateTones(frequencies, nSamples, sample_rate, amplitudes=None, phases=No
 
     INPUTS:
         freqList - list of resonator frequencies
-        nSamples - Number of time samples
+        n_samples - Number of time samples
         sampleRate - Used to quantize the frequencies
         amplitudeList - list of amplitudes. If None, use 1.
         phaseList - list of phases. If None, use random phase
@@ -43,19 +37,19 @@ def generateTones(frequencies, nSamples, sample_rate, amplitudes=None, phases=No
         phase_offsets = np.zeros_like(frequencies)
 
     # Quantize the frequencies to their closest digital value
-    freq_res = sample_rate / nSamples
+    freq_res = sample_rate / n_samples
     quantized_freqs = np.round(frequencies / freq_res) * freq_res
     phase_offsets_radians = np.deg2rad(phase_offsets)
 
     if return_merged:
-        ivals = np.zeros(nSamples)
-        qvals = np.zeros(nSamples)
+        ivals = np.zeros(n_samples)
+        qvals = np.zeros(n_samples)
     else:
-        ivals = np.zeros((frequencies.size, nSamples))
-        qvals = np.zeros((frequencies.size, nSamples))
+        ivals = np.zeros((frequencies.size, n_samples))
+        qvals = np.zeros((frequencies.size, n_samples))
 
     # generate each signal
-    t = 2 * np.pi * np.arange(nSamples)/sample_rate
+    t = 2 * np.pi * np.arange(n_samples)/sample_rate
     for i in range(frequencies.size):
         phi = t * quantized_freqs[i]
         exp = amplitudes[i] * np.exp(1j * (phi + phases[i]))
@@ -74,7 +68,8 @@ def generateTones(frequencies, nSamples, sample_rate, amplitudes=None, phases=No
 
 
 def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, spike_percentile_limit=.9,
-             globalDacAtten=None, lo=None, return_full=True, max_chan=2048, sample_rate=4.096e9):
+             globalDacAtten=None, lo=None, return_full=True, max_chan=2048, sample_rate=4.096e9, n_iq_bits=32,
+             dac_samps_cycle=8, n_lut_rows=2**15):
     """
     Creates DAC frequency comb by adding many complex frequencies together with specified amplitudes and phases.
 
@@ -137,19 +132,18 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
         globalDacAtten = np.amin(attenuations)
 
     # Calculate relative amplitudes for DAC LUT
-    nBitsPerSampleComponent = nBitsPerSamplePair / 2
+    nBitsPerSampleComponent = n_iq_bits / 2
     maxAmp = int(np.round(2 ** (nBitsPerSampleComponent - 1) - 1))  # 1 bit for sign
     amplitudes = maxAmp * 10 ** (-(attenuations - globalDacAtten) / 20)
 
-    # Calculate nSamples and sampleRate
-    nSamples = nDacSamplesPerCycle * nLutRowsToUse
-    sampleRate = dacSampleRate
+    # Calculate n_samples and sampleRate
+    n_samples = dac_samps_cycle * n_lut_rows
 
     # Calculate resonator frequencies for DAC
     LOFreq = parse_lo(lo, frequencies=frequencies, sample_rate=sample_rate)
 
     dacFreqList = frequencies - LOFreq
-    dacFreqList[dacFreqList < 0] += dacSampleRate  # For +/- freq
+    dacFreqList[dacFreqList < 0] += sample_rate  # For +/- freq
 
     # Make sure dac tones are unique
     dacFreqList, args, args_inv = np.unique(dacFreqList, return_index=True, return_inverse=True)
@@ -158,7 +152,7 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     np.random.seed(0)
 
     # Generate and add up individual tone time series.
-    toneDict = generateTones(dacFreqList, nSamples, sample_rate, return_merged=True,
+    toneDict = generateTones(dacFreqList, n_samples, sample_rate, return_merged=True,
                              amplitudes=amplitudes[args], phases=None if phases is None else phases[args],
                              iq_ratios=None if iq_ratios is None else iq_ratios[args],
                              phase_offsets=None if phase_offsets is None else phase_offsets[args])
@@ -177,7 +171,7 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
         while max(np.abs(iValues).max() / sig_i, np.abs(qValues).max() / sig_q) >= expectedmax_sig:
             getLogger(__name__).warning("The freq comb's relative phases may have added up sub-optimally. "
                                         "Calculating with new random phases")
-            toneDict = generateTones(dacFreqList, nSamples, sample_rate,
+            toneDict = generateTones(dacFreqList, n_samples, sample_rate,
                                      amplitudes=amplitudes[args], phases=None,
                                      iq_ratios=None if iq_ratios is None else iq_ratios[args],
                                      phase_offsets=None if phase_offsets is None else phase_offsets[args],
