@@ -2,7 +2,7 @@ import numpy as np
 import scipy.special
 from logging import getLogger
 import logging
-from .gen2 import SweepFile, parse_lo
+from mkidgen3.gen2 import SweepFile, parse_lo
 
 nDacSamplesPerCycle = 8
 nLutRowsToUse = 2 ** 15
@@ -64,11 +64,11 @@ def generateTones(frequencies, nSamples, sample_rate, amplitudes=None, phases=No
         if return_merged:
             ivals += iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
                                np.sin(phase_offsets_radians[i]) * np.imag(exp))
-            ivals += qScale * np.imag(exp)
+            qvals += qScale * np.imag(exp)
         else:
             ivals[i] = iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
                                  np.sin(phase_offsets_radians[i]) * np.imag(exp))
-            ivals[i] = qScale * np.imag(exp)
+            qvals[i] = qScale * np.imag(exp)
 
     return {'I': ivals, 'Q': qvals, 'frequencies': quantized_freqs, 'phases': phases}
 
@@ -250,11 +250,9 @@ def generate_from_MEC(mec_freqfile, lo):
 
 if __name__ == '__main__':
 
-    mec_freqfile='/Users/one/Desktop/untitled folder/psfreqs_FL8a_clip.txt'
-    lo=4428029278.278099
-
-    freqfile = SweepFile(mec_freqfile)
     logging.basicConfig()
-    combdata = generate(frequencies=freqfile.freq, attenuations=freqfile.atten, phases=freqfile.phases,
-                        iq_ratios=freqfile.iqRatios, globalDacAtten=None, lo=lo)
-    np.savez('mec_fl8a_dec19_62dB.npz', combdata['comb'])
+    atten = np.array([60, 60, 60, 60])
+    freq = np.array([2e9, 3.1e9, 1e9, 4e9])
+    phases = np.array([0, 0, 0, 0])
+    comb = generate(frequencies=freq, attenuations=atten, phases=phases,
+                    lo=2.048e9, return_full=True, max_chan=2048)
