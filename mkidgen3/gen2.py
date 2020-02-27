@@ -134,15 +134,15 @@ class SweepFile(object):
         try:
             if d.shape[0] == 11:
                 self.resIDs, self.flag, self.wsfreq, self.mlfreq, self.mlatten, \
-                self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score, self.phases, self.iqRatios = d
+                    self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score, self.phases, self.iqRatios = d
             if d.shape[0] == 9:
                 self.resIDs, self.flag, self.wsfreq, self.mlfreq, self.mlatten, \
-                self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score = d
+                    self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score = d
                 self.phases = np.full_like(self.resIDs, 0, dtype=float)
                 self.iqRatios = np.full_like(self.resIDs, 1, dtype=float)
             elif d.shape[0] == 7:
                 self.resIDs, self.flag, self.wsfreq, self.mlfreq, self.mlatten, \
-                self.ml_isgood_score, self.ml_isbad_score = d
+                    self.ml_isgood_score, self.ml_isbad_score = d
                 self.freq = self.mlfreq.copy()
                 self.atten = self.mlatten.copy()
                 self.phases = np.full_like(self.resIDs, 0, dtype=float)
@@ -165,7 +165,7 @@ class SweepFile(object):
                 self.ml_isbad_score = np.full_like(self.resIDs, np.nan, dtype=float)
                 self.phases = np.full_like(self.resIDs, 0, dtype=float)
                 self.iqRatios = np.full_like(self.resIDs, 1, dtype=float)
-        except:
+        except IndexError:
             raise ValueError('Unknown number of columns')
 
         self.freq[np.isnan(self.freq)] = self.mlfreq[np.isnan(self.freq)]

@@ -146,7 +146,7 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     sampleRate = dacSampleRate
 
     # Calculate resonator frequencies for DAC
-    LOFreq = parse_lo(lo, freqList=frequencies)
+    LOFreq = parse_lo(lo, frequencies=frequencies)
 
     dacFreqList = frequencies - LOFreq
     dacFreqList[dacFreqList < 0.] += dacSampleRate  # For +/- freq
