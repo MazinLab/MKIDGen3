@@ -6,6 +6,7 @@ from fpbinary import FpBinary, OverflowEnum, RoundingEnum
 def dma_status(dma):
     # dma.recvchannel.idle,dma.sendchannel.idle
     msg = ("DMA:\n"
+           f" Buffer Length: {dma.buffer_max_size} bytes\n"
            " MM2s\n"
            f" Idle:{dma.sendchannel.idle}\n"
            f" MM2S_DMASR (status):{hex(dma.mmio.read(4))}\n"
@@ -31,7 +32,7 @@ class AxisSwitch(DefaultIP):
         self.write(0x0040 + master * 4, cfg)
 
     def commit(self):
-        """Commite config, triggers a soft 16 cycle reset"""
+        """Commit config, triggers a soft 16 cycle reset"""
         self.write(0x0000, 0x2)
 
 
