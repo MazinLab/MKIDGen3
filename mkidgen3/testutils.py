@@ -136,13 +136,14 @@ def rxpackets(dma, packets_out, n=None, status=False, **kwargs):
     return converted
 
 
-def txrx(dma, comb, packets_out, n_total_packets=None):
+def txrx(dma, comb, packets_out, n_total_packets=None, packet_latency=1):
     if n_total_packets is None:
         n_total_packets=comb.size//256//8
     n_loop=(n_total_packets - n_packets_sent) // pptx
     for i in range(n_loop):
         txcomb(dma, comb)
-        rxpackets(dma, packets_out)
+        if n_packets_sent>packet_latency:
+            rxpackets(dma, packets_out)
         print(f"Sent: {n_packets_sent} Received: {n_packets_rcvd}. Pending: {n_packets_sent - n_packets_rcvd}")
 
 
