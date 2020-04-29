@@ -8,7 +8,8 @@ SCALE_IN = 382.65305668618328 * 2 ** 15
 SCALE_OUT = 1 / (.75 * 2 ** 9)
 
 
-n_packets_sent, pptx, input_buffer = None, None, None
+n_packets_sent, pptx, input_buffer = 0, None, None
+next_sample_send=0
 
 
 def prep_buffers(ntx=16, n_res=2048, n_bin=4096, latency_shift=3*16):
