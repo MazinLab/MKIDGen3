@@ -23,7 +23,7 @@ def prep_buffers(ntx=16, n_res=2048, n_bin=4096, latency_shift=3*16):
         # Close buffers if they are open
         input_buffer.close()
         output_buffer.close()
-    except NameError:
+    except (NameError,AttributeError):
         pass
 
     # Create the buffers
@@ -133,6 +133,16 @@ def rxpackets(dma, packets_out, n=None, status=False, **kwargs):
         packets_out[n_packets_rcvd] = converted
         n_packets_rcvd += 1
     return converted
+
+
+def txrx(dma, comb, packets_out, n_total_packets=None):
+    if n_total_packets is None:
+        n_total_packets=comb.size//256//8
+    n_loop=(n_total_packets - n_packets_sent) // pptx
+    for i in range(n_loop):
+        txcomb(dma, comb)
+        rxpackets(dma, packets_out)
+        print(f"Sent: {n_packets_sent} Received: {n_packets_rcvd}. Pending: {n_packets_sent - n_packets_rcvd}")
 
 
 def fir(comb, coeffs, packets_out, matlab_sim_out=None,

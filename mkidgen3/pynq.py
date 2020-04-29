@@ -28,8 +28,11 @@ class AxisSwitch(DefaultIP):
 
     def set_master(self, master, slave=0, disable=False):
         """Set the slave for the master"""
-        cfg = 0x80000000 | (slave & 0b111) if disable else 0x00000000 | (slave & 0b111)
+        cfg = 0x80000000 if disable else (slave & 0b111)
         self.write(0x0040 + master * 4, cfg)
+
+    def status(self):
+        self.read(0x0040)
 
     def commit(self):
         """Commit config, triggers a soft 16 cycle reset"""
