@@ -49,7 +49,7 @@ class BinToResIP(DefaultIP):
         """
         super().__init__(description=description)
 
-    bindto = ['MazinLab:mkidgen3:bin_to_res:0.4']
+    bindto = ['MazinLab:mkidgen3:bin_to_res:0.5']
 
     @staticmethod
     def _checkgroup(group_ndx):
@@ -119,7 +119,7 @@ class ResonatorDDSIP(DefaultIP):
         """
         super().__init__(description=description)
 
-    bindto = ['MazinLab:mkidgen3:resonator_dds:0.4']
+    bindto = ['MazinLab:mkidgen3:resonator_dds:0.5']
 
     @staticmethod
     def _checkgroup(group_ndx):
