@@ -8,11 +8,11 @@ SCALE_IN = 382.65305668618328 * 2 ** 15
 SCALE_OUT = 1 / (.75 * 2 ** 9)
 
 
-n_packets_sent, pptx, input_buffer = 0, None, None
+n_packets_rcvd, n_packets_sent, pptx, input_buffer = 0, 0, None, None
 next_sample_send=0
 
 
-def prep_buffers(ntx=16, n_res=2048, n_bin=4096, latency_shift=3*16):
+def prep_buffers(ntx=16, n_res=2048, n_bin=4096, latency_shift=3*16, bin_out=True):
     """
     ntx: How many packets do we send per DMA transfer.
          Must be <=16 to move the stream smoothly through the core
@@ -30,7 +30,7 @@ def prep_buffers(ntx=16, n_res=2048, n_bin=4096, latency_shift=3*16):
     # Create the buffers
     n_in_buff = n_res * 2 * pptx if n_packets_sent else n_res * 2 * pptx + latency_shift * 2
     input_buffer = allocate(shape=(n_in_buff,), dtype=np.uint16)  # 2048 I & Q
-    output_buffer = allocate(shape=(n_bin * 2,), dtype=np.uint16)
+    output_buffer = allocate(shape=((n_bin if bin_out else n_res) * 2,), dtype=np.uint16)
 
 
 def init_pipe(dma, n_res=2048):
@@ -101,7 +101,7 @@ def txpackets(dma, packets, **kwargs):
     n_packets_sent += pptx
 
 
-def txcomb(dma, comb, n_res=2048, latency_shift=3*16, **kwargs):
+def txcomb(dma, comb, n_res=2048, latency_shift=3*16, wait=True, **kwargs):
     global n_packets_sent, pptx, input_buffer, next_sample_send
     # 92/2 empirically determined to overcome reorder core latency
 
@@ -111,25 +111,28 @@ def txcomb(dma, comb, n_res=2048, latency_shift=3*16, **kwargs):
         input_buffer[:] = packet_to_buffer(data, **kwargs)
     else:
         n_to_send = (pptx - 1) * n_res + latency_shift
-        data = comb.ravel()[next_sample_send:next_sample_send + n_to_send]
+        data = comb.ravel()[:n_to_send]
         input_buffer[:n_res * 2] = 0
         input_buffer[n_res * 2:] = packet_to_buffer(data, **kwargs)
     dma.sendchannel.transfer(input_buffer)
-    dma.sendchannel.wait()
+    if wait:
+        dma.sendchannel.wait()
     next_sample_send += n_to_send
     n_packets_sent = 1 + next_sample_send // n_res
 
 
-def rxpackets(dma, packets_out, n=None, status=False, **kwargs):
+def rxpackets(dma, packets_out, n=None, status=False, wait=True, **kwargs):
     """Attempts to receive packets. If no number is specified then n_outstanding-1 are received."""
     global n_packets_sent, n_packets_rcvd
+    converted=None
     if n is None:
         n = n_packets_sent - n_packets_rcvd
     for i in range(n - 1):
         if status:
             print(f"Receiving packet {n_packets_rcvd}")
         dma.recvchannel.transfer(output_buffer)
-        dma.recvchannel.wait()
+        if wait:
+            dma.recvchannel.wait()
         converted = packet_from_buffer(output_buffer, **kwargs)
         packets_out[n_packets_rcvd] = converted
         n_packets_rcvd += 1
