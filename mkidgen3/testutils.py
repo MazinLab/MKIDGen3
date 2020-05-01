@@ -148,7 +148,7 @@ def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, i
     for i in range(n_loop):
         txcomb(dma, comb, wait=wait)
 
-        pending = (n_packets_sent - n_packets_rcvd)//in_per_out - packet_latency
+        pending = n_packets_sent//in_per_out - n_packets_rcvd - packet_latency
         if show:
             print(f"Sent: {n_packets_sent}  Pending: {pending}")
         rxpackets(dma, packets_out, n=pending, wait=wait)
