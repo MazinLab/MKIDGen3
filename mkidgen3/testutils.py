@@ -139,14 +139,16 @@ def rxpackets(dma, packets_out, n=None, status=False, packet_latency=1, wait=Tru
     return converted
 
 
-def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, bin_out=False,wait=True):
+def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, in_per_out=2, bin_out=False,
+         wait=True):
     if n_total_packets is None:
         n_total_packets=comb.size//256//8
     prep_buffers(nper, bin_out=bin_out)
     n_loop=(n_total_packets - n_packets_sent) // pptx
     for i in range(n_loop):
         txcomb(dma, comb, wait=wait)
-        rxpackets(dma, packets_out, wait=wait, packet_latency=packet_latency)
+        pending = (n_packets_sent - n_packets_rcvd)//in_per_out - packet_latency
+        rxpackets(dma, packets_out, n=pending, wait=wait)
         print(f"Sent: {n_packets_sent} Received: {n_packets_rcvd}. Pending: {n_packets_sent - n_packets_rcvd}")
         if i == 0:
             prep_buffers(nper, bin_out=bin_out)
