@@ -121,13 +121,13 @@ def txcomb(dma, comb, n_res=2048, latency_shift=3*16, wait=True, **kwargs):
     n_packets_sent = 1 + next_sample_send // n_res
 
 
-def rxpackets(dma, packets_out, n=None, status=False, wait=True, **kwargs):
+def rxpackets(dma, packets_out, n=None, status=False, packet_latency=1, wait=True, **kwargs):
     """Attempts to receive packets. If no number is specified then n_outstanding-1 are received."""
     global n_packets_sent, n_packets_rcvd
     converted=None
     if n is None:
-        n = n_packets_sent - n_packets_rcvd
-    for i in range(n - 1):
+        n = n_packets_sent - n_packets_rcvd - packet_latency
+    for i in range(n):
         if status:
             print(f"Receiving packet {n_packets_rcvd}")
         dma.recvchannel.transfer(output_buffer)
@@ -146,8 +146,7 @@ def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, b
     n_loop=(n_total_packets - n_packets_sent) // pptx
     for i in range(n_loop):
         txcomb(dma, comb, wait=wait)
-        if n_packets_sent>packet_latency:
-            rxpackets(dma, packets_out, wait=wait)
+        rxpackets(dma, packets_out, wait=wait, packet_latency=packet_latency)
         print(f"Sent: {n_packets_sent} Received: {n_packets_rcvd}. Pending: {n_packets_sent - n_packets_rcvd}")
         if i == 0:
             prep_buffers(nper, bin_out=bin_out)
