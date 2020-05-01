@@ -139,15 +139,18 @@ def rxpackets(dma, packets_out, n=None, status=False, wait=True, **kwargs):
     return converted
 
 
-def txrx(dma, comb, packets_out, n_total_packets=None, packet_latency=1):
+def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, bin_out=False):
     if n_total_packets is None:
         n_total_packets=comb.size//256//8
+    prep_buffers(nper, bin_out=bin_out)
     n_loop=(n_total_packets - n_packets_sent) // pptx
     for i in range(n_loop):
         txcomb(dma, comb)
         if n_packets_sent>packet_latency:
             rxpackets(dma, packets_out)
         print(f"Sent: {n_packets_sent} Received: {n_packets_rcvd}. Pending: {n_packets_sent - n_packets_rcvd}")
+        if i == 0:
+            prep_buffers(nper, bin_out=bin_out)
 
 
 def fir(comb, coeffs, packets_out, matlab_sim_out=None,
