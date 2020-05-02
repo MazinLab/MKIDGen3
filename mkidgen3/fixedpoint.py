@@ -6,6 +6,9 @@ FP26_26 = lambda x: FpBinary(int_bits=0, frac_bits=26, signed=True, value=x)
 FP16_26 = lambda x: FpBinary(int_bits=-10, frac_bits=26, signed=True, value=x)
 FP32_31 = lambda x: FpBinary(int_bits=1, frac_bits=31, signed=True, value=x)
 FP18_17 = lambda x: FpBinary(int_bits=1, frac_bits=17, signed=True, value=x)
+FP16_25 = lambda x: FpBinary(int_bits=-9, frac_bits=25, signed=True, value=x)
+FP18_25 = lambda x: FpBinary(int_bits=-7, frac_bits=25, signed=True, value=x)
+FP16_17 = lambda x: FpBinary(int_bits=-1, frac_bits=17, signed=True, value=x)
 
 
 def do_fixed_point_pfb(fpcomb, fpcoeff, n_convert=None, truncate=True):

@@ -66,7 +66,7 @@ def packet_to_buffer(packet, zero_i=tuple(), zero_q=tuple(), fp=True, scale=SCAL
     return data
 
 
-def packet_from_buffer(buffer, fp=True, scale=SCALE_OUT):
+def packet_from_buffer(buffer, fp=True, scale=SCALE_OUT, fpformat=(-9,25)):
     """
     Converts a buffer of uint16 fixed point data to a np.complex128.
 
@@ -74,14 +74,15 @@ def packet_from_buffer(buffer, fp=True, scale=SCALE_OUT):
     """
     ibits = np.zeros(buffer.size // 2, dtype=np.uint16)
     qbits = np.zeros(buffer.size // 2, dtype=np.uint16)
-    for i in range(16):
+    for i in range(16):  # NB this code WILL work for output that is in groups of 8 (resonators) as well
         ibits[i::16] = buffer[2 * i::32]
         qbits[i::16] = buffer[2 * i + 1::32]
 
     packet = np.zeros(buffer.size // 2, dtype=np.complex128)
     if fp:
-        packet.real = [float(FpBinary(int_bits=-9, frac_bits=25, signed=True, bit_field=int(x))) for x in ibits]
-        packet.imag = [float(FpBinary(int_bits=-9, frac_bits=25, signed=True, bit_field=int(x))) for x in qbits]
+        fp = lambda x: FpBinary(int_bits=fpformat[0], frac_bits=fpformat[1], signed=True, bit_field=int(x))
+        packet.real = [float(fp(x)) for x in ibits]
+        packet.imag = [float(fp(x)) for x in qbits]
     else:
         packet.real = ibits * scale
         packet.imag = qbits * scale
@@ -140,18 +141,17 @@ def rxpackets(dma, packets_out, n=None, status=False, packet_latency=1, wait=Tru
 
 
 def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, in_per_out=2, bin_out=False,
-         wait=True, show=False):
+         rxfp=(-9,25), wait=True, show=False):
     if n_total_packets is None:
         n_total_packets=comb.size//256//8
     prep_buffers(nper, bin_out=bin_out)
     n_loop=(n_total_packets - n_packets_sent) // pptx
     for i in range(n_loop):
         txcomb(dma, comb, wait=wait)
-
         pending = n_packets_sent//in_per_out - n_packets_rcvd - packet_latency
         if show:
             print(f"Sent: {n_packets_sent}  Pending: {pending}")
-        rxpackets(dma, packets_out, n=pending, wait=wait)
+        rxpackets(dma, packets_out, n=pending, wait=wait, fpformat=rxfp)
         if show:
             print(f"Received: {n_packets_rcvd}.")
         if i == 0:
