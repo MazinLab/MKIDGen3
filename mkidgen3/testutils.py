@@ -12,6 +12,12 @@ n_packets_rcvd, n_packets_sent, pptx, input_buffer = 0, 0, None, None
 next_sample_send=0
 
 
+def reset():
+    global n_packets_rcvd, n_packets_sent, pptx, input_buffer, next_sample_send
+    n_packets_rcvd, n_packets_sent, pptx, input_buffer = 0, 0, None, None
+    next_sample_send = 0
+
+
 def prep_buffers(ntx=16, n_res=2048, n_bin=4096, latency_shift=3*16, bin_out=True):
     """
     ntx: How many packets do we send per DMA transfer.

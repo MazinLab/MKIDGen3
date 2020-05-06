@@ -133,7 +133,7 @@ class ResonatorDDSIP(DefaultIP):
         """Read the numbers in group from the core and convert them from binary data to python numbers"""
         self._checkgroup(group_ndx)
         signed = offset == self.toneinc_offset
-        vals = [self.read(offset + 16 * group_ndx + 4 * i) for i in range(3)]
+        vals = [self.read(offset + 16 * group_ndx + 4 * i) for i in range(4)]  # 2 16bit values each
         ret = [float(FpBinary(1, 15, signed=signed, bit_field=(v >> (16 * i)) & 0xffff))
                for v in vals for i in (0, 1)]
         # print(f"Read {bin(vals[0]&0xffff)} from the first address.")
@@ -147,7 +147,7 @@ class ResonatorDDSIP(DefaultIP):
         signed = offset == self.toneinc_offset
         bits = 0
         fixedgroup = [FpBinary(int_bits=1, frac_bits=15, signed=signed, value=g) for g in group]
-        for i, (g0, g1) in enumerate(zip(*[iter(fixedgroup)] * 2)):
+        for i, (g0, g1) in enumerate(zip(*[iter(fixedgroup)] * 2)):  #take them by twos
             bits |= ((g1.__index__() << 16) | g0.__index__()) << (32 * i)
         data = bits.to_bytes(32, 'little', signed=False)
         # print(f"Writing {bin(bits&0xffff)} to the first address.")
@@ -186,3 +186,67 @@ class ResonatorDDSIP(DefaultIP):
             raise ValueError('Phase offsets must be in [0,1]')
         for i in range(256):
             self.write_group(self.phase0_offset, i, phase0s[i * 8:i * 8 + 8])
+
+#
+#
+# class ReschanIP(DefaultIP):
+#     toneinc_offset = 0x1000
+#     phase0_offset = 0x2000
+#
+#     def __init__(self, description):
+#         """
+#
+#         Note the axilite memory space is
+#         0x1000 ~
+#         0x1fff : Memory 'toneinc_V' (256 * 128b)
+#                  Word 4n   : bit [31:0] - toneinc_V[n][31: 0]
+#                  Word 4n+1 : bit [31:0] - toneinc_V[n][63:32]
+#                  Word 4n+2 : bit [31:0] - toneinc_V[n][95:64]
+#                  Word 4n+3 : bit [31:0] - toneinc_V[n][127:96]
+#         0x2000 ~
+#         0x2fff : Memory 'phase0_V' (256 * 128b)
+#                  Word 4n   : bit [31:0] - phase0_V[n][31: 0]
+#                  Word 4n+1 : bit [31:0] - phase0_V[n][63:32]
+#                  Word 4n+2 : bit [31:0] - phase0_V[n][95:64]
+#                  Word 4n+3 : bit [31:0] - phase0_V[n][127:96]
+#         """
+#         super().__init__(description=description)
+#
+#     bindto = ['MazinLab:mkidgen3:gen3_reschan:1.12']
+#
+#     @staticmethod
+#
+#
+#     def toneinc(self, res):
+#         """ Retrieve the tone increment for a particular resonator """
+#         return self.read_group(self.toneinc_offset, res // 8)[res % 8]
+#
+#     def phase0(self, res):
+#         """ Retrieve the phase offset for a particular resonator """
+#         return self.read_group(self.phase0_offset, res // 8)[res % 8]
+#
+#     @property
+#     def toneincs(self):
+#         return [v for g in range(256) for v in self.read_group(self.toneinc_offset, g)]
+#
+#     @toneincs.setter
+#     def toneincs(self, toneincs):
+#         if len(toneincs) != 2048:
+#             raise ValueError('len(toneincs)!=2048')
+#         if min(toneincs) < -1 or max(toneincs) >= 1:
+#             raise ValueError('Tone increments must be in [-1,1)')
+#         for i in range(256):
+#             self.write_group(self.toneinc_offset, i, toneincs[i * 8:i * 8 + 8])
+#
+#     @property
+#     def phase0s(self):
+#         return [v for g in range(256) for v in self.read_group(self.phase0_offset, g)]
+#
+#     @phase0s.setter
+#     def phase0s(self, phase0s):
+#         if len(phase0s) != 2048:
+#             raise ValueError('len(phase0s)!=2048')
+#         if min(phase0s) < 0 or max(phase0s) > 1:
+#             raise ValueError('Phase offsets must be in [0,1]')
+#         for i in range(256):
+#             self.write_group(self.phase0_offset, i, phase0s[i * 8:i * 8 + 8])
