@@ -158,7 +158,7 @@ def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, i
     prep_buffers(nper, bin_out=bin_out, latency_shift=latency_shift)
     n_loop=(n_total_packets - n_packets_sent) // pptx
     for i in range(n_loop):
-        txcomb(dma, comb, wait=wait, fp_transfm=txfp, latency_shift=latency_shift)
+        txcomb(dma, comb, wait=wait, fp_transfm=txfp, latency_shift=latency_shift, opfb_format=not tx_post_opfb)
         pending = n_packets_sent//in_per_out - n_packets_rcvd - packet_latency
         if show:
             print(f"Sent: {n_packets_sent}  Pending: {pending}")
