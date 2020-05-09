@@ -6,7 +6,7 @@ for the resonators over some number of cycles
 IQ values are complex numbers on the unit circle
 """
 import numpy as np
-from daclutgen2gen3 import SweepFile
+from mkidgen3.daccomb import SweepFile
 
 
 class Testdata:

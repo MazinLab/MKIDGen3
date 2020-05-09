@@ -48,7 +48,8 @@ def init_pipe(dma, n_res=2048):
     foo.close()
 
 
-def packet_to_buffer(packet, zero_i=tuple(), zero_q=tuple(), fp=True, scale=SCALE_IN):
+def packet_to_buffer(packet, zero_i=tuple(), zero_q=tuple(), fp=True, fpgen=FP16_15, scale=SCALE_IN,
+                     opfb_format=True):
     """
     Converts a packet of complex data into a n_res*2 uint16 array
 
@@ -60,15 +61,19 @@ def packet_to_buffer(packet, zero_i=tuple(), zero_q=tuple(), fp=True, scale=SCAL
     and then cast to uint16. Otherwise FpBinary will be used to convert the data from float to signed 16_15.
     """
     if fp:
-        ibits = [FP16_15(x).__index__() for x in packet.real]
-        qbits = [FP16_15(x).__index__() for x in packet.imag]
+        ibits = [fpgen(x).__index__() for x in packet.real]
+        qbits = [fpgen(x).__index__() for x in packet.imag]
     else:
         ibits = (packet.real * scale).astype(np.uint16)
         qbits = (packet.imag * scale).astype(np.uint16)
     data = np.zeros(2 * packet.size, dtype=np.uint16)
-    for i in range(8):
-        data[i::16] = 0 if i in zero_i else ibits[i::8]
-        data[i + 8::16] = 0 if i in zero_q else qbits[i::8]
+    if opfb_format:
+        for i in range(8):
+            data[i::16] = 0 if i in zero_i else ibits[i::8]
+            data[i + 8::16] = 0 if i in zero_q else qbits[i::8]
+    else:
+        data[::2] = ibits
+        data[1::2] = qbits
     return data
 
 
@@ -112,7 +117,7 @@ def txcomb(dma, comb, n_res=2048, latency_shift=3*16, wait=True, **kwargs):
     global n_packets_sent, pptx, input_buffer, next_sample_send
     # 92/2 empirically determined to overcome reorder core latency
 
-    if n_packets_sent:
+    if n_packets_sent or latency_shift == 0:
         n_to_send = pptx * n_res
         data = comb.ravel()[next_sample_send:next_sample_send + n_to_send]
         input_buffer[:] = packet_to_buffer(data, **kwargs)
@@ -147,13 +152,13 @@ def rxpackets(dma, packets_out, n=None, status=False, packet_latency=1, wait=Tru
 
 
 def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, in_per_out=2, bin_out=False,
-         rxfp=(-9,25), wait=True, show=False):
+         txfp=FP16_15, rxfp=(-9,25), wait=True, show=False, tx_post_opfb=False, latency_shift=3*16):
     if n_total_packets is None:
         n_total_packets=comb.size//256//8
-    prep_buffers(nper, bin_out=bin_out)
+    prep_buffers(nper, bin_out=bin_out, latency_shift=latency_shift)
     n_loop=(n_total_packets - n_packets_sent) // pptx
     for i in range(n_loop):
-        txcomb(dma, comb, wait=wait)
+        txcomb(dma, comb, wait=wait, fp_transfm=txfp, latency_shift=latency_shift)
         pending = n_packets_sent//in_per_out - n_packets_rcvd - packet_latency
         if show:
             print(f"Sent: {n_packets_sent}  Pending: {pending}")
@@ -161,7 +166,7 @@ def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, i
         if show:
             print(f"Received: {n_packets_rcvd}.")
         if i == 0:
-            prep_buffers(nper, bin_out=bin_out)
+            prep_buffers(nper, bin_out=bin_out, latency_shift=latency_shift)
 
 
 def fir(comb, coeffs, packets_out, matlab_sim_out=None,
