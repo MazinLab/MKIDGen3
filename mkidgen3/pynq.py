@@ -52,7 +52,7 @@ class BinToResIP(DefaultIP):
         """
         super().__init__(description=description)
 
-    bindto = ['MazinLab:mkidgen3:bin_to_res:0.5']
+    bindto = ['MazinLab:mkidgen3:bin_to_res:0.6']
 
     @staticmethod
     def _checkgroup(group_ndx):
@@ -97,6 +97,78 @@ class BinToResIP(DefaultIP):
             raise ValueError('Bin values must be in [0,4095]')
         for i in range(256):
             self.write_group(i, bins[i * 8:i * 8 + 8])
+
+
+class ResonatorDDSV2IP(DefaultIP):
+    offset_tones = 0x2000
+
+    def __init__(self, description):
+        """
+
+        Note the axilite memory space is
+        0x2000 ~
+        0x3fff : Memory 'tones' (256 * 256b)  inc0-8 p0 0-8
+                 Word 8n   : bit [31:0] - tones[n][31: 0]
+                 Word 8n+1 : bit [31:0] - tones[n][63:32]
+                 Word 8n+2 : bit [31:0] - tones[n][95:64]
+                 Word 8n+3 : bit [31:0] - tones[n][127:96]
+                 Word 8n+4 : bit [31:0] - tones[n][159:128]
+                 Word 8n+5 : bit [31:0] - tones[n][191:160]
+                 Word 8n+6 : bit [31:0] - tones[n][223:192]
+                 Word 8n+7 : bit [31:0] - tones[n][255:224]
+        """
+        super().__init__(description=description)
+
+    bindto = ['MazinLab:mkidgen3:resonator_dds:0.13']
+
+    @staticmethod
+    def _checkgroup(group_ndx):
+        if group_ndx < 0 or group_ndx > 255:
+            raise ValueError('group_ndx must be in [0,255]')
+
+    def read_group(self, group_ndx, offset, fmt=(1, 15), consecutive=True, signed=True):
+        """Read the numbers in group from the core and convert them from binary data to python numbers"""
+        self._checkgroup(group_ndx)
+        if fmt is None:
+            FMT = lambda x: np.int16(x) if signed else np.uint16(x)
+        else:
+            FMT = lambda x: float(FpBinary(int_bits=fmt[0], frac_bits=fmt[1], signed=signed, bit_field=x))
+        vals = [self.read(offset + 32 * group_ndx + 4 * i) for i in range(8)]  # 2 16bit values each
+        if consecutive:
+            a = [FMT((v >> (16 * i)) & 0xffff) for v in vals[:4] for i in (0, 1)]
+            b = [FMT((v >> (16 * i)) & 0xffff) for v in vals[4:] for i in (0, 1)]
+        else:
+            a = [FMT((v >> (16 * i)) & 0xffff) for v in vals[::2] for i in (0, 1)]
+            b = [FMT((v >> (16 * i)) & 0xffff) for v in vals[::2] for i in (0, 1)]
+        return a, b
+
+    def write_group(self, group_ndx, increments, phases):
+        """Convert the numbers in the group from python data to binary data and load it into the core"""
+        self._checkgroup(group_ndx)
+        if len(increments) != 8 or len(phases) != 8:
+            raise ValueError('len(group)!=8')
+        bits = 0
+        FP16_15 = lambda x: FpBinary(int_bits=1, frac_bits=15, signed=True, value=x).__index__()
+        fixedgroup = list(map(FP16_15, increments)) + list(map(FP16_15, phases))
+        for i, (g0, g1) in enumerate(zip(*[iter(fixedgroup)] * 2)):  # take them by twos
+            bits |= ((g1 << 16) | g0) << (32 * i)
+        data = bits.to_bytes(32, 'little', signed=False)
+        bits.to_bytes(32, 'little', signed=False)
+        self.write(self.offset_tones + 32 * group_ndx, data)
+
+    @property
+    def tones(self):
+        return np.hstack([self.read_group(g, self.offset_tones) for g in range(256)])
+
+    @tones.setter
+    def tones(self, tones):
+        """tones[2,2048]"""
+        if tones.shape != (2, 2048):
+            raise ValueError('tones.shape !=(2,2048)')
+        if tones.min() < -1 or tones.max() > 1:
+            raise ValueError('Tones must be in [-1,1)')
+        for i in range(256):
+            self.write_group(i, *tones[:, i * 8:i * 8 + 8])
 
 
 class ResonatorDDSIP(DefaultIP):
@@ -149,7 +221,7 @@ class ResonatorDDSIP(DefaultIP):
         fixedgroup = [FpBinary(int_bits=1, frac_bits=15, signed=signed, value=g) for g in group]
         for i, (g0, g1) in enumerate(zip(*[iter(fixedgroup)] * 2)):  #take them by twos
             bits |= ((g1.__index__() << 16) | g0.__index__()) << (32 * i)
-        data = bits.to_bytes(32, 'little', signed=False)
+        data = bits.to_bytes(16, 'little', signed=False)
         # print(f"Writing {bin(bits&0xffff)} to the first address.")
         self.write(offset + 16 * group_ndx, data)
 
