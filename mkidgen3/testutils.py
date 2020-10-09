@@ -20,6 +20,7 @@ def reset():
 
 def prep_buffers(ntx=16, n_res=2048, n_bin=4096, latency_shift=3*16, bin_out=True):
     """
+    set bin_out to true iff rx data is from the opfb, false if from reschan
     ntx: How many packets do we send per DMA transfer.
          Must be <=16 to move the stream smoothly through the core
     """
@@ -169,9 +170,9 @@ def txrx(dma, comb, nper, packets_out, n_total_packets=None, packet_latency=1, i
             prep_buffers(nper, bin_out=bin_out, latency_shift=latency_shift)
 
 
-def fir(comb, coeffs, packets_out, matlab_sim_out=None,
-        lane=0, fftclk=None, show=True, rollfpga_new=False, rollfpga_old=False, fpga_i=0, fpga_p=0,
-        first_good_packet=17):
+def pfbfir(comb, coeffs, packets_out, matlab_sim_out=None,
+           lane=0, fftclk=None, show=True, rollfpga_new=False, rollfpga_old=False, fpga_i=0, fpga_p=0,
+           first_good_packet=17):
     """
     Compute the PFB FIR in floating and fixed point for the specified lane and fft input clock.
 

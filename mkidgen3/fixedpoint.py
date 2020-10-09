@@ -36,6 +36,17 @@ def do_fixed_point_pfb(fpcomb, fpcoeff, n_convert=None, truncate=True):
         fft_block[i + 1] = lane_out[1]
     return fft_block
 
+def fparray2numpy(a, complex='auto'):
+    if complex is 'auto':
+        complex = a.shape[-1]==2 and a.ndim>1
+
+    if complex:
+        out = np.zeros(a.size // 2, dtype=np.complex128)
+    else:
+        out = np.zeros(a.size)
+
+        packet.real = [float(fp(x)) for x in ibits]
+        packet.imag = [float(fp(x)) for x in qbits]
 
 def fparray(a, fpgen=None):
     """
@@ -45,6 +56,10 @@ def fparray(a, fpgen=None):
 
     if fpgen is None 16wide  1integer signed is used
     """
+    try:
+        fpgen = lambda x: FpBinary(int_bits=fpgen[0], frac_bits=fpgen[1], signed=fpgen[2], value=x)
+    except Exception:
+        pass
     if fpgen is None:
         fpgen = lambda x: FpBinary(int_bits=1, frac_bits=15, signed=True, value=x)
 
