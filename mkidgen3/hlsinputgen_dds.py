@@ -17,7 +17,7 @@ class Testdata:
         self.freqs=freqs
 
 
-def test_data(ncycles=10, MIN_FREQ_HZ=4096e6,  MAX_FREQ_HZ =8192e6, NUM_RES = 2048, MAX_PER_BIN = 4):
+def test_data(ncycles=10, MIN_FREQ_HZ=4096e6,  MAX_FREQ_HZ =8191e6, NUM_RES = 2048, MAX_PER_BIN = 4):
 
     mec_freqfilea='/Users/one/Box Sync/ucsb/mec/psfreq/psfreqs_FL9a_clip_new_atten_plus_freq_shift.txt'
     mec_freqfileb='/Users/one/Box Sync/ucsb/mec/psfreq/psfreqs_FL9b_clip_new_atten_plus_freq_shift.txt'
@@ -44,10 +44,16 @@ def test_data(ncycles=10, MIN_FREQ_HZ=4096e6,  MAX_FREQ_HZ =8192e6, NUM_RES = 20
         freqs = np.concatenate((freqs, [MAX_FREQ_HZ]*(NUM_RES-freqs.size)))
 
 
-    offset_hz=(freqs-1e6*np.round(freqs/1e6))  # on a 1MHz grid
+    offset_hz = (freqs-1e6*np.round(freqs/1e6))  # on a 1MHz grid
 
+    freqs_pm=freqs-MIN_FREQ_HZ-2048e6
+    bin_ndx = np.round(freqs_pm / 1e6).astype(int) + 2048
+    bin_f_center = np.arange(-2048, 2048) * 1e6
+    offset_hz_2 = freqs_pm-bin_f_center[bin_ndx]
+
+    np.random.seed(0)
     iq=np.random.uniform(low=0, high=2*np.pi, size=ncycles*NUM_RES)
-    iq=np.array((np.sin(iq),np.cos(iq))).T
+    iq=np.array((np.sin(iq), np.cos(iq))).T
 
     return Testdata(iq=iq, freqs=freqs, offset_hz=offset_hz, bincount=bincount)
 

@@ -5,6 +5,9 @@ import logging
 from mkidgen3.gen2 import SweepFile, parse_lo
 
 
+DAC_REPLAY_SAMPLES=262144
+
+
 def generateTones(frequencies, n_samples, sample_rate, amplitudes=None, phases=None, iq_ratios=None,
                   phase_offsets=None, return_merged=True):
     """
@@ -69,7 +72,7 @@ def generateTones(frequencies, n_samples, sample_rate, amplitudes=None, phases=N
 
 def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, spike_percentile_limit=.9,
              globalDacAtten=None, lo=None, return_full=True, max_chan=2048, sample_rate=4.096e9, n_iq_bits=32,
-             dac_samps_cycle=8, n_lut_rows=2**15):
+             dac_samps_cycle=16, n_lut_rows=2**14):
     """
     Creates DAC frequency comb by adding many complex frequencies together with specified amplitudes and phases.
 
