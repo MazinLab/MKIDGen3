@@ -12,6 +12,24 @@ N_IQ_GROUPS = 256
 FP16_15 = lambda x: FpBinary(int_bits=1, frac_bits=15, signed=True, value=x).__index__()
 FP32_8 = lambda x: FpBinary(int_bits=32 - 9, frac_bits=8, signed=True, value=x)
 
+def get_pldram_addr(hwhpath): #TODO extend Overlay class to include this as a property
+    """Return PL DRAM start address as specified in hwh"""
+
+    pldramstr = '<MEMRANGE ADDRESSBLOCK="C0_DDR4_ADDRESS_BLOCK" BASENAME="C_BASEADDR" BASEVALUE="'
+    hwh = open(hwhpath, "r")
+
+    for line in hwh:
+        if pldramstr in line:
+            break
+    try:
+        pldram_addr = hex(int(line[88:99], 16))
+    except LookupError:
+        print('PL DRAM not found')
+    hwh.close()
+    return(pldram_addr)
+
+
+
 
 def _which_one_bit_set(x, nbits):
     """
