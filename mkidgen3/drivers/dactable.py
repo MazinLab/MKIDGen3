@@ -1,9 +1,10 @@
 from logging import getLogger
 
 import numpy as np
+from pynq import allocate
 
 from mkidgen3.mkidpynq import FP16_15
-
+from pynq import(DefaultIP)
 
 class DACTableAXIM(DefaultIP):
     bindto = ['mazinlab:mkidgen3:dac_table_axim:0.6']
@@ -12,7 +13,7 @@ class DACTableAXIM(DefaultIP):
         super().__init__(description=description)
         self._buffer=None
 
-    def replay(self, data, tlast=True, tlast_every=256, length=None, start=True, fpgen=lambda x: FP16_15(x).__index()):
+    def replay(self, data, tlast=True, tlast_every=256, length=None, start=True, fpgen=lambda x: FP16_15(x)):
         """
         data - an array of complex numbers, nominally 2^18 samples
         tlast - Set to true to emit a tlast pulse every tlast_every transactions
@@ -49,11 +50,11 @@ class DACTableAXIM(DefaultIP):
         if not tlast:
             tlast_every = 256  # just assign some value to ensure we didn't get handed garbage
 
-        self._buffer = allocate(2 ** 19, dtype=np.uint16)
+        self._buffer = allocate(2 ** 20, dtype=np.uint16)
         self._buffer[:data.size * 2:2] = [fpgen(x) for x in data.real] if fpgen is not None else data.real
         self._buffer[1:data.size * 2:2] = [fpgen(x) for x in data.imag] if fpgen is not None else data.imag
 
-        self.register_map.a = self._buffer.device_address
+        self.register_map.a1 = self._buffer.device_address
         self.register_map.length_V = length
         self.register_map.tlast = bool(tlast)
         self.register_map.replay_length_V = tlast_every
