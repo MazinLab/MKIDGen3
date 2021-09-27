@@ -7,7 +7,7 @@ from fpbinary import FpBinary
 from logging import getLogger
 
 MAX_CAP_RAM_BYTES = 2**32
-PL_DDR4_ADDR = 0x0400000000
+PL_DDR4_ADDR = 0x5000000000
 N_IQ_GROUPS = 256
 FP16_15 = lambda x: FpBinary(int_bits=1, frac_bits=15, signed=True, value=x)
 FP32_8 = lambda x: FpBinary(int_bits=32 - 9, frac_bits=8, signed=True, value=x)
