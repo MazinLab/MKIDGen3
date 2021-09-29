@@ -47,7 +47,7 @@ class DACTableAXIM(DefaultIP):
         # Process tlast_every
         tlast_every = int(tlast_every)
 
-        if tlast and not 1 <= tlast_every <= length:
+        if tlast and not (1 <= tlast_every <= length):
             raise ValueError('tlast_every must be in [1-length] when tlast is set')
         if not tlast:
             tlast_every = 256  # just assign some value to ensure we didn't get handed garbage
@@ -62,7 +62,7 @@ class DACTableAXIM(DefaultIP):
         self.register_map.a_1 = self._buffer.device_address
         self.register_map.length_r = length-1  # length counter
         self.register_map.tlast = bool(tlast)
-        self.register_map.replay_length = tlast_every
+        self.register_map.replay_length = tlast_every-1
         self.register_map.run = True
         if start:
             self.register_map.CTRL.AP_START = 1
