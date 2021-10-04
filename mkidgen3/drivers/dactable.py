@@ -68,7 +68,12 @@ class DACTableAXIM(DefaultIP):
             self.register_map.CTRL.AP_START = 1
 
     def stop(self):
+        # Note the dac still outputs stuff (harmonics of last bunnfer)
+        # Need to load URAM with zeros if you want it to be quiet (see quiet)
         self.register_map.run = False
+
+    def quiet(self):
+        self.replay(np.zeros(16, dtype=np.complex64), tlast=False, length=16)
 
     def start(self):
         #TODO probably need to check for the case where not idle and run = False (axis stall to completion)
