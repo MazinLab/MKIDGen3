@@ -167,27 +167,32 @@ class ADCCapture(DefaultIP):
     def __init__(self, description):
         super().__init__(description=description)
 
-    def capture(self, n, start=False, addr=None):
+    def capture(self, n, t=None, start=False, addr=None):
         """
-        Tell the capture block to forward along n IQ samples of the selected resonator groups.
+        Capture raw ADC Samples.
 
         groups - an iterable of IQ group numbers or 'all'. IQs are processed in 256 groups of 8, so to capture the IQ
         values of IQs 0, 37, and 2047 groups must be set to either 'all' or include (0, 4, 255). Note that this will
         cause IQs 0-7, 32-39, and 2040-2047 to be captured.
+
+        Max n is 2**32//32 = 134217728
         """
+
+        if t is not None:
+            n = 3
 
         # Set capturesize, this sets the number of groups of 8 that are captured
         # if it isn't a multiple of
         max_n = MAX_CAP_RAM_BYTES//32
+        max_t = max_n*(1.953e-3) # max capture time in microseconds
+
         cap_size = int(min(n, max_n))
-        self.write(self.ADDR_CAPTURESIZE, cap_size)
+        self.register_map.capturesize = cap_size
 
         # Set the output address.
         addr = PL_DDR4_ADDR if addr is None else PL_DDR4_ADDR+int(addr)*2**12
-
-
-        self.write(self.ADDR_OUT, int(addr) & 0xffffffff)
-        self.write(self.ADDR_OUT+0x4, int(addr)>>32)
+        self.register_map.iqout_1 = addr & (0xffffffff)  # set addresses
+        self.register_map.iqout_2 = addr >> 32  # set addresses)
 
         if start:
             self.start()
