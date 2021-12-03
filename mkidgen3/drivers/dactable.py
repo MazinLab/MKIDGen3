@@ -13,14 +13,15 @@ class DACTableAXIM(DefaultIP):
         super().__init__(description=description)
         self._buffer=None
 
-    def replay(self, data, tlast=True, tlast_every=256, length=None, start=True, fpgen=lambda x: FP16_15(x)):
+    def replay(self, data, tlast=True, tlast_every=256, replay_len=None, start=True, fpgen=lambda x: FP16_15(x)):
         """
         data - an array of complex numbers, nominally 2^19 samples
         tlast - Set to true to emit a tlast pulse every tlast_every transactions
-        length - Number of groups of 16 (DAC takes 16/clock) in the data to use.
+        tlast_every - assert tlast every tlast_every*16 th sample.
+        replay_len - Number of groups of 16 (DAC takes 16/clock) in the data to use.
             e.g. if data[N].reshape(N//16,16). Note that the user channel will count to length-1
-        fpgen - set to a function to convert floating point numbers to integers. if None data will be truncated.
         start - start the replay immediately
+        fpgen - set to a function to convert floating point numbers to integers. if None data will be truncated.
         """
         # Data has right shape
         if data.size < 2 ** 19:
@@ -34,20 +35,20 @@ class DACTableAXIM(DefaultIP):
             data = data[:2 ** 19]
 
         # Process Length
-        if length is None:
-            length = data.size // 16
-        length = int(length)
+        if replay_len is None:
+            replay_len = data.size // 16
+        replay_len = int(replay_len)
 
-        if length > 2 ** 15:  # NB 15 as length is in sets of 16
+        if replay_len > 2 ** 15:  # NB 15 as length is in sets of 16
             getLogger(__name__).warning('Clipping replay length to 2^15 sets of 16')
-            length = 2**15
-        if length % 2:
+            replay_len = 2 ** 15
+        if replay_len % 2:
             raise ValueError('Replay length must be a multiple of 2')
 
         # Process tlast_every
         tlast_every = int(tlast_every)
 
-        if tlast and not (1 <= tlast_every <= length):
+        if tlast and not (1 <= tlast_every <= replay_len):
             raise ValueError('tlast_every must be in [1-length] when tlast is set')
         if not tlast:
             tlast_every = 256  # just assign some value to ensure we didn't get handed garbage
@@ -60,7 +61,7 @@ class DACTableAXIM(DefaultIP):
             self._buffer[i+16:data.size * 2:32] = qload[i::16]
 
         self.register_map.a_1 = self._buffer.device_address
-        self.register_map.length_r = length-1  # length counter
+        self.register_map.length_r = replay_len - 1  # length counter
         self.register_map.tlast = bool(tlast)
         self.register_map.replay_length = tlast_every-1
         self.register_map.run = True
@@ -73,7 +74,7 @@ class DACTableAXIM(DefaultIP):
         self.register_map.run = False
 
     def quiet(self):
-        self.replay(np.zeros(16, dtype=np.complex64), tlast=False, length=16)
+        self.replay(np.zeros(16, dtype=np.complex64), tlast=False, replay_len=16)
 
     def start(self):
         #TODO probably need to check for the case where not idle and run = False (axis stall to completion)
