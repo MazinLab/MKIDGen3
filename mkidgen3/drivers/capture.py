@@ -167,32 +167,35 @@ class ADCCapture(DefaultIP):
     def __init__(self, description):
         super().__init__(description=description)
 
-    def capture(self, n, t=None, start=False, addr=None):
+    def capture(self, n=65536, t_ms=None, start=False, addr=None):
         """
-        Capture raw ADC Samples.
+        Capture raw ADC Samples. IQ samples are captured in chunks of 8 sequential samples.
 
-        groups - an iterable of IQ group numbers or 'all'. IQs are processed in 256 groups of 8, so to capture the IQ
-        values of IQs 0, 37, and 2047 groups must be set to either 'all' or include (0, 4, 255). Note that this will
-        cause IQs 0-7, 32-39, and 2040-2047 to be captured.
+        n = number of IQ samples // 8 to capture from the ADC stream.
+        default n is 65536 which corresponds to 1 full DAC replay table 2**19 samples / 8 samples per data transfer.
+        max_n = 2**32//32 = 134217728.
+        max_n corresponds to 2*32 = 4 GiB of data (PL DRAM size)
+        divided by 32 bytes (8  IQ samples) per data transfer from the ADC to PL DRAM.
 
-        Max n is 2**32//32 = 134217728
+        Optional:
+        t_ms  = time in miliseconds to capture the ADC output for.
+        max_t = 262.1 ms  = max_n * 8 [samples/transfer] / 4.096e9 [IQ  samples/sec]
+        t_ms is rounded down to the nearest number of IQ samples // 8.
+        t_ms takes precedence over n.
         """
 
-        if t is not None:
-            n = 3
+        if t_ms is not None:
+            n = int(np.floor(t_ms*10e-3*4.096e9/8)) # n transactions = t[sec] * 4.096e9[samples/sec]*1[transaction]/8[samples]
 
-        # Set capturesize, this sets the number of groups of 8 that are captured
-        # if it isn't a multiple of
+        # Set capturesize, this sets the number of chunks of 8 sequential IQ samples that are captured.
         max_n = MAX_CAP_RAM_BYTES//32
-        max_t = max_n*(1.953e-3) # max capture time in microseconds
-
         cap_size = int(min(n, max_n))
         self.register_map.capturesize = cap_size
 
         # Set the output address.
         addr = PL_DDR4_ADDR if addr is None else PL_DDR4_ADDR+int(addr)*2**12
-        self.register_map.iqout_1 = addr & (0xffffffff)  # set addresses
-        self.register_map.iqout_2 = addr >> 32  # set addresses)
+        self.register_map.iqout_1 = addr & (0xffffffff)  # set low  address
+        self.register_map.iqout_2 = addr >> 32  # set high address
 
         if start:
             self.start()
