@@ -1,6 +1,6 @@
 import time
 from logging import getLogger
-
+from pynq import allocate, DefaultIP
 import numpy as np
 
 

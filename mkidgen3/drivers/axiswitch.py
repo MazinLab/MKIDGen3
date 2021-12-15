@@ -1,8 +1,10 @@
+from pynq import allocate, DefaultIP
+
 class AxisSwitch(DefaultIP):
+    bindto = ['xilinx.com:ip:axis_switch:1.1']
+
     def __init__(self, description):
         super().__init__(description=description)
-
-    bindto = ['xilinx.com:ip:axis_switch:1.1']
 
     def set_master(self, master, slave=0, disable=False):
         """Set the slave for the master"""

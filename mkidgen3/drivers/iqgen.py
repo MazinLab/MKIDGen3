@@ -1,3 +1,6 @@
+from pynq import allocate, DefaultIP
+
+
 class IQGen(DefaultIP):
     """
     // control

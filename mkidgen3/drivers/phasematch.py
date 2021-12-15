@@ -1,9 +1,9 @@
 import numpy as np
-
+import pynq
 from mkidgen3.mkidpynq import FP32_8, pack16_to_32
 
 
-class PhasematchDriver(DefaultHierarchy):
+class PhasematchDriver(pynq.DefaultHierarchy):
     N_TEMPLATE_TAPS = 30
     N_RES = 2048
     N_RES_P_LANE = 512

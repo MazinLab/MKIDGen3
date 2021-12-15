@@ -1,5 +1,5 @@
 import numpy as np
-from pynq import DefaultIP
+from pynq import allocate, DefaultIP
 from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR #config, overlay details
 
 

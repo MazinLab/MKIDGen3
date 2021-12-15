@@ -1,12 +1,10 @@
 from logging import getLogger
-
 import numpy as np
-from pynq import allocate
+import pynq
+from ..mkidpynq import FP16_15
 
-from mkidgen3.mkidpynq import FP16_15
-from pynq import(DefaultIP)
 
-class DACTableAXIM(DefaultIP):
+class DACTableAXIM(pynq.DefaultIP):
     bindto = ['mazinlab:mkidgen3:dac_table_axim:0.6']
 
     def __init__(self, description):
@@ -53,7 +51,7 @@ class DACTableAXIM(DefaultIP):
         if not tlast:
             tlast_every = 256  # just assign some value to ensure we didn't get handed garbage
 
-        self._buffer = allocate(2 ** 20, dtype=np.uint16)
+        self._buffer = pynq.allocate(2 ** 20, dtype=np.uint16)
         iload = [fpgen(x).__index__() for x in data.real] if fpgen is not None else data.real
         qload = [fpgen(x).__index__() for x in data.imag] if fpgen is not None else data.imag
         for i in range(16):

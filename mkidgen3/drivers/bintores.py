@@ -1,3 +1,4 @@
+from pynq import allocate, DefaultIP
 class BinToResIP(DefaultIP):
     resmap_addr = 0x1000
 

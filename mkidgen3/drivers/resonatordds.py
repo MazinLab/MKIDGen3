@@ -1,6 +1,6 @@
 import numpy as np
 from fpbinary import FpBinary
-
+from pynq import DefaultIP
 from mkidgen3.mkidpynq import FP16_15
 
 
@@ -9,7 +9,6 @@ class ResonatorDDSV2IP(DefaultIP):
 
     def __init__(self, description):
         """
-
         Note the axilite memory space is
         0x2000 ~
         0x3fff : Memory 'tones' (256 * 256b)  inc0-8 p0 0-8
