@@ -12,6 +12,18 @@ N_IQ_GROUPS = 256
 FP16_15 = lambda x: FpBinary(int_bits=1, frac_bits=15, signed=True, value=x)
 FP32_8 = lambda x: FpBinary(int_bits=32 - 9, frac_bits=8, signed=True, value=x)
 
+
+def fp_factory(int, frac, signed, frombits=False):
+    if isinstance(signed, str):
+        signed = True if 'signed' == signed.lower() else False
+    else:
+        signed = bool(signed)
+    if frombits:
+        return lambda x: FpBinary(int_bits=int, frac_bits=frac, signed=signed, bit_field=x)
+    else:
+        return lambda x: FpBinary(int_bits=int, frac_bits=frac, signed=signed, value=x)
+
+
 def get_pldram_addr(hwhpath):
     """Return PL DRAM start address as specified in hwh"""
 

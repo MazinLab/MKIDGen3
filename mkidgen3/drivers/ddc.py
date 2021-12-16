@@ -1,10 +1,90 @@
 import numpy as np
 from fpbinary import FpBinary
 from pynq import DefaultIP
-from mkidgen3.mkidpynq import FP16_15
+from mkidgen3.mkidpynq import fp_factory
 
 
-class ResonatorDDSV2IP(DefaultIP):
+class DDC(DefaultIP):
+    offset_tones = 0x2000
+    TONE_FORMAT = (1, 10, 'signed')  #ap_fixed<11,1>
+    PHASE0_FORMAT = (1, 20, 'signed')  # ap_fixed<21,1>
+
+    def __init__(self, description):
+        """
+        The core uses an array of 256 values, each consisting of 8 32 bit numbers packed into 256 bit word that
+        specifies the phase offset and phase increment used to digitally down-convert the corresponding resonator
+        channel. Each 32 bit number is itself a packed fixed point number with 1 integer bit, 21 bits for the phase and
+        11 for the tone. The high bits are for the phase offset.
+
+        0x2000 ~
+        0x3fff : Memory 'tones' (256 * 256b)  inc0-8 p0 0-8
+                 Word 8n   : bit [31:0] - tones[n][31: 0]
+                 Word 8n+1 : bit [31:0] - tones[n][63:32]
+                 Word 8n+2 : bit [31:0] - tones[n][95:64]
+                 Word 8n+3 : bit [31:0] - tones[n][127:96]
+                 Word 8n+4 : bit [31:0] - tones[n][159:128]
+                 Word 8n+5 : bit [31:0] - tones[n][191:160]
+                 Word 8n+6 : bit [31:0] - tones[n][223:192]
+                 Word 8n+7 : bit [31:0] - tones[n][255:224]
+
+
+        """
+        super().__init__(description=description)
+
+    bindto = ['mazinlab:mkidgen3:resonator_dds:1.33']
+
+    @staticmethod
+    def _checkgroup(group_ndx):
+        if group_ndx < 0 or group_ndx > 255:
+            raise ValueError('group_ndx must be in [0,255]')
+
+    def read_group(self, group_ndx, offset, raw=False):
+        """Read the numbers in the group from the core and convert them from binary data to python numbers"""
+        self._checkgroup(group_ndx)
+        vals = [self.read(offset + 32 * group_ndx + 4 * i) for i in range(8)]  # 32 bit packed word
+        tone_mask = 2**12-1
+        tone_fmt = fp_factory(*self.TONE_FORMAT, frombits=True)
+        phase_fmt = fp_factory(*self.PHASE0_FORMAT, frombits=True)
+
+        if raw:
+            tones = [np.uint16(v & tone_mask) for v in vals]
+            offsets = [np.uint16(v>>11) for v in vals]
+        else:
+            tones = [float(tone_fmt(v & tone_mask)) for v in vals]
+            offsets = [float(phase_fmt(v>>11)) for v in vals]
+        return tones, offsets
+
+    def write_group(self, group_ndx, increments, phases):
+        """ Convert the numbers in the group from python data to binary data and load it into the core """
+        self._checkgroup(group_ndx)
+        if len(increments) != 8 or len(phases) != 8:
+            raise ValueError('len(group)!=8')
+        bits = 0
+        tone_fmt = fp_factory(*self.TONE_FORMAT)
+        phase_fmt = fp_factory(*self.PHASE0_FORMAT)
+        fixedgroup = list(map(tone_fmt, increments)) + list(map(phase_fmt, phases))
+        for i, (g0, g1) in enumerate(zip(*[iter(fixedgroup)] * 2)):  # take them by twos
+            bits |= ((g1 << 11) | g0) << (32 * i)
+        data = bits.to_bytes(32, 'little', signed=False)
+        bits.to_bytes(32, 'little', signed=False)
+        self.write(self.offset_tones + 32 * group_ndx, data)
+
+    @property
+    def tones(self):
+        return np.hstack([self.read_group(g, self.offset_tones) for g in range(256)])
+
+    @tones.setter
+    def tones(self, tones):
+        """tones is a [2,2048] array of tone increments and phase offsets """
+        if tones.shape != (2, 2048):
+            raise ValueError('tones.shape !=(2,2048)')
+        if tones.min() < -1 or tones.max() > 1:
+            raise ValueError('Tones must be in [-1,1)')
+        for i in range(256):
+            self.write_group(i, *tones[:, i * 8:i * 8 + 8])
+
+
+class OldDDC(DefaultIP):
     offset_tones = 0x2000
 
     def __init__(self, description):
@@ -74,7 +154,7 @@ class ResonatorDDSV2IP(DefaultIP):
             self.write_group(i, *tones[:, i * 8:i * 8 + 8])
 
 
-class ResonatorDDSIP(DefaultIP):
+class OldOldDDC(DefaultIP):
     """
     Note the axilite memory space is
     0x1000 ~
