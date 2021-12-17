@@ -7,9 +7,14 @@ try:
 except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')
 
-__all__ = ['set_frequencies', 'iqcapture']
 
 _gen3_overlay, _mig_overlay, _frequencies = [None]*3
+
+
+def set_lo_freq(lo_ghz):
+    import requests
+    r = requests.get(f'http://skynet.physics.ucsb.edu:51111/loset/{lo_ghz}')
+    return r.json()
 
 
 def iqcapture(n):
