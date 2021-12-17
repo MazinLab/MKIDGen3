@@ -72,7 +72,7 @@ def generateTones(frequencies, n_samples, sample_rate, amplitudes=None, phases=N
 
 def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, spike_percentile_limit=.9,
              globalDacAtten=None, lo=None, return_full=True, max_chan=2048, sample_rate=4.096e9, n_iq_bits=32,
-             dac_samps_cycle=16, n_lut_rows=2**14):
+             n_samples=2**19):
     """
     Creates DAC frequency comb by adding many complex frequencies together with specified amplitudes and phases.
 
@@ -138,9 +138,6 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     nBitsPerSampleComponent = n_iq_bits / 2
     maxAmp = int(np.round(2 ** (nBitsPerSampleComponent - 1) - 1))  # 1 bit for sign
     amplitudes = maxAmp * 10 ** (-(attenuations - globalDacAtten) / 20)
-
-    # Calculate n_samples and sampleRate
-    n_samples = dac_samps_cycle * n_lut_rows
 
     # Calculate resonator frequencies for DAC
     LOFreq = parse_lo(lo, frequencies=frequencies, sample_rate=sample_rate)
@@ -232,7 +229,7 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
                          f"Increase resonator attens by {-1 * globalDacAtten} dB")
 
     if return_full:
-        return {'i': iValues, 'q': qValues, 'frequencies': dacQuantizedFreqList, 'attenuation': globalDacAtten,
+        return {'frequencies': dacQuantizedFreqList, 'attenuation': globalDacAtten,
                 'comb': dacFreqComb, 'phases': dacPhaseList}
     else:
         return dacFreqComb

@@ -26,21 +26,17 @@ def fp_factory(int, frac, signed, frombits=False):
 
 def get_pldram_addr(hwhpath):
     """Return PL DRAM start address as specified in hwh"""
-
+    pldram_addr = None
     pldramstr = '<MEMRANGE ADDRESSBLOCK="C0_DDR4_ADDRESS_BLOCK" BASENAME="C_BASEADDR" BASEVALUE="'
-    hwh = open(hwhpath, "r")
-
-    for line in hwh:
-        if pldramstr in line:
-            break
-    try:
-        pldram_addr = hex(int(line[88:99], 16))
-    except LookupError:
-        print('PL DRAM not found')
-    hwh.close()
-    return(pldram_addr)
-
-
+    with open(hwhpath, "r") as hwh:
+        for line in hwh:
+            if pldramstr in line:
+                break
+        try:
+            pldram_addr = hex(int(line[88:99], 16))
+        except LookupError:
+            print('PL DRAM not found')
+    return pldram_addr
 
 
 def _which_one_bit_set(x, nbits):

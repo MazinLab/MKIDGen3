@@ -1,0 +1,155 @@
+from logging import getLogger
+import numpy as np
+import time
+try:
+    import pynq
+    from .drivers import *
+except ImportError:
+    getLogger(__name__).info('pynq not available, functionality will be limited.')
+
+__all__ = ['set_frequencies', 'iqcapture']
+
+_gen3_overlay, _mig_overlay, _frequencies = None
+
+
+def iqcapture(n):
+    """ Capture and return n samples for the currently configured frequencies"""
+    if _frequencies is None:
+        return None
+
+    _gen3_overlay.capture.axis_switch_0.set_master(1, commit=True)  # After the FIR
+
+    #4 bytes per IQ * n * np.ceil(_frequencies.size/8)
+    buf = pynq.allocate((2*n*np.ceil(_frequencies.size/8), 2), 'i2', target=_mig_overlay.MIG0)  # 2**30 is 4 GiB
+
+    captime = _gen3_overlay.capture.iq_capture_0.capture(n, groups=np.arange(np.ceil(_frequencies.size/8), dtype=int),
+                                                         device_addr=buf.device_address, start=False)
+    #TODO we need to wait for the core to signal done
+    time.sleep(captime*2)
+
+    # buf now has IQ data in the 16_15 format IQ0_0 IQ1_0 ... IQnfreq*8-1_0  IQ0_1......  IQnfreq*8-1_n-1
+
+    return buf
+
+
+
+
+
+def set_waveform(freq, amplitudes=None, attenuations=None, simple=False):
+    """ freq in Hz amplitude 0-1"""
+    from .daccomb import generate, generateTones
+    n_samples = 2 ** 19
+    sample_rate = 4.096e9
+    n_res = 2048
+
+    # my old ipython test channelizer code
+    if simple:
+        if amplitudes is None:
+            amplitudes = np.ones_like(freq)
+        t = 2 * np.pi * np.arange(n_samples) / sample_rate
+        comb = np.zeros(n_samples, dtype=np.complex64)
+        phases = np.zeros(n_res)
+        for i in range(freq.size):
+            comb += amplitudes[i] * np.exp(1j * (t * freq[i] + phases[i]))
+    else:
+        if attenuations is not None:
+            comb = generate(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
+                            sample_rate=sample_rate)['comb']
+        else:
+            if amplitudes is None:
+                amplitudes = np.ones_like(freq)
+            dactable = generateTones(frequencies=freq, n_samples=n_samples, sample_rate=sample_rate,
+                                     amplitudes=amplitudes)
+            comb = dactable['I'] + 1j * dactable['Q']
+
+    print(f"Comb shape: {comb.shape}. \nTotal Samples: {comb.size}. "
+          f"Memory: {comb.size * 8 / 1024 ** 2:.0f} MB\n")
+    _gen3_overlay.dac_table_axim_0.replay(comb)
+
+
+def opfb_bin_number(freq):
+    """Compute the OPFB bin number corresponding to each frequency, specified in Hz"""
+    # if opfb bins werent shifted then it would be: strt_bins=np.round(freq/1e6).astype(int)+2048
+    return ((np.round(freq / 1e6).astype(int) + 2048) + 2048) % 4096
+
+
+def set_channels(freq):
+    """
+    Set each resonator channel to use the correct OPFB bin given the 2048 frequencies (in Hz) for each channel.
+    """
+    bins = np.arange(2048, dtype=int)
+    bins[:freq.size] = opfb_bin_number(freq)
+    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = bins
+
+
+def tone_increments(freq):
+    """Compute the DDS tone increment for each frequency (in Hz), assumes optimally selected OPFB bin when computing
+    central frequency"""
+
+    f_center = np.fft.fftfreq(4096, d=1 / 4.096e9)
+    shft_bins = opfb_bin_number(freq)
+
+    # This must be 2MHz NOT 2.048MHz, the sign matters! Use 1MHz as that corresponds to ±PI
+    return (freq - f_center[shft_bins]) / 1e6
+
+
+def set_tones(freq):
+    tones = np.zeros((2, 2048))
+    tones[0, :min(freq.size, 2048)] = tone_increments(freq)
+    tones[1, :] = np.zeros(2048)
+    print('Writing tones...')  # The core expects normalized increments
+    _gen3_overlay.photon_pipe.reschan.resonator_ddc.tones = tones
+
+
+def set_frequencies(freq, amplitudes=None):
+    """ Set the bins and ddc values so that freq are in the associated resonator channels"""
+    global _frequencies
+    _frequencies = freq
+    getLogger(__name__).info('setting waveform')
+    set_waveform(freq, amplitudes=amplitudes)
+    getLogger(__name__).info('setting resonator channels')
+    set_channels(freq)
+    getLogger(__name__).info('setting ddc tones')
+    set_tones(freq)
+
+
+def rfdc_status():
+    rfdc = _gen3_overlay.usp_rf_data_converter_0
+    regmap = {'Restart Power-On State Machine': 0x0004,
+              'Restart State': 0x0008,
+              'Current State': 0x000C,
+              'Reset Count': 0x0038,
+              'Interrupt Status': 0x0200,
+              'Tile Common Status': 0x0228,
+              'Tile Disable': 0x0230}
+    tilemap = [(f'ADC{i}', v) for i, v in enumerate((0x14000, 0x18000, 0x1C000, 0x20000))]
+    tilemap += [(f'DAC{i}', v) for i, v in enumerate((0x04000, 0x08000))]  # , 0x0C000, 0x10000))]
+    tilemap = dict(tilemap)
+    print(rfdc.read(0x0008))
+    for t, taddr in tilemap.items():
+        print(t)
+        for k, r in regmap.items():
+            print(f'  {k}:  {rfdc.read(taddr + r)}')
+
+
+def plstatus():
+    from pynq import PL
+    print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
+
+
+def configure(bitstream, mig=False, ignore_version=False, clocks=False):
+    import pynq, xrfclk
+    global _gen3_overlay, _mig_overlay
+
+    _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=True)
+
+    if mig:
+        _mig_overlay = pynq.Overlay('mig_modified_ip_layout_mem_topology.xclbin', device=pynq.Device.devices[1],
+                                    download=True)
+
+    if clocks:
+        try:
+            xrfclk.set_all_ref_clks(409.6)
+        except:
+            print('Failed to set clocks with set_all_ref_clks, trying new driver call')
+            xrfclk.set_ref_clks(409.6)

@@ -1,6 +1,7 @@
 import numpy as np
 from pynq import allocate, DefaultIP
 from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR  # config, overlay details
+from logging import getLogger
 
 
 class IQCapture(DefaultIP):
@@ -67,7 +68,7 @@ class IQCapture(DefaultIP):
     def __init__(self, description):
         super().__init__(description=description)
 
-    def capture(self, n, groups=tuple(range(N_IQ_GROUPS)), start=True, addr=None):
+    def capture(self, n, groups=tuple(range(N_IQ_GROUPS)), start=True, addr=None, device_addr=None):
         """
         Tell the block to capture n samples of the specified resonator IQ groups. If addr is None an addr will be
         assigned. addr is the number of 4KB pages into the PLDDR4 to start at.
@@ -100,7 +101,7 @@ class IQCapture(DefaultIP):
         # TODO we should probably drop N so that we aren't capturing a partial set
         cap_size = int(min(n * n_groups, MAX_CAP_RAM_BYTES // 32))
         # Compute the total capture size, this is the number of IQ groups that must be ingested to capture the data
-        total_capturesize = (256 - n_groups + 1) * capturesize
+        total_capturesize = (256 - n_groups + 1) * cap_size
 
         # NB this ignores the final bit from a non-128 multiple
         datavolume_mb = cap_size * 32 / 1024 ** 2
@@ -109,11 +110,12 @@ class IQCapture(DefaultIP):
         msg = (f"Will capture ~{datavolume_mb} MB "
                f"of data @ {datarate_mbps} MBps. ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
+        captime = datavolume_mb / datarate_mbps
         print(msg)
 
         # Set the output address. TODO Support addr
         if addr is None:
-            addr = PL_DDR4_ADDR
+            addr = device_addr or PL_DDR4_ADDR
         else:
             addr = PL_DDR4_ADDR + addr * 2 ** 12
 
@@ -128,6 +130,8 @@ class IQCapture(DefaultIP):
 
         if start:
             self.start_capture()
+
+        return captime
 
     def start(self):
         self.register_map.CTRL.AP_START = 1
