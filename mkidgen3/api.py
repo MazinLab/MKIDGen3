@@ -7,7 +7,7 @@ from .util import setup_logging
 setup_logging('gen3-flask')
 
 TIMEOUT = 2.0  # timeout for request post
-ADDRESS = 'mkidzcu111b.physics.ucsb.edu:50001'
+ADDRESS = 'mkidzcu111b.physics.ucsb.edu:8080'
 
 
 def _timeout(t):

@@ -5,7 +5,7 @@ from ..mkidpynq import FP16_15
 
 
 class DACTableAXIM(pynq.DefaultIP):
-    bindto = ['mazinlab:mkidgen3:dac_table_axim:0.6']
+    bindto = ['mazinlab:mkidgen3:dac_table_axim:0.6', 'mazinlab:mkidgen3:dac_table_axim:1.33']
 
     def __init__(self, description):
         super().__init__(description=description)

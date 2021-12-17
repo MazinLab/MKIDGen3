@@ -9,7 +9,7 @@ except ImportError:
 
 __all__ = ['set_frequencies', 'iqcapture']
 
-_gen3_overlay, _mig_overlay, _frequencies = None
+_gen3_overlay, _mig_overlay, _frequencies = [None]*3
 
 
 def iqcapture(n):
@@ -29,7 +29,7 @@ def iqcapture(n):
 
     # buf now has IQ data in the 16_15 format IQ0_0 IQ1_0 ... IQnfreq*8-1_0  IQ0_1......  IQnfreq*8-1_n-1
 
-    return buf
+    return list(buf)
 
 
 
@@ -105,6 +105,8 @@ def set_frequencies(freq, amplitudes=None):
     """ Set the bins and ddc values so that freq are in the associated resonator channels"""
     global _frequencies
     _frequencies = freq
+    configure('/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/rst_rfdconly_axipc/gen3_512_iqsweep.bit',
+              ignore_version=True)
     getLogger(__name__).info('setting waveform')
     set_waveform(freq, amplitudes=amplitudes)
     getLogger(__name__).info('setting resonator channels')
