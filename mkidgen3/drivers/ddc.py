@@ -63,7 +63,7 @@ class DDC(DefaultIP):
         tone_fmt = fp_factory(*self.TONE_FORMAT)
         phase_fmt = fp_factory(*self.PHASE0_FORMAT)
         fixedgroup = list(map(tone_fmt, increments)) + list(map(phase_fmt, phases))
-        fixedgroup = list(map(lambda x: x..__index__(),fixedgroup))
+        fixedgroup = list(map(lambda x: x.__index__(),fixedgroup))
         for i, (g0, g1) in enumerate(zip(*[iter(fixedgroup)] * 2)):  # take them by twos
             bits |= ((g1 << 11) | g0) << (32 * i)
         data = bits.to_bytes(32, 'little', signed=False)
