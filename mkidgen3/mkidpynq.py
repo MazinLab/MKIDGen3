@@ -75,62 +75,6 @@ def dma_status(dma):
     print(msg)
 
 
-class CaptureHierarchy(DefaultHierarchy):
-    def __init__(self, description):
-        super().__init__(description)
-        # self.raw_phase_cap =
-        # self.filt_phase_cap =
-        self.adc_cap = self.adc_capture_0
-        self.raw_iq_cap = self.iq_capture_0
-        self.dds_iq_cap = self.iq_capture_1
-        self.lp_iq_cap = None
-        self.mcdma = self.axi_mcdma_0
-
-    @staticmethod
-    def hierarchy(description):
-        for k in ('iq_capture_0','iq_capture_1','adc_capture_0', 'axi_mcdma_0'):
-            if k not in description['ip']:
-                return False
-        return True
-
-    def capture(self, n, res=8019, buffer_size=8192):
-
-        raw_groups=(0, 1, 3)
-        dds_groups=(128, 200, 255)
-
-        IQ_GROUP_BYTES = 64
-
-        raw_bytes_required = IQ_GROUP_BYTES*len(raw_groups)*n
-        dds_bytes_required = IQ_GROUP_BYTES*len(dds_groups)*n
-
-        total_bytes = raw_bytes_required +dds_bytes_required
-        getLogger(__name__).info('Capture will require {total_bytes/1024/1024} MiB of DDR')
-        if total_bytes > (2**32-1):
-            raise MemoryError('Insufficient capture space')
-
-        #TODO make this deal with all the different lanes properly
-        # TODO to support different numbers of groups we need to ensure there are enough buffers for channel that
-        #  will et the most data. That means some buffers oversized or per channel buffersize
-        buffers_needed = np.ceil(raw_bytes_required/buffer_size)
-
-        self.reset_capture()
-        self.mcdma.config_recieve(n_buffers=buffers_needed, buffer_size_bytes=buffer_size, channels=(1, 2))
-        self.raw_iq_cap.capture(n, groups=raw_groups, start=False)
-        self.dds_iq_cap.capture(n, groups=dds_groups, start=False)
-        self.raw_iq_cap.start_capture()
-        self.dds_iq_cap.start_capture()
-
-    def reset_capture(self):
-        """ Terminate any capture and prep blocks so that capture can happen"""
-        self.raw_iq_cap.halt_capture()
-        self.dds_iq_cap.halt_capture()
-
-    def capture_adc(self, n, res=8019):
-        self.mcdma.config_recieve(n_buffers=2, buffer_size_bytes=8096, channels=(1, 2))
-        self.adc_cap.capture(n, start=True)
-
-
-
 # LUT of property addresses for our data-driven properties
 _qpsk_props = [("transfer_symbol", 0), ("transfer_fft", 4),
                ("transfer_time", 60), ("reset_symbol", 8), ("reset_fft", 12),
