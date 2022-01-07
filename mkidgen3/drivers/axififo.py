@@ -1,8 +1,9 @@
 import time
 from logging import getLogger
-from pynq import allocate, DefaultIP
+from pynq import DefaultIP
 import numpy as np
 
+#TODO enhance with cutthrough support
 
 class AxisFIFO(DefaultIP):
     bindto = ['xilinx.com:ip:axi_fifo_mm_s:4.2']
@@ -39,7 +40,7 @@ class AxisFIFO(DefaultIP):
 
     def rx(self):
         """Pull all the data out of the FIFO"""
-        if not self.register_map.ISR.RS:  # a recieve is complete
+        if not self.register_map.ISR.RC:  # a recieve is complete
             return None
         self.register_map.ISR = 0xFFFFFFFF  # Write to clear reset done interrupt bits
         getLogger(__name__).debug(f'ISR at RX start: {repr(self.register_map.ISR)}')
