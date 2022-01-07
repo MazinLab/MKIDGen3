@@ -25,7 +25,7 @@ def iqcapture(n):
     _gen3_overlay.capture.axis_switch_0.set_master(1, commit=True)  # After the FIR
 
     #4 bytes per IQ * n * np.ceil(_frequencies.size/8)
-    buf = pynq.allocate((2*n*np.ceil(_frequencies.size/8), 2), 'i2', target=_mig_overlay.MIG0)  # 2**30 is 4 GiB
+    buf = pynq.allocate((2*n*int(np.ceil(_frequencies.size/8)), 2), 'i2', target=_mig_overlay.MIG0)  # 2**30 is 4 GiB
 
     captime = _gen3_overlay.capture.iq_capture_0.capture(n, groups=np.arange(np.ceil(_frequencies.size/8), dtype=int),
                                                          device_addr=buf.device_address, start=False)
@@ -63,12 +63,12 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False):
         else:
             if amplitudes is None:
                 amplitudes = np.ones_like(freq)
+
             dactable = generateTones(frequencies=freq, n_samples=n_samples, sample_rate=sample_rate,
                                      amplitudes=amplitudes)
             comb = dactable['I'] + 1j * dactable['Q']
 
-    print(f"Comb shape: {comb.shape}. \nTotal Samples: {comb.size}. "
-          f"Memory: {comb.size * 8 / 1024 ** 2:.0f} MB\n")
+    print(f"Comb shape: {comb.shape}. \nTotal Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
     _gen3_overlay.dac_table_axim_0.replay(comb)
 
 
@@ -120,23 +120,6 @@ def set_frequencies(freq, amplitudes=None):
     set_tones(freq)
 
 
-def rfdc_status():
-    rfdc = _gen3_overlay.usp_rf_data_converter_0
-    regmap = {'Restart Power-On State Machine': 0x0004,
-              'Restart State': 0x0008,
-              'Current State': 0x000C,
-              'Reset Count': 0x0038,
-              'Interrupt Status': 0x0200,
-              'Tile Common Status': 0x0228,
-              'Tile Disable': 0x0230}
-    tilemap = [(f'ADC{i}', v) for i, v in enumerate((0x14000, 0x18000, 0x1C000, 0x20000))]
-    tilemap += [(f'DAC{i}', v) for i, v in enumerate((0x04000, 0x08000))]  # , 0x0C000, 0x10000))]
-    tilemap = dict(tilemap)
-    print(rfdc.read(0x0008))
-    for t, taddr in tilemap.items():
-        print(t)
-        for k, r in regmap.items():
-            print(f'  {k}:  {rfdc.read(taddr + r)}')
 
 
 def plstatus():
@@ -146,13 +129,15 @@ def plstatus():
 
 def configure(bitstream, mig=False, ignore_version=False, clocks=False):
     import pynq, xrfclk
-    global _gen3_overlay, _mig_overlay
+    from pynq import PL
 
+    global _gen3_overlay, _mig_overlay
+    bitstream='/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/rst_rfdconly_axipc/gen3_512_iqsweep.bit'
     _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=True)
 
     if mig:
-        _mig_overlay = pynq.Overlay('mig_modified_ip_layout_mem_topology.xclbin', device=pynq.Device.devices[1],
-                                    download=True)
+        migbit='/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/mig_modified_ip_layout_mem_topology.xclbin'
+        _mig_overlay = pynq.Overlay(migbit, device=pynq.Device.devices[0], download=True)
 
     if clocks:
         try:

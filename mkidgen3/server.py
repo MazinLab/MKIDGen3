@@ -11,7 +11,11 @@ SERVER_PORT = 50001
 class IQCaptureAPI(Resource):
     def get(self, n_samples):
         try:
-            data = gen3.iqcapture(int(n_samples))
+            n_samples=int(n_samples)
+            print(f'caturing {n_samples}')
+            getLogger(__name__).info(f'caturing {n_samples}')
+            data = list(np.arange(n_samples)/n_samples)
+            #data = gen3.iqcapture(int(n_samples))
         except RuntimeError:
             return 'Error: did you set frequencies?', 400
         return {'data': data}, 200
