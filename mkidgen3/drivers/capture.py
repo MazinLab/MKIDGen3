@@ -333,7 +333,7 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axi256 = self.write_axi256_0
 
     @staticmethod
-    def hierarchy(description):
+    def checkhierarchy(description):
         for k in ('write_axi256_0', 'filter_iq_0'):
             if k not in description['ip']:
                 return False
@@ -342,7 +342,7 @@ class CaptureHierarchy(DefaultHierarchy):
     def captureiq(self, n, buffer, groups='all'):
         """ Capture n samples of each specified iq into buffer, returning the time it will take"""
         if not isinstance(buffer, int):
-            space = buffer.size  #TODO convert to number of bytes
+            space = buffer.size * buffer.dtype.itemsize
             addr = buffer.device_address
         else:
             addr = buffer

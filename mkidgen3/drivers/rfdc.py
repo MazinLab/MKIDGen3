@@ -1,8 +1,7 @@
-
-
-rfdc = _gen3_overlay.usp_rf_data_converter_0
-
 def status():
+    import mkidgen3
+    rfdc = mkidgen3._gen3_overlay.usp_rf_data_converter_0
+
     regmap = {'Restart Power-On State Machine': 0x0004,
               'Restart State': 0x0008,
               'Current State': 0x000C,
@@ -21,4 +20,6 @@ def status():
 
 
 def reset():
+    import mkidgen3
+    rfdc = mkidgen3._gen3_overlay.usp_rf_data_converter_0
     rfdc.write(0x0004, 0x00000001)
