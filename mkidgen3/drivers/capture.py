@@ -205,6 +205,71 @@ class FilterIQ(DefaultIP):
         self.write(self.ADDR_LASTGRP, last)
 
 
+class FilterPhase(DefaultIP):
+    bindto = ['mazinlab:mkidgen3:filter_phase:0.2']
+    ADDR_KEEP = 0x10  # 4 words
+    ADDR_LASTGRP = 0x24  # 7 bits
+
+    def __init__(self, description):
+        super().__init__(description=description)
+
+    @property
+    def n_kept(self):
+        """ Return the number of groups being preserved"""
+        return len(self.keep)
+
+    @property
+    def keep(self):
+        """
+        Get the phase groups that are being preserved. Returns an iterable of resonator channel group numbers (0-127).
+
+        e.g. i in keep => resonator channels i*16 ... i*16+15 are preserved
+        """
+        ret = []
+        for i in range(4):
+            k = self.read(self.ADDR_KEEP + 0x4 * i)
+            ret += [j + 32*i for j in range(32) if k & (1 << j)]
+        return ret
+
+    @keep.setter
+    def keep(self, groups):
+        """
+        Tell the block to preserve phase groups. Set to an iterable of resonator channel phase group numbers (0-129). If
+        iterable contains values > 127 it is assumed numbers indicate resonator channels and the necessary groups
+        will be computed. 'all' may be used as a shortcut.
+
+        Phases are captured in 128 groups of 16, so to capture the values of resonator channels 0, 37,
+        and 2047 groups must be set to either 'all' or should
+        include (0, 2, 127). Note that this will cause phases for channels 0-16, 32-48, and 2032-2047 to be captured.
+        """
+
+        # Determine keep, keep a group if all or if the group number is in groups
+        keep = np.zeros(4, dtype=np.uint32)
+        if isinstance(groups, str):
+            if groups.lower() != 'all':
+                raise ValueError("The only legal string for keep is 'all'")
+            keep += 0xFFFFFFFF
+            last = 127
+        else:
+
+            if max(groups) > 127:
+                groups = set([g//16 for g in groups])  # convert channel to group
+            last = max(groups)
+
+            if max(groups) > 127:
+                raise ValueError(f'Groups must be  not in range 0-127')
+
+            for g in groups:
+                if not 0 <= g < 128:
+                    raise ValueError(f'Groups {g} not in range 0-127')
+                i = g // 32  # (0-7)
+                keep[i] |= (1 << (g % 32))  # set the correct bit
+
+        for i, k in enumerate(keep):
+            self.write(self.ADDR_KEEP + 0x4 * i, int(k))
+        self.write(self.ADDR_LASTGRP, last)
+
+
 class WriteAXI256(DefaultIP):
     bindto = ['mazinlab:mkidgen3:write_axi256:0.1']
     ADDR_CAPTURESIZE = 0x10  # 1 27bit word
@@ -303,8 +368,8 @@ class ADCCapture(DefaultIP):
         """
 
         if t_ms is not None:
-            n = int(np.floor(
-                t_ms * 10e-3 * 4.096e9 / 8))  # n transactions = t[sec] * 4.096e9[samples/sec]*1[transaction]/8[samples]
+            # n transactions = t[sec] * 4.096e9[samples/sec]*1[transaction]/8[samples]
+            n = int(np.floor(t_ms * 10e-3 * 4.096e9 / 8))
 
         # Set capturesize, this sets the number of chunks of 8 sequential IQ samples that are captured.
         max_n = MAX_CAP_RAM_BYTES // 32
@@ -313,7 +378,7 @@ class ADCCapture(DefaultIP):
 
         # Set the output address.
         addr = PL_DDR4_ADDR if addr is None else PL_DDR4_ADDR + int(addr) * 2 ** 12
-        self.register_map.iqout_1 = addr & (0xffffffff)  # set low  address
+        self.register_map.iqout_1 = addr & 0xffffffff  # set low address
         self.register_map.iqout_2 = addr >> 32  # set high address
 
         if start:

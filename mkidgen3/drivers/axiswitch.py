@@ -16,7 +16,15 @@ class AxisSwitch(DefaultIP):
 
     @property
     def status(self):
-        self.read(0x0040)
+        return self.read(0x0040)
+
+    @property
+    def master(self):
+        return self.status & 0x7FFFFFFF
+
+    @property
+    def disabled(self):
+        return bool(self.status>>31)
 
     def commit(self):
         """Commit config, triggers a soft 16 cycle reset"""
