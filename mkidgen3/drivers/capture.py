@@ -475,3 +475,80 @@ class CaptureHierarchy(DefaultHierarchy):
 
         self.axi256.capture(capturesize, addr)
         return captime
+
+
+class _AXIS2MM:
+
+    @property
+    def CMD_CONTROL(self):
+        reg = self.read(0)
+        names = ('r_busy', 'r_err', 'r_complete', 'r_continuous', 'r_increment_n',
+                 'r_tlast_syncd_n', 'decode_error', 'slave_error', 'overflow_error',
+                 'aborting', 'fifo_len', 'abort')
+        bits = (31, 30, 29, 28, 27, 26, 25, 24, 23, 22, (20, 16), (15, 8))
+
+        def cvrt(x, bits):
+            if isinstance(bits, int):
+                return bool(1 & (reg >> bits))
+            else:
+                return (reg >> bits[1]) & (2 ** (bits[0] - bits[1] + 1) - 1)
+
+        return {k: cvrt(reg, v) for k, v in zip(names, bits)}
+
+    @property
+    def addr(self):
+        """5 bytes"""
+        return self.read(0x10) | ((self.read(0x14) & 0xffff) << 32)
+
+    @addr.setter
+    def addr(self, x):
+        #         x&=(2**35-1)
+        #         self.write(0x10, x&0xffffffff)
+        #         self.write(0x14, (x>>32)&0xffffffff)
+        self.write(0x10, x.to_bytes(8, 'little'))
+
+    @property
+    def len(self):
+        return self.read(0x18)
+
+    @len.setter
+    def len(self, x):
+        """A number of bytes, not beats!"""
+        self.write(0x18, x)
+
+    def abort(self):
+        #         self.write(0, (self.read(0)^0xff00)|0x2600)
+        self.write(0, 0x26000000)
+
+    def clear_error(self):
+        self.write(0, 0x40000000)
+
+    def start(self, continuous=False, increment=True):
+        x = 0xc0000000  # start and clear error
+        x |= continuous << 28
+        x |= (not increment) << 27
+        self.write(0, x)
+
+
+class AXIS2MMIP(DefaultIP, _AXIS2MM):
+    bindto = ['xilinx.com:module_ref:axis2mm: 1.0']
+    
+    def __init__(self, description):
+        super().__init__(description=description)
+
+
+class AXIS2MMHier(DefaultHierarchy, _AXIS2MM):
+    def __init__(self, description):
+        super().__init__(description)
+        self._core = self.S_AXIL
+        self.read = self._core.read
+        self.mmio = self._core.mmio
+        self.write = self._core.write
+
+    @staticmethod
+    def checkhierarchy(description):
+        try:
+            t = description['ip']['S_AXIL']['type']
+        except KeyError:
+            return False
+        return t =='xilinx.com:module_ref:axis2mm:1.0'
