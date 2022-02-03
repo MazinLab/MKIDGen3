@@ -1,6 +1,6 @@
 import numpy as np
 from pynq import allocate, DefaultIP, DefaultHierarchy
-
+import time
 import mkidgen3.mkidpynq
 from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR  # config, overlay details
 from logging import getLogger
@@ -389,23 +389,43 @@ class ADCCapture(DefaultIP):
 
 
 class CaptureHierarchy(DefaultHierarchy):
+    IQ_MAP = {'rawiq': 2, 'iq': 0, 'ddciq': 1}
+    SOURCE_MAP = dict(adc=0, iq=1, rawiq=1, phase=3)
+
     def __init__(self, description):
         super().__init__(description)
-        # self.adc_cap = self.adc_capture_0
-        # self.raw_iq_cap = self.iq_capture_0
-        # self.dds_iq_cap = self.iq_capture_1
-        self.filter_iq = self.filter_iq_0
-        self.axi256 = self.write_axi256_0
+
+        self.filter_iq = {}
+        for n, i in self.IQ_MAP.items():
+            try:
+                dev = getattr(self, f'filter_iq_{i}')
+            except AttributeError:
+                dev = None
+                getLogger(__name__).debug(f'Capture of {n} not supported')
+            self.filter_iq[n] = dev
+
+        self.switch = self.axis_switch_0
+        self.filter_phase = self.filter_phase_0
+        self.axis2mm = self.axis2mm_1  #TODO rename in block design
 
     @staticmethod
     def checkhierarchy(description):
-        for k in ('write_axi256_0', 'filter_iq_0'):
+        for k in ('axis2mm_1', 'filter_iq_0', 'axis_switch_0' ):
             if k not in description['ip']:
                 return False
         return True
 
-    def captureiq(self, n, buffer, groups='all'):
-        """ Capture n samples of each specified iq into buffer, returning the time it will take"""
+    def _capture(self, source, n, buffer):
+        self.switch.set_slave(self.SOURCE_MAP[source], commit=True)
+        self.axis2mm.abort()
+        self.clear_error()
+        if not self.axis2mm.ready:
+            raise IOError("capture core unable not ready, this shouldn't happen")
+        self.axis2mm.addr = buffer
+        self.axis2mm.len = n
+        self.axis2mm.start(continuous=False, increment=True)
+
+    def _parse_buffer(self, buffer):
         if not isinstance(buffer, int):
             space = buffer.size * buffer.dtype.itemsize
             addr = buffer.device_address
@@ -413,74 +433,127 @@ class CaptureHierarchy(DefaultHierarchy):
             addr = buffer
             space = 2**32-1 - (buffer-mkidgen3.mkidpynq.PL_DDR4_ADDR)
 
-        if addr%4096 != 0:
-            getLogger(__name__).warning('Address is not 4K aligned, may cause issues.')
+        if addr % 4096 != 0:
+            getLogger(__name__).warning('Address is not 4K aligned, will cause issues.')
 
-        self.filter_iq.keep = groups
-        keep = self.filter_iq.keep
-        n_groups = keep
+        return addr, space
+
+    def capture_iq(self, n, buffer=None, groups='all', tap_location='iq'):
+        """
+        potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
+        if buffer is None one will be allocated
+        """
+        """ Capture n samples of each specified iq into buffer, returning the time it will take"""
+        addr, space = self._parse_buffer(buffer)
+
+        if self.filter_iq.get(tap_location, None) is None:
+            raise ValueError(f'Unsupported IQ capture location: {tap_location}')
+        self.filter_iq[tap_location].keep = groups
+        n_groups = len(self.filter_iq[tap_location].keep)
 
         # Compute capturesize, this is the number of IQ groups to be written to DDR4
-        capturesize = n * n_groups
-
-        if capturesize*32 > space:
-            capturesize = space // 32
-            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {capturesize/n_groups} '
-                                        f'samples.')
+        capture_bytes = n * n_groups * 32
+        if capture_bytes > space:
+            n = space // (n_groups*32)
+            capture_bytes = n * n_groups * 32
+            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {n} samples.')
 
         # NB this ignores the final bit from a non-128 multiple
-        datavolume_mb = capturesize * 32 / 1024 ** 2
+        datavolume_mb = capture_bytes / 1024 ** 2
         datarate_mbps = 32 * 512 * n_groups / 256
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Will capture ~{datavolume_mb} MB "
-               f"of data @ {datarate_mbps} MBps. ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
+        msg = (f"Will capture ~{datavolume_mb} MB of data @ {datarate_mbps} MBps. "
+               f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        #Set the switch if needed
-        # self.axi256_switch.select(1)
+        self._capture(self.SOURCE_MAP[tap_location], capture_bytes, addr)
+        time.sleep(captime)
 
-        self.axi256.capture(capturesize, addr)
-        return captime
+        #memory will vary first in I/Q then in resonator, then in sample
+        #so IQ stride is elementwise , resonator stride is 4 bytes/2 elements and sample stride is 4*n_groups
 
-    def captureraw(self, n, buffer):
-        if not isinstance(buffer, int):
-            space = buffer.size  #TODO convert to number of bytes
-            addr = buffer.device_address
-        else:
-            addr = buffer
-            space = 2**32-1 - (buffer-mkidgen3.mkidpynq.PL_DDR4_ADDR)
+        return self._return_array(addr, capture_bytes, (2, n_groups*8))
 
-        if addr%4096 != 0:
-            getLogger(__name__).warning('Address is not 4K aligned, may cause issues.')
+    def _return_array(self, addr, capture_bytes, stride):
+        pass
 
-        capturesize = n
+    def capture_adc(self, n, duration=False, buffer=None):
+        """
+        samples are captured in multiples of 8 will be clipped ad necessary
+        """
+        addr, space = self._parse_buffer(buffer)
 
-        if capturesize*32 > space:
-            capturesize = space // 32
-            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {capturesize} '
-                                        f'samples.')
+        if duration:
+            # n transactions = t[sec] * 4.096e9[samples/sec]*1[transaction]/8[samples]
+            n = int(np.floor(n * 10e-3 * 4.096e9 / 8))
+
+        n -= n % 8
+
+        # Compute capturesize, this is the number of IQ groups to be written to DDR4
+        capture_bytes = n * 32
+        if capture_bytes > space:
+            n = space // 32
+            capture_bytes = n * 32
+            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {n} samples.')
 
         # NB this ignores the final bit from a non-128 multiple
-        datavolume_mb = capturesize * 32 / 1024 ** 2
+        datavolume_mb = capture_bytes / 1024 ** 2
         datarate_mbps = 32 * 512
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Will capture ~{datavolume_mb} MB "
-               f"of data @ {datarate_mbps} MBps. ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
+        msg = (f"Will capture ~{datavolume_mb} MB of data @ {datarate_mbps} MBps. "
+               f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        #Set the switch if needed
-        # self.axi256_switch.select(0)
+        self._capture(self.SOURCE_MAP['adc'], capture_bytes, addr)
+        time.sleep(captime)
 
-        self.axi256.capture(capturesize, addr)
-        return captime
+        #memory will vary first in I/Q then in sample so IQ stride is 2 bytes, sample stride is 4 bytes
+
+        return self._return_array(addr, capture_bytes, (2, ))
+
+    def capture_phase(self, n, groups='all', duration=False, buffer=None):
+        """
+        samples are captured in multiples of 16 will be clipped ad necessary
+        groups is 0-127 or all
+        """
+        addr, space = self._parse_buffer(buffer)
+
+        self.filter_phase.keep = groups
+        n_groups = len(self.filter_phase.keep)
+
+        #each group is 16 phases (32 bytes)
+
+        # Compute capturesize, this is the number of phase groups to be written to DDR4
+        capture_bytes = n * n_groups * 32
+        if capture_bytes > space:
+            n = space // (n_groups*32)
+            capture_bytes = n * n_groups * 32
+            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {n} samples.')
+
+        # NB this ignores the final bit from a non-128 multiple
+        datavolume_mb = capture_bytes / 1024 ** 2
+        datarate_mbps = 32 * 512/4 * n_groups/128  #phases arrive 4@512 so the filter outputs every 4 clocks
+        captime = datavolume_mb / datarate_mbps
+
+        msg = (f"Will capture ~{datavolume_mb} MB of data @ {datarate_mbps} MBps. "
+               f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
+        getLogger(__name__).debug(msg)
+
+        self._capture(self.SOURCE_MAP['phase'], capture_bytes, addr)
+        time.sleep(captime)
+
+        #memory will vary first in resonator then in sample so sample stride is 2*n_groups*16 bytes
+
+        return self._return_array(addr, capture_bytes, (16*n_groups, ))
+
 
 
 class _AXIS2MM:
 
     @property
-    def CMD_CONTROL(self):
+    def cmd_ctrl_reg(self):
         reg = self.read(0)
         names = ('r_busy', 'r_err', 'r_complete', 'r_continuous', 'r_increment_n',
                  'r_tlast_syncd_n', 'decode_error', 'slave_error', 'overflow_error',
@@ -516,6 +589,11 @@ class _AXIS2MM:
         """A number of bytes, not beats!"""
         self.write(0x18, x)
 
+    @property
+    def ready(self):
+        stat = self.cmd_ctrl_reg
+        return not stat['r_busy'] and not stat['r_err'] and stat['r_complete']
+
     def abort(self):
         #         self.write(0, (self.read(0)^0xff00)|0x2600)
         self.write(0, 0x26000000)
@@ -532,7 +610,7 @@ class _AXIS2MM:
 
 class AXIS2MMIP(DefaultIP, _AXIS2MM):
     bindto = ['xilinx.com:module_ref:axis2mm: 1.0']
-    
+
     def __init__(self, description):
         super().__init__(description=description)
 
