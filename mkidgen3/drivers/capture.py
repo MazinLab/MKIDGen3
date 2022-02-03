@@ -410,7 +410,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
     @staticmethod
     def checkhierarchy(description):
-        for k in ('axis2mm_1', 'filter_iq_0', 'axis_switch_0' ):
+        for k in ('filter_iq_0', 'axis_switch_0'):
             if k not in description['ip']:
                 return False
         return True
