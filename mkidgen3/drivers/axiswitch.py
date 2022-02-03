@@ -7,24 +7,18 @@ class AxisSwitch(DefaultIP):
     def __init__(self, description):
         super().__init__(description=description)
 
-    def set_master(self, master, slave=0, disable=False, commit=False):
+    def set_driver(self, slave=0, master=0, disable=False, commit=True):
         """Set the slave for the master"""
-        cfg = 0x80000000 if disable else (slave & 0b111)
+        cfg = slave & 0b111
+        master = min(max(int(master), 0), 15)
+        if disable:
+            cfg |= 0x80000000
         self.write(0x0040 + master * 4, cfg)
         if commit:
             self.commit()
 
-    @property
-    def status(self):
-        return self.read(0x0040)
-
-    @property
-    def master(self):
-        return self.status & 0x7FFFFFFF
-
-    @property
-    def disabled(self):
-        return bool(self.status>>31)
+    def driver_for(self, master=0):
+        return self.read(0x0040 + min(max(int(master), 0), 15) * 4)
 
     def commit(self):
         """Commit config, triggers a soft 16 cycle reset"""
