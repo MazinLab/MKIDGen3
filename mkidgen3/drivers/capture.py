@@ -592,7 +592,7 @@ class _AXIS2MM:
     @property
     def ready(self):
         stat = self.cmd_ctrl_reg
-        return not stat['r_busy'] and not stat['r_err'] and stat['r_complete']
+        return not stat['r_busy'] and not stat['r_err'] and not stat['aborting']
 
     def abort(self):
         #         self.write(0, (self.read(0)^0xff00)|0x2600)
