@@ -425,133 +425,153 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
 
-    def _parse_buffer(self, buffer):
-        if not isinstance(buffer, int):
-            space = buffer.size * buffer.dtype.itemsize
-            addr = buffer.device_address
-        else:
-            addr = buffer
-            space = 2**32-1 - (buffer-mkidgen3.mkidpynq.PL_DDR4_ADDR)
+    # def _parse_buffer(self, buffer):
+    #     if not isinstance(buffer, int):
+    #         space = buffer.size * buffer.dtype.itemsize
+    #         addr = buffer.device_address
+    #     else:
+    #         addr = buffer
+    #         space = 2**32-1 - (buffer-mkidgen3.mkidpynq.PL_DDR4_ADDR)
+    #
+    #     if addr % 4096 != 0:
+    #         getLogger(__name__).warning('Address is not 4K aligned, will cause issues.')
+    #
+    #     return addr, space
+    #
+    # def _allocate(self, shape, format, capture_bytes, addr=None):
+    #     if True:
+    #         try:
+    #             buffer = allocate(shape, dtype=format, target=self.ddr4_0)
+    #         except RuntimeError:
+    #             getLogger(__name__).warning(f'Insufficient space for requested samples.')
+    #             raise RuntimeError('Insufficient free space')
+    #     else:
+    #         getLogger(__name__).warning('pynq.allocate does not support MIG will return MMIO object. Exercise caution.')
+    #         buffer = pynq.MMIO(addr if addr else mkidgen3.mkidpynq.PL_DDR4_ADDR, length=capture_bytes)
+    #
+    #     return buffer
 
-        if addr % 4096 != 0:
-            getLogger(__name__).warning('Address is not 4K aligned, will cause issues.')
-
-        return addr, space
-
-    def capture_iq(self, n, buffer=None, groups='all', tap_location='iq'):
+    def capture_iq(self, n, buffer=None, groups='all', tap_location='iq', duration=False):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
         if buffer is None one will be allocated
         """
         """ Capture n samples of each specified iq into buffer, returning the time it will take"""
-        addr, space = self._parse_buffer(buffer)
+        if duration:
+            # n samples = t[ms] * 2e6[samples/sec]
+            n = int(np.floor(n * 2e-3 * 1e6))
+
+        if n <= 0:
+            raise ValueError('Must request at least 1 sample')
 
         if self.filter_iq.get(tap_location, None) is None:
             raise ValueError(f'Unsupported IQ capture location: {tap_location}')
         self.filter_iq[tap_location].keep = groups
         n_groups = len(self.filter_iq[tap_location].keep)
 
-        # Compute capturesize, this is the number of IQ groups to be written to DDR4
+        # each group is 8 IQ (32 bytes)
         capture_bytes = n * n_groups * 32
-        if capture_bytes > space:
-            n = space // (n_groups*32)
-            capture_bytes = n * n_groups * 32
-            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {n} samples.')
+
+        try:
+            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_0)
+        except RuntimeError:
+            getLogger(__name__).warning(f'Insufficient space for requested samples.')
+            raise RuntimeError('Insufficient free space')
+        addr = buffer.device_address
 
         # NB this ignores the final bit from a non-128 multiple
         datavolume_mb = capture_bytes / 1024 ** 2
         datarate_mbps = 32 * 512 * n_groups / 256
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Will capture ~{datavolume_mb} MB of data @ {datarate_mbps} MBps. "
+        msg = (f"Capturing {datavolume_mb:.1f} MB of data @ {datarate_mbps:.1f} MBps. "
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
         self._capture(tap_location, capture_bytes, addr)
         time.sleep(captime)
 
-        #memory will vary first in I/Q then in resonator, then in sample
-        #so IQ stride is elementwise , resonator stride is 4 bytes/2 elements and sample stride is 4*n_groups
-
-        return self._return_array(addr, capture_bytes, (2, n_groups*8))
-
-    def _return_array(self, addr, capture_bytes, stride):
-        pass
+        return buffer
 
     def capture_adc(self, n, duration=False, buffer=None):
         """
-        samples are captured in multiples of 8 will be clipped ad necessary
+        samples are captured in multiples of 8 will be clipped as necessary
         """
-        addr, space = self._parse_buffer(buffer)
+        if n <= 0:
+            raise ValueError('Must request at least 1 sample')
 
         if duration:
-            # n transactions = t[sec] * 4.096e9[samples/sec]*1[transaction]/8[samples]
-            n = int(np.floor(n * 10e-3 * 4.096e9 / 8))
+            # n samples = t[ms] * 4.096e9[samples/sec]
+            n = int(np.floor(n * 1e-3 * 4.096e9))
 
         n -= n % 8
 
-        # Compute capturesize, this is the number of IQ groups to be written to DDR4
-        capture_bytes = n * 32
-        if capture_bytes > space:
-            n = space // 32
-            capture_bytes = n * 32
-            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {n} samples.')
+        if n <= 0:
+            n = 8
 
-        # NB this ignores the final bit from a non-128 multiple
+        # Compute capturesize, this is the number of adc samples to be written
+        capture_bytes = n * 4
+
+        try:
+            buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0)
+        except RuntimeError:
+            getLogger(__name__).warning(f'Insufficient space for requested samples.')
+            raise RuntimeError('Insufficient free space')
+        addr = buffer.device_address
+
         datavolume_mb = capture_bytes / 1024 ** 2
         datarate_mbps = 32 * 512
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Will capture ~{datavolume_mb} MB of data @ {datarate_mbps} MBps. "
+        msg = (f"Capturing {datavolume_mb} MB of data @ {datarate_mbps} MB/s. "
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
         self._capture('adc', capture_bytes, addr)
         time.sleep(captime)
-
-        #memory will vary first in I/Q then in sample so IQ stride is 2 bytes, sample stride is 4 bytes
-
-        return self._return_array(addr, capture_bytes, (2, ))
+        return buffer
 
     def capture_phase(self, n, groups='all', duration=False, buffer=None):
         """
         samples are captured in multiples of 16 will be clipped ad necessary
         groups is 0-127 or all
         """
-        addr, space = self._parse_buffer(buffer)
+        if duration:
+            # n samples = t[ms] * 1e6[samples/sec]
+            n = int(np.floor(n * 1e-3 * 1e6))
+
+        if n <= 0:
+            raise ValueError('Must request at least 1 sample')
 
         self.filter_phase.keep = groups
         n_groups = len(self.filter_phase.keep)
 
-        #each group is 16 phases (32 bytes)
+        # each group is 16 phases (32 bytes)
+        capture_bytes = n * 2 * n_groups*16
 
-        # Compute capturesize, this is the number of phase groups to be written to DDR4
-        capture_bytes = n * n_groups * 32
-        if capture_bytes > space:
-            n = space // (n_groups*32)
-            capture_bytes = n * n_groups * 32
-            getLogger(__name__).warning(f'Insufficient space for requested, truncating to {n} samples.')
+        try:
+            buffer = allocate((n, n_groups*16), dtype='i2', target=self.ddr4_0)
+        except RuntimeError:
+            getLogger(__name__).warning(f'Insufficient space for requested samples.')
+            raise RuntimeError('Insufficient free space')
+        addr = buffer.device_address
 
         # NB this ignores the final bit from a non-128 multiple
         datavolume_mb = capture_bytes / 1024 ** 2
-        datarate_mbps = 32 * 512/4 * n_groups/128  #phases arrive 4@512 so the filter outputs every 4 clocks
+        datarate_mbps = 32 * 512/4 * n_groups/128   #phases arrive 4@512 so the filter outputs every 4 clocks
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Will capture ~{datavolume_mb} MB of data @ {datarate_mbps} MBps. "
+        msg = (f"Capturing ~{datavolume_mb:.2f} MB of data @ {datarate_mbps:.1f} MBps. "
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
         self._capture('phase', capture_bytes, addr)
         time.sleep(captime)
 
-        #memory will vary first in resonator then in sample so sample stride is 2*n_groups*16 bytes
-
-        return self._return_array(addr, capture_bytes, (16*n_groups, ))
-
+        return buffer
 
 
 class _AXIS2MM:
-
     @property
     def cmd_ctrl_reg(self):
         reg = self.read(0)
