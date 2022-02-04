@@ -418,7 +418,7 @@ class CaptureHierarchy(DefaultHierarchy):
     def _capture(self, source, n, buffer):
         self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
         self.axis2mm.abort()
-        self.clear_error()
+        self.axis2mm.clear_error()
         if not self.axis2mm.ready:
             raise IOError("capture core unable not ready, this shouldn't happen")
         self.axis2mm.addr = buffer
@@ -467,7 +467,7 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        self._capture(self.SOURCE_MAP[tap_location], capture_bytes, addr)
+        self._capture(tap_location, capture_bytes, addr)
         time.sleep(captime)
 
         #memory will vary first in I/Q then in resonator, then in sample
@@ -506,7 +506,7 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        self._capture(self.SOURCE_MAP['adc'], capture_bytes, addr)
+        self._capture('adc', capture_bytes, addr)
         time.sleep(captime)
 
         #memory will vary first in I/Q then in sample so IQ stride is 2 bytes, sample stride is 4 bytes
@@ -541,7 +541,7 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        self._capture(self.SOURCE_MAP['phase'], capture_bytes, addr)
+        self._capture('phase', capture_bytes, addr)
         time.sleep(captime)
 
         #memory will vary first in resonator then in sample so sample stride is 2*n_groups*16 bytes
