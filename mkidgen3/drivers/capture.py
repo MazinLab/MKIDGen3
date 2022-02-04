@@ -416,7 +416,7 @@ class CaptureHierarchy(DefaultHierarchy):
         return True
 
     def _capture(self, source, n, buffer):
-        self.switch.set_slave(self.SOURCE_MAP[source], commit=True)
+        self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
         self.axis2mm.abort()
         self.clear_error()
         if not self.axis2mm.ready:
