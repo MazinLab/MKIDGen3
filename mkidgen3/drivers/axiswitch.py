@@ -17,6 +17,9 @@ class AxisSwitch(DefaultIP):
         if commit:
             self.commit()
 
+    def is_disabled(self, master=0):
+        return (self.read(0x0040 + min(max(int(master), 0), 15) * 4) & 0xf0000000) > 0
+
     def driver_for(self, master=0):
         return self.read(0x0040 + min(max(int(master), 0), 15) * 4)
 
