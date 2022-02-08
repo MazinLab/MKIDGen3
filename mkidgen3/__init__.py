@@ -42,7 +42,7 @@ def iqcapture(n):
 
 def set_waveform(freq, amplitudes=None, attenuations=None, simple=False):
     """ freq in Hz amplitude 0-1"""
-    from .daccomb import generate, generateTones
+    from .daccomb import daccomb, generate_dac_comb
     n_samples = 2 ** 19
     sample_rate = 4.096e9
     n_res = 2048
@@ -58,15 +58,15 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False):
             comb += amplitudes[i] * np.exp(1j * (t * freq[i] + phases[i]))
     else:
         if attenuations is not None:
-            comb = generate(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
+            comb = daccomb(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
                             sample_rate=sample_rate)['comb']
         else:
             if amplitudes is None:
                 amplitudes = np.ones_like(freq)
 
-            dactable = generateTones(frequencies=freq, n_samples=n_samples, sample_rate=sample_rate,
+            dactable = generate_dac_comb(frequencies=freq, n_samples=n_samples, sample_rate=sample_rate,
                                      amplitudes=amplitudes)
-            comb = dactable['I'] + 1j * dactable['Q']
+            comb = dactable['iq']
 
     print(f"Comb shape: {comb.shape}. \nTotal Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
     _gen3_overlay.dac_table_axim_0.replay(comb)
