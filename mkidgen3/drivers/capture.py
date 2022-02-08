@@ -404,7 +404,7 @@ class CaptureHierarchy(DefaultHierarchy):
                 getLogger(__name__).debug(f'Capture of {n} not supported')
             self.filter_iq[n] = dev
 
-        self.switch = self.axis_switch_0
+        self.switch = getattr(self,'axis_switch_0', None) or getattr(self,'axis_switch')
         self.filter_phase = self.filter_phase_0
         self.axis2mm = self.axis2mm_0
 
