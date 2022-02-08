@@ -49,7 +49,7 @@ class RFDCHierarchy(DefaultHierarchy):
     def select_adc(self, adc='single_ended'):
         if self.switch is None:
             raise RuntimeError('RFDCHierarchy does not support switching ADCs')
-        self.switch.set_driver(slave=int(adc is 'single_ended'))
+        self.switch.set_driver(slave=int(adc == 'single_ended'))
 
     @property
     def active_adc(self):

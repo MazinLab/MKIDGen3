@@ -164,7 +164,7 @@ class FilterIQ(DefaultIP):
         ret = []
         for i in range(8):
             k = self.read(self.ADDR_KEEP + 0x4 * i)
-            ret += [j + 32*i for j in range(32) if k & (1 << j)]
+            ret += [j + 32 * i for j in range(32) if k & (1 << j)]
         return ret
 
     @keep.setter
@@ -189,7 +189,7 @@ class FilterIQ(DefaultIP):
         else:
 
             if max(groups) > 255:
-                groups = set([g//8 for g in groups])  # convert channel to group
+                groups = set([g // 8 for g in groups])  # convert channel to group
             last = max(groups)
 
             if max(groups) > 255:
@@ -228,7 +228,7 @@ class FilterPhase(DefaultIP):
         ret = []
         for i in range(4):
             k = self.read(self.ADDR_KEEP + 0x4 * i)
-            ret += [j + 32*i for j in range(32) if k & (1 << j)]
+            ret += [j + 32 * i for j in range(32) if k & (1 << j)]
         return ret
 
     @keep.setter
@@ -253,7 +253,7 @@ class FilterPhase(DefaultIP):
         else:
 
             if max(groups) > 127:
-                groups = set([g//16 for g in groups])  # convert channel to group
+                groups = set([g // 16 for g in groups])  # convert channel to group
             last = max(groups)
 
             if max(groups) > 127:
@@ -273,7 +273,7 @@ class FilterPhase(DefaultIP):
 class WriteAXI256(DefaultIP):
     bindto = ['mazinlab:mkidgen3:write_axi256:0.1']
     ADDR_CAPTURESIZE = 0x10  # 1 27bit word
-    ADDR_OUT = 0x18 # 2 words
+    ADDR_OUT = 0x18  # 2 words
 
     def __init__(self, description):
         super().__init__(description=description)
@@ -296,7 +296,7 @@ class WriteAXI256(DefaultIP):
             getLogger(__name__).debug("Requested capture of zero samples, ignoring request")
             return
 
-        size = size & (2**28-1)
+        size = size & (2 ** 28 - 1)
         datavolume_mb = size * 32 / 1024 ** 2
 
         msg = f"Capturing ~{datavolume_mb} MB of data."
@@ -406,14 +406,24 @@ class CaptureHierarchy(DefaultHierarchy):
 
         self.switch = self.axis_switch_0
         self.filter_phase = self.filter_phase_0
-        self.axis2mm = self.axis2mm_1  #TODO rename in block design
+        self.axis2mm = self.axis2mm_0
 
     @staticmethod
     def checkhierarchy(description):
-        for k in ('filter_iq_0', 'axis_switch_0'):
-            if k not in description['ip']:
-                return False
-        return True
+        have_filteriq = False
+        have_switch = False
+        have_axis2mm = False
+        for k in description['ip']:
+            kind, _, version = description['ip'][k].get('type', '').rpartition(':')
+            if not kind:
+                continue
+            if 'axis_switch' in kind:
+                have_switch = True
+            if 'mazinlab:mkidgen3:filter_iq' in kind:
+                have_filteriq = True
+            if 'xilinx.com:module_ref:axis2mm' in kind:
+                have_axis2mm = True
+        return have_switch and have_filteriq and have_axis2mm
 
     def _capture(self, source, n, buffer):
         self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
@@ -547,10 +557,10 @@ class CaptureHierarchy(DefaultHierarchy):
         n_groups = len(self.filter_phase.keep)
 
         # each group is 16 phases (32 bytes)
-        capture_bytes = n * 2 * n_groups*16
+        capture_bytes = n * 2 * n_groups * 16
 
         try:
-            buffer = allocate((n, n_groups*16), dtype='i2', target=self.ddr4_0)
+            buffer = allocate((n, n_groups * 16), dtype='i2', target=self.ddr4_0)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -558,7 +568,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         # NB this ignores the final bit from a non-128 multiple
         datavolume_mb = capture_bytes / 1024 ** 2
-        datarate_mbps = 32 * 512/4 * n_groups/128   #phases arrive 4@512 so the filter outputs every 4 clocks
+        datarate_mbps = 32 * 512 / 4 * n_groups / 128  # phases arrive 4@512 so the filter outputs every 4 clocks
         captime = datavolume_mb / datarate_mbps
 
         msg = (f"Capturing ~{datavolume_mb:.2f} MB of data @ {datarate_mbps:.1f} MBps. "
@@ -649,4 +659,4 @@ class AXIS2MMHier(DefaultHierarchy, _AXIS2MM):
             t = description['ip']['S_AXIL']['type']
         except KeyError:
             return False
-        return t =='xilinx.com:module_ref:axis2mm:1.0'
+        return t == 'xilinx.com:module_ref:axis2mm:1.0'
