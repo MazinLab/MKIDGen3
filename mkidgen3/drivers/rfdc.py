@@ -1,5 +1,5 @@
 from pynq import DefaultHierarchy
-import xrfclk
+import xrfclk, xrfdc
 from logging import getLogger
 
 
@@ -90,3 +90,21 @@ class RFDCHierarchy(DefaultHierarchy):
         if 'usp_rf_data_converter_0' not in description['ip']:
             return False
         return True
+
+    def set_gain(self, gain=1.0, qmc_settings=None):
+        settings = {'EnableGain': 1, 'EnablePhase': 0, 'EventSource': 0, 'GainCorrectionFactor': gain,
+                    'OffsetCorrectionFactor': 0, 'PhaseCorrectionFactor': 0.0}
+
+        if qmc_settings is not None:
+            for k,v in settings.items():
+                settings[k] = qmc_settings.get(k,v)
+
+        self.rfdc.dac_tiles[0].blocks[0].QMCSettings = settings
+        self.rfdc.dac_tiles[0].blocks[0].UpdateEvent(xrfdc.EVENT_QMC)
+        self.rfdc.dac_tiles[0].blocks[1].QMCSettings = settings
+        self.rfdc.dac_tiles[0].blocks[1].UpdateEvent(xrfdc.EVENT_QMC)
+
+        self.rfdc.dac_tiles[1].blocks[2].QMCSettings = settings
+        self.rfdc.dac_tiles[1].blocks[2].UpdateEvent(xrfdc.EVENT_QMC)
+        self.rfdc.dac_tiles[1].blocks[3].QMCSettings = settings
+        self.rfdc.dac_tiles[1].blocks[3].UpdateEvent(xrfdc.EVENT_QMC)
