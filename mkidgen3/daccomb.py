@@ -8,27 +8,26 @@ from mkidgen3.gen2 import SweepFile, parse_lo
 DAC_REPLAY_SAMPLES=262144
 
 
-def generateTones(frequencies, n_samples, sample_rate, amplitudes=None, phases=None, iq_ratios=None,
-                  phase_offsets=None, return_merged=True):
+def generate_dac_comb(frequencies, n_samples, sample_rate, amplitudes=None, phases=None, iq_ratios=None,
+                      phase_offsets=None, return_merged=True):
     """
     Generate a list of complex signals with amplitudes and phases specified and frequencies quantized
 
     All specified inputs must be of the same shape
 
     INPUTS:
-        freqList - list of resonator frequencies
+        frequencies - resonator frequencies
         n_samples - Number of time samples
-        sampleRate - Used to quantize the frequencies
-        amplitudeList - list of amplitudes. If None, use 1.
-        phaseList - list of phases. If None, use random phase
-        return_merged - if set to fault use frequencies.size times more memory and return an unmerged frequency comb
+        sample_rate - Used to quantize the frequencies
+        amplitudes - Tone amplitudes (0 -1). If None, use 1.
+        phases - Phases to use. If None, use random phase
+        return_merged - set to false to return timeseries for each frequency independently. Uses frequencies.size times
+        more memory
 
-    OUTPUTS:
-        dictionary with keywords
-        I - each element is a list of I(t) values for specific freq if not return_merged else the summed I(t)
-        Q - Same as I but for Q(t)
-        frequencies - list of frequencies after digital quantization
-        phases - list of phases for each frequency
+    OUTPUTS (in dict):
+        iq - complex64 array of IQ(t) values. If unmerged will have an additional axis corresponding to frequency
+        frequencies - quantized frequencies
+        phases - phases for each frequency
     """
     if amplitudes is None:
         amplitudes = np.ones_like(frequencies)
@@ -45,11 +44,9 @@ def generateTones(frequencies, n_samples, sample_rate, amplitudes=None, phases=N
     phase_offsets_radians = np.deg2rad(phase_offsets)
 
     if return_merged:
-        ivals = np.zeros(n_samples)
-        qvals = np.zeros(n_samples)
+        iq = np.zeros(n_samples, dtype=np.complex64)
     else:
-        ivals = np.zeros((frequencies.size, n_samples))
-        qvals = np.zeros((frequencies.size, n_samples))
+        iq = np.zeros((frequencies.size, n_samples), dtype=np.complex64)
 
     # generate each signal
     t = 2 * np.pi * np.arange(n_samples)/sample_rate
@@ -59,18 +56,18 @@ def generateTones(frequencies, n_samples, sample_rate, amplitudes=None, phases=N
         iScale = np.sqrt(2) * iq_ratios[i] / np.sqrt(1. + iq_ratios[i] ** 2)
         qScale = np.sqrt(2) / np.sqrt(1 + iq_ratios[i] ** 2)
         if return_merged:
-            ivals += iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
-                               np.sin(phase_offsets_radians[i]) * np.imag(exp))
-            qvals += qScale * np.imag(exp)
-        else:
-            ivals[i] = iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
+            iq.real += iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
                                  np.sin(phase_offsets_radians[i]) * np.imag(exp))
-            qvals[i] = qScale * np.imag(exp)
+            iq.imag += qScale * np.imag(exp)
+        else:
+            iq[i].real = iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
+                                   np.sin(phase_offsets_radians[i]) * np.imag(exp))
+            iq[i].imag = qScale * np.imag(exp)
 
-    return {'I': ivals, 'Q': qvals, 'frequencies': quantized_freqs, 'phases': phases}
+    return {'iq': iq, 'frequencies': quantized_freqs, 'phases': phases}
 
 
-def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, spike_percentile_limit=.9,
+def daccomb(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, spike_percentile_limit=.9,
              globalDacAtten=None, lo=None, return_full=True, max_chan=2048, sample_rate=4.096e9, n_iq_bits=32,
              n_samples=2**19):
     """
@@ -149,35 +146,34 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     dacFreqList, args, args_inv = np.unique(dacFreqList, return_index=True, return_inverse=True)
 
     rstate = np.random.get_state()
-    np.random.seed(0)
+    from numpy.random import MT19937, RandomState, SeedSequence
+    np.random.set_state(RandomState(MT19937(SeedSequence(123456789))).get_state())
 
     # Generate and add up individual tone time series.
-    toneDict = generateTones(dacFreqList, n_samples, sample_rate, return_merged=True,
-                             amplitudes=amplitudes[args], phases=None if phases is None else phases[args],
-                             iq_ratios=None if iq_ratios is None else iq_ratios[args],
-                             phase_offsets=None if phase_offsets is None else phase_offsets[args])
+    toneDict = generate_dac_comb(dacFreqList, n_samples, sample_rate, return_merged=True,
+                                 amplitudes=amplitudes[args], phases=None if phases is None else phases[args],
+                                 iq_ratios=None if iq_ratios is None else iq_ratios[args],
+                                 phase_offsets=None if phase_offsets is None else phase_offsets[args])
 
     # This part takes the longest
-    iValues = toneDict['I']
-    qValues = toneDict['Q']
+
+    iq = toneDict['iq']
 
     # check that we are utilizing the dynamic range of the DAC correctly
-    sig_i = iValues.std()
-    sig_q = qValues.std()
+    sig_i = iq.real.std()
+    sig_q = iq.imag.std()
 
     # 10% of the time there should be a point this many sigmas higher than average
-    expectedmax_sig = scipy.special.erfinv((len(iValues) + spike_percentile_limit - 1)/ len(iValues)) * np.sqrt(2)
+    expectedmax_sig = scipy.special.erfinv((iq.size + spike_percentile_limit - 1)/ iq.size) * np.sqrt(2)
     if spike_percentile_limit < 1 and sig_i > 0 and sig_q > 0:
-        while max(np.abs(iValues).max() / sig_i, np.abs(qValues).max() / sig_q) >= expectedmax_sig:
+        while max(np.abs(iq.real).max() / sig_i, np.abs(iq.imag).max() / sig_q) >= expectedmax_sig:
             getLogger(__name__).warning("The freq comb's relative phases may have added up sub-optimally. "
                                         "Calculating with new random phases")
-            toneDict = generateTones(dacFreqList, n_samples, sample_rate,
-                                     amplitudes=amplitudes[args], phases=None,
-                                     iq_ratios=None if iq_ratios is None else iq_ratios[args],
-                                     phase_offsets=None if phase_offsets is None else phase_offsets[args],
-                                     return_merged=True)
-            iValues = toneDict['I']
-            qValues = toneDict['Q']
+            toneDict = generate_dac_comb(dacFreqList, n_samples, sample_rate, amplitudes=amplitudes[args], phases=None,
+                                         iq_ratios=None if iq_ratios is None else iq_ratios[args],
+                                         phase_offsets=None if phase_offsets is None else phase_offsets[args],
+                                         return_merged=True)
+            iq = toneDict['iq']
 
     np.random.set_state(rstate)
 
@@ -185,42 +181,32 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
     dacPhaseList = (toneDict['phases'])[args_inv]
 
     if autoDacAtten:
-        highestVal = max(np.abs(iValues).max(), np.abs(qValues).max())
+        highestVal = max(np.abs(iq.real).max(), np.abs(iq.imag).max())
         dBexcess = 20 * np.log10(highestVal / maxAmp)
         dBexcess = np.ceil(4 * dBexcess) / 4  # rounded up to nearest 1/4 dB
-        # reduce to fit into DAC dynamic range and quantize to integer
-        iValues_new = np.round(iValues / 10 ** (dBexcess / 20)).astype(np.int)
-        qValues_new = np.round(qValues / 10 ** (dBexcess / 20)).astype(np.int)
-        if np.max((np.abs(iValues).max(), np.abs(qValues).max())) > maxAmp:
-            dBexcess += 0.25  # Since there's some rounding there's a small chance we need to decrease by another atten step
-            iValues_new = np.round(iValues / 10 ** (dBexcess / 20)).astype(np.int)
-            qValues_new = np.round(qValues / 10 ** (dBexcess / 20)).astype(np.int)
-
         globalDacAtten -= dBexcess
+        # reduce to fit into DAC dynamic range and quantize to integer
+
         if globalDacAtten > 31.75 * 2:
             dB_reduce = globalDacAtten - 31.75 * 2
             getLogger(__name__).warning(f"Unable to fully utilize DAC dynamic range by {dB_reduce} dB")
             globalDacAtten -= dB_reduce
             dBexcess += dB_reduce
-            iValues_new = np.round(iValues / 10 ** (dBexcess / 20)).astype(np.int)
-            qValues_new = np.round(qValues / 10 ** (dBexcess / 20)).astype(np.int)
+        elif np.max((np.abs(iq.real).max(), np.abs(iq.imag).max())) > maxAmp:
+            dBexcess += 0.25  # Since there's some rounding there's a small chance we need to decrease by another atten step
 
-        iValues = iValues_new
-        qValues = qValues_new
+        iq /= 10 ** (dBexcess / 20)
 
-    else:
-        iValues = np.round(iValues).astype(np.int)
-        qValues = np.round(qValues).astype(np.int)
+    np.round(iq, out=iq)
 
-    highestVal = max(np.abs(iValues).max(), np.abs(qValues).max())
-    dacFreqComb = iValues + 1j * qValues
+    highestVal = max(np.abs(iq.real).max(), np.abs(iq.imag).max())
 
     msg = ('\tGlobal DAC atten: {} dB'.format(globalDacAtten) +
            '\tUsing {} percent of DAC dynamic range\n'.format(highestVal / maxAmp * 100) +
            '\thighest: {} out of {}\n'.format(highestVal, maxAmp) +
-           '\tsigma_I: {}  sigma_Q:{}\n'.format(np.std(iValues), np.std(qValues)) +
-           '\tLargest val_I: {} sigma. '.format(np.abs(iValues).max() / np.std(iValues)) +
-           'val_Q: {} sigma.\n'.format(np.abs(qValues).max() / np.std(qValues)) +
+           '\tsigma_I: {}  sigma_Q:{}\n'.format(np.std(iq.real), np.std(iq.imag)) +
+           '\tLargest val_I: {} sigma. '.format(np.abs(iq.real).max() / np.std(iq.real)) +
+           'val_Q: {} sigma.\n'.format(np.abs(iq.imag).max() / np.std(iq.imag)) +
            '\tExpected val: {} sigmas\n'.format(expectedmax_sig))
     getLogger(__name__).debug(msg)
 
@@ -230,23 +216,13 @@ def generate(frequencies, attenuations, phases=None, iq_ratios=None, phase_offse
 
     if return_full:
         return {'frequencies': dacQuantizedFreqList, 'attenuation': globalDacAtten,
-                'comb': dacFreqComb, 'phases': dacPhaseList}
+                'comb': iq, 'phases': dacPhaseList}
     else:
-        return dacFreqComb
+        return iq
 
 
-def generate_from_MEC(mec_freqfile, lo):
+def meccomb(mec_freqfile, lo):
     freqfile = SweepFile(mec_freqfile)
-    combdata = generate(frequencies=freqfile.freq, attenuations=freqfile.atten, phases=freqfile.phases,
-                        iq_ratios=freqfile.iqRatios, globalDacAtten=None, lo=lo)
+    combdata = daccomb(frequencies=freqfile.freq, attenuations=freqfile.atten, phases=freqfile.phases,
+                       iq_ratios=freqfile.iqRatios, globalDacAtten=None, lo=lo)
     return combdata
-
-
-if __name__ == '__main__':
-
-    logging.basicConfig()
-    atten = np.array([60, 60, 60, 60])
-    freq = np.array([2e9, 3.1e9, 1e9, 4e9])
-    phases = np.array([0, 0, 0, 0])
-    comb = generate(frequencies=freq, attenuations=atten, phases=phases,
-                    lo=2.048e9, return_full=True, max_chan=2048)
