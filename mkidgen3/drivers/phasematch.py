@@ -12,10 +12,10 @@ class PhasematchDriver(pynq.DefaultHierarchy):
 
     def __init__(self, description):
         super().__init__(description)
-        self.fifo = self.axi_fifo_mm_s_0
+        self.fifo = self.reload.axi_fifo_mm_s_0
 
     @staticmethod
-    def hierarchy(description):
+    def checkhierarchy(description):
         if 'reload' not in description.get('hierarchies', {}):
             return False
         return bool(len(check_description_for(description['hierarchies']['reload'], 'xilinx.com:ip:axi_fifo_mm_s')))
