@@ -33,7 +33,7 @@ class AxisFIFO(DefaultIP):
         for x in data:
             self.mmio.write(self.register_map.TDFD.address, int(x))  # Write value
 
-        self.register_map.TLR.TXL = ( data.size - 1) * 4 + last_bytes  # Transmit length in bytes, this starts transmission
+        self.register_map.TLR.TXL = (data.size - 1) * 4 + last_bytes  # Transmit length in bytes, this starts transmission
         self.interrupt.wait()  # wait for the transmit to complete
 
         getLogger(__name__).debug(f'ISR at TX end: {repr(self.register_map.ISR)}')

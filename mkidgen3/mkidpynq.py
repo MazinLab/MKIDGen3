@@ -101,3 +101,17 @@ def _mimo_attacher(class_def, mimo_regs):
 
     for (name, addr) in mimo_regs:
         setattr(class_def, name, _create_mmio_property(addr))
+
+
+def check_description_for(description, kinds, check_version=False, force_dict=False):
+    if isinstance(kinds, str):
+        kinds = (kinds,)
+    ret = {k: [] for k in kinds}
+    for k in description['ip']:
+        kind = description['ip'][k].get('type', '')
+        if not check_version:
+            kind, _, version = kind.rpartition(':')
+        if kind in kinds:
+            ret[kind].append(k)
+
+    return ret if force_dict or len(kinds)>1 else ret[kinds[0]]

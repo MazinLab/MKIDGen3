@@ -2,7 +2,7 @@ import numpy as np
 from pynq import allocate, DefaultIP, DefaultHierarchy
 import time
 import mkidgen3.mkidpynq
-from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR  # config, overlay details
+from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, check_description_for  # config, overlay details
 from logging import getLogger
 
 
@@ -405,25 +405,17 @@ class CaptureHierarchy(DefaultHierarchy):
             self.filter_iq[n] = dev
 
         self.switch = getattr(self,'axis_switch_0', None) or getattr(self,'axis_switch')
-        self.filter_phase = self.filter_phase_0
+        try:
+            self.filter_phase = self.filter_phase_0
+        except AttributeError:
+            self.filter_phase = None
         self.axis2mm = self.axis2mm_0
 
     @staticmethod
     def checkhierarchy(description):
-        have_filteriq = False
-        have_switch = False
-        have_axis2mm = False
-        for k in description['ip']:
-            kind, _, version = description['ip'][k].get('type', '').rpartition(':')
-            if not kind:
-                continue
-            if 'axis_switch' in kind:
-                have_switch = True
-            if 'mazinlab:mkidgen3:filter_iq' in kind:
-                have_filteriq = True
-            if 'xilinx.com:module_ref:axis2mm' in kind:
-                have_axis2mm = True
-        return have_switch and have_filteriq and have_axis2mm
+        found = check_description_for(description, ('xilinx.com:axis_switch', 'mazinlab:mkidgen3:filter_iq',
+                                                    'xilinx.com:module_ref:axis2mm'))
+        return description['fullpath'] == 'capture' and bool(len(found['xilinx.com:module_ref:axis2mm']))
 
     def _capture(self, source, n, buffer):
         self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
@@ -434,32 +426,6 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.addr = buffer
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
-
-    # def _parse_buffer(self, buffer):
-    #     if not isinstance(buffer, int):
-    #         space = buffer.size * buffer.dtype.itemsize
-    #         addr = buffer.device_address
-    #     else:
-    #         addr = buffer
-    #         space = 2**32-1 - (buffer-mkidgen3.mkidpynq.PL_DDR4_ADDR)
-    #
-    #     if addr % 4096 != 0:
-    #         getLogger(__name__).warning('Address is not 4K aligned, will cause issues.')
-    #
-    #     return addr, space
-    #
-    # def _allocate(self, shape, format, capture_bytes, addr=None):
-    #     if True:
-    #         try:
-    #             buffer = allocate(shape, dtype=format, target=self.ddr4_0)
-    #         except RuntimeError:
-    #             getLogger(__name__).warning(f'Insufficient space for requested samples.')
-    #             raise RuntimeError('Insufficient free space')
-    #     else:
-    #         getLogger(__name__).warning('pynq.allocate does not support MIG will return MMIO object. Exercise caution.')
-    #         buffer = pynq.MMIO(addr if addr else mkidgen3.mkidpynq.PL_DDR4_ADDR, length=capture_bytes)
-    #
-    #     return buffer
 
     def capture_iq(self, n, buffer=None, groups='all', tap_location='iq', duration=False):
         """
@@ -546,6 +512,10 @@ class CaptureHierarchy(DefaultHierarchy):
         samples are captured in multiples of 16 will be clipped ad necessary
         groups is 0-127 or all
         """
+        if self.filter_phase is None:
+            getLogger(__name__).error('Bitstream does not support phase capture')
+            return None
+
         if duration:
             # n samples = t[ms] * 1e6[samples/sec]
             n = int(np.floor(n * 1e-3 * 1e6))

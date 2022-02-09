@@ -1,6 +1,6 @@
 import numpy as np
 import pynq
-from mkidgen3.mkidpynq import FP32_8, pack16_to_32
+from mkidgen3.mkidpynq import FP32_8, pack16_to_32, check_description_for
 
 
 class PhasematchDriver(pynq.DefaultHierarchy):
@@ -16,10 +16,9 @@ class PhasematchDriver(pynq.DefaultHierarchy):
 
     @staticmethod
     def hierarchy(description):
-        for k in ('axi_fifo_mm_s_0',):
-            if k not in description['ip']:
-                return False
-        return True
+        if 'reload' not in description.get('hierarchies', {}):
+            return False
+        return bool(len(check_description_for(description['hierarchies']['reload'], 'xilinx.com:ip:axi_fifo_mm_s')))
 
     @staticmethod
     def vet_coeffs(coeffs):
