@@ -404,7 +404,7 @@ class CaptureHierarchy(DefaultHierarchy):
                 getLogger(__name__).debug(f'Capture of {n} not supported')
             self.filter_iq[n] = dev
 
-        self.switch = getattr(self,'axis_switch_0', None) or getattr(self,'axis_switch')
+        self.switch = getattr(self,'axis_switch_0', None) or getattr(self,'axis_switch', None)
         try:
             self.filter_phase = self.filter_phase_0
         except AttributeError:
@@ -432,7 +432,6 @@ class CaptureHierarchy(DefaultHierarchy):
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
         if buffer is None one will be allocated
         """
-        """ Capture n samples of each specified iq into buffer, returning the time it will take"""
         if duration:
             # n samples = t[ms] * 2e6[samples/sec]
             n = int(np.floor(n * 2e-3 * 1e6))
