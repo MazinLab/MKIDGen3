@@ -11,7 +11,8 @@ class DACTableAXIM(pynq.DefaultIP):
         super().__init__(description=description)
         self._buffer=None
 
-    def replay(self, data, tlast=True, tlast_every=256, replay_len=None, start=True, fpgen=lambda x: FP16_15(x)):
+    def replay(self, data, tlast=True, tlast_every=256, replay_len=None, start=True,
+               fpgen=lambda x: [FP16_15(v).__index__() for v in x]):
         """
         data - an array of complex numbers, nominally 2^19 samples
         tlast - Set to true to emit a tlast pulse every tlast_every transactions
@@ -19,7 +20,8 @@ class DACTableAXIM(pynq.DefaultIP):
         replay_len - Number of groups of 16 (DAC takes 16/clock) in the data to use.
             e.g. if data[N].reshape(N//16,16). Note that the user channel will count to length-1
         start - start the replay immediately
-        fpgen - set to a function to convert floating point numbers to integers. if None data will be truncated.
+        fpgen - set to a function to convert floating point numbers to integers. must work on arrays of data
+        if None data will be truncated.
         """
         # Data has right shape
         if data.size < 2 ** 19:
@@ -54,12 +56,13 @@ class DACTableAXIM(pynq.DefaultIP):
         if self._buffer is not None:
             self._buffer.freebuffer()
         self._buffer = pynq.allocate(2 ** 20, dtype=np.uint16)
-        iload = [fpgen(x).__index__() for x in data.real] if fpgen is not None else data.real
-        qload = [fpgen(x).__index__() for x in data.imag] if fpgen is not None else data.imag
+        iload = fpgen(data.real) if fpgen is not None else data.real
+        qload = fpgen(data.imag) if fpgen is not None else data.imag
         for i in range(16):
             self._buffer[i:data.size * 2:32] = iload[i::16]
             self._buffer[i+16:data.size * 2:32] = qload[i::16]
 
+        self._buffer = pynq.allocate(2 ** 20, dtype=np.int16)
         self.register_map.a_1 = self._buffer.device_address
         self.register_map.length_r = replay_len - 1  # length counter
         self.register_map.tlast = bool(tlast)
