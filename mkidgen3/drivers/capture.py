@@ -389,8 +389,8 @@ class ADCCapture(DefaultIP):
 
 
 class CaptureHierarchy(DefaultHierarchy):
-    IQ_MAP = {'rawiq': 2, 'iq': 0, 'ddciq': 1}
-    SOURCE_MAP = dict(adc=0, iq=1, rawiq=1, phase=3)
+    IQ_MAP = {'rawiq': 0, 'iq': 1, 'ddciq': 2}
+    SOURCE_MAP = dict(adc=0, iq=2, rawiq=1, phase=3)
 
     def __init__(self, description):
         super().__init__(description)
