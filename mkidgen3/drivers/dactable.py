@@ -51,6 +51,8 @@ class DACTableAXIM(pynq.DefaultIP):
         if not tlast:
             tlast_every = 256  # just assign some value to ensure we didn't get handed garbage
 
+        if self._buffer is not None:
+            self._buffer.freebuffer()
         self._buffer = pynq.allocate(2 ** 20, dtype=np.uint16)
         iload = [fpgen(x).__index__() for x in data.real] if fpgen is not None else data.real
         qload = [fpgen(x).__index__() for x in data.imag] if fpgen is not None else data.imag
