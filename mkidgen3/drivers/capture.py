@@ -418,16 +418,18 @@ class CaptureHierarchy(DefaultHierarchy):
         return description['fullpath'] == 'capture' and bool(len(found['xilinx.com:module_ref:axis2mm']))
 
     def _capture(self, source, n, buffer):
-        self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
-        self.axis2mm.abort()
-        self.axis2mm.clear_error()
+        if self.switch is not None:
+            self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
         if not self.axis2mm.ready:
-            raise IOError("capture core unable not ready, this shouldn't happen")
+            raise IOError("capture core not ready, this shouldn't happen."
+                          " Try calling .axis2mm.abort() followed by .axis2mm.clear_error()"
+                          " then try a small throwaway capture (data order may not be aligned in the first capture "
+                          "after a reset).")
         self.axis2mm.addr = buffer
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
 
-    def capture_iq(self, n, buffer=None, groups='all', tap_location='iq', duration=False):
+    def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
         if buffer is None one will be allocated
@@ -468,7 +470,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         return buffer
 
-    def capture_adc(self, n, duration=False, buffer=None):
+    def capture_adc(self, n, duration=False):
         """
         samples are captured in multiples of 8 will be clipped as necessary
         """
@@ -506,7 +508,7 @@ class CaptureHierarchy(DefaultHierarchy):
         time.sleep(captime)
         return buffer
 
-    def capture_phase(self, n, groups='all', duration=False, buffer=None):
+    def capture_phase(self, n, groups='all', duration=False):
         """
         samples are captured in multiples of 16 will be clipped ad necessary
         groups is 0-127 or all
