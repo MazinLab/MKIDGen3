@@ -19,7 +19,12 @@ class AxisFIFO(DefaultIP):
             time.sleep(1)
 
     def tx(self, data, destination=0, last_bytes=4):
-        """Data must be an array of uint32"""
+        """
+        Data must be an array of uint32
+
+        The AXI FIFO writes the samples as written, so you can't pack pairs of 16 into 32 unless you have a stream data
+        width converter and enable TKEEP.
+        """
         if data.size > self.tx_vacancy:
             raise ValueError('Insufficient room in fifo for data')
 
