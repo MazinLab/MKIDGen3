@@ -37,10 +37,7 @@ def iqcapture(n):
     return list(buf)
 
 
-
-
-
-def set_waveform(freq, amplitudes=None, attenuations=None, simple=False):
+def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg):
     """ freq in Hz amplitude 0-1"""
     from .daccomb import daccomb, generate_dac_comb
     n_samples = 2 ** 19
@@ -56,20 +53,23 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False):
         phases = np.zeros(n_res)
         for i in range(freq.size):
             comb += amplitudes[i] * np.exp(1j * (t * freq[i] + phases[i]))
+        dactable={'comb':comb}
     else:
         if attenuations is not None:
-            comb = daccomb(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
-                            sample_rate=sample_rate)['comb']
+            dactable = daccomb(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
+                            sample_rate=sample_rate, return_full=True)
+            comb=dactable['comb']
         else:
             if amplitudes is None:
                 amplitudes = np.ones_like(freq)
 
             dactable = generate_dac_comb(frequencies=freq, n_samples=n_samples, sample_rate=sample_rate,
-                                     amplitudes=amplitudes)
+                                         amplitudes=amplitudes)
             comb = dactable['iq']
 
     print(f"Comb shape: {comb.shape}. \nTotal Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
-    _gen3_overlay.dac_table_axim_0.replay(comb)
+    _gen3_overlay.dac_table_axim_0.replay(comb, **kwarg)
+    return dactable
 
 
 def opfb_bin_number(freq):
