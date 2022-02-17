@@ -62,7 +62,6 @@ class DACTableAXIM(pynq.DefaultIP):
             self._buffer[i:data.size * 2:32] = iload[i::16]
             self._buffer[i+16:data.size * 2:32] = qload[i::16]
 
-        self._buffer = pynq.allocate(2 ** 20, dtype=np.int16)
         self.register_map.a_1 = self._buffer.device_address
         self.register_map.length_r = replay_len - 1  # length counter
         self.register_map.tlast = bool(tlast)
