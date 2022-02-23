@@ -1,0 +1,1 @@
+SUBSYSTEM=="tty", ATTRS{serial}=="Adafruit_ItsyBitsy_32u4_3V_8MHz", SYMLINK+="ifboard", TAG+="systemd" #,ENV{SYSTEMD_WANTS}+="ifboard.service"
