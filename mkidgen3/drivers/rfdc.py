@@ -1,6 +1,8 @@
 from pynq import DefaultHierarchy
 import xrfclk, xrfdc
 from logging import getLogger
+import re
+import pkg_resources
 
 
 def status():
@@ -108,3 +110,20 @@ class RFDCHierarchy(DefaultHierarchy):
         self.rfdc.dac_tiles[1].blocks[2].UpdateEvent(xrfdc.EVENT_QMC)
         self.rfdc.dac_tiles[1].blocks[3].QMCSettings = settings
         self.rfdc.dac_tiles[1].blocks[3].UpdateEvent(xrfdc.EVENT_QMC)
+
+
+def parse_ticspro(file):
+    with open(file, 'r') as f:
+        lines = [l.rstrip("\n") for l in f]
+
+        registers = []
+        for i in lines:
+            m = re.search('[\t]*(0x[0-9A-F]*)', i)
+            registers.append(int(m.group(1), 16), )
+    return registers
+
+
+def patch_xrfclk_lmk():
+    # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
+    tpro_file = pkg_resources.resource_filename('mkidgen3','config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt')
+    xrfclk._Config['LMK04208']['122.88_viaext10M'] = parse_ticspro(tpro_file)
