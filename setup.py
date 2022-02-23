@@ -13,18 +13,20 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="mkidgen3",
-    version="0.0.1",
-    author="MazinLab, J. Bailey et ak.",
+    version="0.1",
+    author="MazinLab, J. Bailey et al.",
     author_email="mazinlab@ucsb.edu",
-    description="An UVOIR MKID Dector package for the ZCU111",
+    description="An UVOIR MKID Detector package for the ZCU111",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/MazinLab/MKIDGen3",
     packages=setuptools.find_packages(),
-    classifiers=(
+    classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX",
         "Development Status :: 1 - Planning",
-        "Intended Audience :: Science/Research"),
+        "Intended Audience :: Science/Research"],
 )
+
+#sudo cp udev/gen3.rules /etc/udev/rules.d/
