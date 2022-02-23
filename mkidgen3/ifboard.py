@@ -138,20 +138,15 @@ class SerialDevice:
                 getLogger(__name__).debug(f"Send failed {e}")
                 raise IOError(e)
 
+
 class IFBoard(SerialDevice):
-    def __init__(self, port, timeout=0.1, connect=True):
-        """The initialize callback is called after _simspecificconnect iff _initialized is false. The callback
-        will be passed this object and should raise IOError if the device can not be initialized. If it completes
-        without exception (or is not specified) the device will then be considered initialized
-        The .initialized_at_last_connect attribute may be checked to see if initilization ran.
-        """
-
+    def __init__(self, port='/dev/ifboard', timeout=0.1, connect=True):
         super().__init__(port, 115200, timeout, response_terminator='\r\n')
-
         self.firmware = None
         self._monitor_thread = None
         self._initialized = False
         self.initialized_at_last_connect = False
+        self.rebooted = None
         if connect:
             self.connect(raise_errors=False)
 
@@ -162,19 +157,17 @@ class IFBoard(SerialDevice):
         except (TypeError, AssertionError):
             raise ValueError('Frequency must be a float in (0, 9600)')
 
-        if g2_mode:
-            self.send('G2T')
-        if fractional:
-            self.send('FMT')
-        if full_calibration:
-            self.send('CAT')
-        resp = self.query(f'LO{freq_mhz}')
+        self.send('G2' + ('T' if g2_mode else 'F'))
+        self.send('FM'+('T' if fractional else 'F'))
+        self.send('CA'+('T' if full_calibration else 'F'))
+        resp = self.send(f'LO{freq_mhz}')
         if 'ERROR' in resp:
             getLogger(__name__).error(resp)
             raise ValueError(resp)
 
     def set_attens(self, output_attens=None, input_attens:(float, Tuple[float], List[float], None)=None):
-        """Set attenuator values. Values are set in the order of the signal path. None implies a value is not set. A
+        """
+        Set attenuator values. Values are set in the order of the signal path. None implies a value is not set. A
         a single number sets both attenuation values.
 
         Raises IOError on com failure, ValueError on invalid value or setting failure.
@@ -197,7 +190,7 @@ class IFBoard(SerialDevice):
 
     @property
     def powered(self):
-        powered = self.query('IO?')
+        powered = self.send('IO?')
         if powered == '1':
             return True
         elif powered == '0':
