@@ -64,7 +64,7 @@ class SerialDevice:
             self._preconnect()
             self.ser = serial.Serial(port=self.port, baudrate=self.baudrate, timeout=self.timeout)
             self._postconnect()
-            getLogger(__name__).info(f"port {self.port} connection established")
+            getLogger(__name__).debug(f"port {self.port} connection established")
             return True
         except (serial.SerialException, IOError) as e:
             getLogger(__name__).error(f"Connecting to port {self.port} failed: {e}, will attempt disconnect.")

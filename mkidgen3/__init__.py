@@ -136,3 +136,5 @@ def configure(bitstream, mig=False, ignore_version=False, clocks=False, external
         import mkidgen3.drivers.rfdc
         rfdc.patch_xrfclk_lmk()
         _gen3_overlay.rfdc.start_clocks(external_10mhz=external_10mhz)
+
+    return _gen3_overlay
