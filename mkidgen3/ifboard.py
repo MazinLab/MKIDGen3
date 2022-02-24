@@ -255,14 +255,14 @@ class IFStatus:
         self.dac_attens = (d['attens']['dac1'], d['attens']['dac2'])
         self.adc_attens = (d['attens']['adc1'], d['attens']['adc2'])
         fullcal = ~(not g['gen2'] and g['g3fcal'])
-        s='LO gen{} {} mode, {} calibration. PLL {}locked. Req: {} MHz Attained: {} MHz Err: {} MHz'
+        s='LO gen{} {} mode, {} calibration. PLL {}locked.\n\tReq: {} MHz Attained: {} MHz Err: {} MHz'
         self.lo_mode = s.format('32'[g['gen2']], ('integer', 'fractional')[g['fract']], ('partial', 'full')[fullcal],
                                 ('un', '')[t['pll_locked']], g['lo'], t['f_LO'], (t['f_LO'] or np.nan) -g['lo'])
 
     def __str__(self):
-            stat = 'IFStatus: {}, boot{}. {}\n\t{}\n\tDAC attens: {}\n\tADC Attens: {}'
+            stat = 'IFStatus: {}, boot {}{}. {}\n\tDAC attens: {}\n\tADC Attens: {}'
             return stat.format('Powered' if self.power else 'Unpowered', self.boot,
-                               ' freshly booted' if self.fresh_boot else '',
+                               ', freshly booted' if self.fresh_boot else '',
                                self.lo_mode, self.dac_attens, self.adc_attens)
 
 
