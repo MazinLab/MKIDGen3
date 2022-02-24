@@ -5,6 +5,7 @@ import serial
 from typing import Tuple, List
 import numpy as np
 
+
 def escape_nline_creturn(string):
     """Escape \n and \r in a string"""
     return string.replace('\n', '\\n').replace('\r', '\\r')
@@ -85,10 +86,10 @@ class SerialDevice:
         except Exception as e:
             getLogger(__name__).info(f"Exception during disconnect: {e}")
 
-    def format_msg(self, msg:str):
+    def format_msg(self, msg: str):
         """Subclass may implement to apply hardware specific formatting"""
         if msg and msg[-1] != self.terminator:
-            msg = msg+self.terminator
+            msg = msg + self.terminator
         return msg.encode('utf-8')
 
     def send(self, msg: str, connect=True):
@@ -150,42 +151,48 @@ class IFBoard(SerialDevice):
         if connect:
             self.connect(raise_errors=False)
 
-    def set_lo(self, freq_mhz, fractional:bool=True, full_calibration=True, g2_mode=False):
+    def set_lo(self, freq_mhz, fractional: bool = True, full_calibration=True, g2_mode=False):
         try:
-            freq_mhz=float(freq_mhz)
-            assert 9600>float(freq_mhz)>0
+            freq_mhz = float(freq_mhz)
+            assert 9600 > float(freq_mhz) > 0
         except (TypeError, AssertionError):
             raise ValueError('Frequency must be a float in (0, 9600)')
 
         self.send('G2' + ('T' if g2_mode else 'F'))
-        self.send('FM'+('T' if fractional else 'F'))
-        self.send('CA'+('T' if full_calibration else 'F'))
+        self.send('FM' + ('T' if fractional else 'F'))
+        self.send('CA' + ('T' if full_calibration else 'F'))
         resp = self.send(f'LO{freq_mhz}')
         if 'ERROR' in resp:
             getLogger(__name__).error(resp)
             raise ValueError(resp)
 
-    def set_attens(self, output_attens=None, input_attens:(float, Tuple[float], List[float], None)=None):
+    def set_attens(self, output_attens: (float, Tuple[float], List[float], None) = None,
+                   input_attens: (float, Tuple[float], List[float], None) = None):
         """
-        Set attenuator values. Values are set in the order of the signal path. None implies a value is not set. A
-        a single number sets both attenuation values.
+        Set attenuator values. Values are set in the order of the signal path. None implies a value is not changed.
+        A single number sets both attenuation values.
+
+        When setting input_attens, the majority of the attenuation should be in the second attenuator.
 
         Raises IOError on com failure, ValueError on invalid value or setting failure.
         """
-        output_attens = output_attens if isinstance(output_attens, (tuple, list)) else [output_attens]*2
-        if len(output_attens) !=2:
+        current = [self.attens[v] for v in ('dac1', 'dac2', 'adc1', 'adc2')]
+
+        output_attens = output_attens if isinstance(output_attens, (tuple, list)) else [output_attens] * 2
+        if len(output_attens) != 2:
             raise ValueError('Incorrect number of output attenuations')
 
-        input_attens = input_attens if isinstance(input_attens, (tuple, list)) else [input_attens]*2
-        if len(input_attens) !=2:
+        input_attens = input_attens if isinstance(input_attens, (tuple, list)) else [input_attens] * 2
+        if len(input_attens) != 2:
             raise ValueError('Incorrect number of input attenuations')
 
+        new = output_attens + input_attens
         try:
-            attens = [float(a) if a is not None else 'x' for a in output_attens+input_attens]
+            attens = [str(float(n if n is not None else c)) for n, c in zip(new, current)]
         except TypeError:
             raise ValueError('Attenuations must be float or None')
 
-        if not self.send('AT'+','.join(attens)):
+        if not self.send('AT' + ','.join(attens)):
             raise ValueError('Failed to set attenuations')
 
     @property
@@ -216,23 +223,28 @@ class IFBoard(SerialDevice):
         data = self.ser.readall().decode('utf-8')
         if 'Enter PC for cmd list' in data:
             self.rebooted = True
-            self.ser.write('x\n'.encode('utf-8'))  #a throwaway string just to stop any boot message
+            self.ser.write('x\n'.encode('utf-8'))  # a throwaway string just to stop any boot message
         self.ser.readall()
 
     @property
     def lo_freq(self):
+        """Get the LO frequency in use while powered"""
         return float(self.send('LO?'))
 
     def save_settings(self):
+        """Save current settings as power-on defaults"""
         self.send('SV')
 
     def power_off(self, save_settings=True):
-        self.send('IO0'+('S' if save_settings else ''))
+        """Turn off IF board power, optionally saving the active settings"""
+        self.send('IO0' + ('S' if save_settings else ''))
 
     def power_on(self):
+        """Power up and load saved settings"""
         self.send('IO1')
 
     def raw(self, cmd):
+        """Send a raw serial command to the IF board and return the response"""
         return self.send(cmd)
 
     def status(self):
@@ -247,25 +259,23 @@ class IFStatus:
     def __init__(self, jsonstr):
         self._data = d = json.loads(jsonstr)
         self.general = g = d['global']
-        self.fresh_boot = g['coms']
+        self.fresh_boot = not g['coms']
         self.boot = g['boot']
         self.power = g['power']
         self.trf_general = t = d['trf'][0]
         self.trf_regs = d['trf'][1:]
         self.dac_attens = (d['attens']['dac1'], d['attens']['dac2'])
         self.adc_attens = (d['attens']['adc1'], d['attens']['adc2'])
-        fullcal = ~(not g['gen2'] and g['g3fcal'])
-        s='LO gen{} {} mode, {} calibration. PLL {}locked.\n\tReq: {} MHz Attained: {} MHz Err: {} MHz'
-        self.lo_mode = s.format('32'[g['gen2']], ('integer', 'fractional')[g['fract']], ('partial', 'full')[fullcal],
-                                ('un', '')[t['pll_locked']], g['lo'], t['f_LO'], (t['f_LO'] or np.nan) -g['lo'])
+        partialcal = not (g['gen2'] or g['g3fcal'])
+        s = 'LO gen{} {} mode, {} calibration. PLL {}locked.\n\tReq: {} MHz Attained: {} MHz Err: {} MHz'
+        self.lo_mode = s.format('32'[g['gen2']], ('integer', 'fractional')[g['fract']], ('full', 'partial')[partialcal],
+                                ('un', '')[t['pll_locked']], g['lo'], t['f_LO'], (t['f_LO'] or np.nan) - g['lo'])
 
     def __str__(self):
-            stat = 'IFStatus: {}, boot {}{}. {}\n\tDAC attens: {}\n\tADC Attens: {}'
-            return stat.format('Powered' if self.power else 'Unpowered', self.boot,
-                               ', freshly booted' if self.fresh_boot else '',
-                               self.lo_mode, self.dac_attens, self.adc_attens)
-
-
+        stat = 'IFStatus: {}, boot {}{}. {}\n\tDAC attens: {}\n\tADC Attens: {}'
+        return stat.format('Powered' if self.power else 'Unpowered', self.boot,
+                           ', freshly booted' if self.fresh_boot else '',
+                           self.lo_mode, self.dac_attens, self.adc_attens)
 
 # import logging
 # logging.basicConfig()
