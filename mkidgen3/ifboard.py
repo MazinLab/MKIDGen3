@@ -3,7 +3,7 @@ from logging import getLogger
 import threading
 import serial
 from typing import Tuple, List
-
+import numpy as np
 
 def escape_nline_creturn(string):
     """Escape \n and \r in a string"""
@@ -250,14 +250,14 @@ class IFStatus:
         self.fresh_boot = g['coms']
         self.boot = g['boot']
         self.power = g['power']
-        self.trf_general = t = d['trf']
+        self.trf_general = t = d['trf'][0]
         self.trf_regs = d['trf'][1:]
         self.dac_attens = (d['attens']['dac1'], d['attens']['dac2'])
         self.adc_attens = (d['attens']['adc1'], d['attens']['adc2'])
         fullcal = ~(not g['gen2'] and g['g3fcal'])
         s='LO gen{} {} mode, {} calibration. PLL {}locked. Req: {} MHz Attained: {} MHz Err: {} MHz'
         self.lo_mode = s.format('32'[g['gen2']], ('integer', 'fractional')[g['fract']], ('partial', 'full')[fullcal],
-                                g['lo'], t['f_LO'], t['f_LO']-g['lo'], ('un', '')[t['pll_locked']])
+                                ('un', '')[t['pll_locked']], g['lo'], t['f_LO'], (t['f_LO'] or np.nan) -g['lo'])
 
     def __str__(self):
             stat = 'IFStatus: {}, boot{}. {}\n\t{}\n\tDAC attens: {}\n\tADC Attens: {}'
