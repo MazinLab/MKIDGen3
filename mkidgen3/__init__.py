@@ -126,18 +126,13 @@ def plstatus():
     print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
 
 
-def configure(bitstream, mig=False, ignore_version=False, clocks=False, external_10mhz=False):
-    import pynq, xrfclk
-    from pynq import PL
+def configure(bitstream, mig=False, ignore_version=False, clocks=False, external_10mhz=False, download=True):
+    import pynq
 
-    global _gen3_overlay, _mig_overlay
-    bitstream='/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/rst_rfdconly_axipc/gen3_512_iqsweep.bit'
-    _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=True)
-
-    # This code is related to pynq2.6
-    # if mig:
-    #     migbit='/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/mig_modified_ip_layout_mem_topology.xclbin'
-    #     _mig_overlay = pynq.Overlay(migbit, device=pynq.Device.devices[0], download=True)
+    global _gen3_overlay
+    _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
 
     if clocks:
+        import mkidgen3.drivers.rfdc
+        rfdc.patch_xrfclk_lmk()
         _gen3_overlay.rfdc.start_clocks(external_10mhz=external_10mhz)
