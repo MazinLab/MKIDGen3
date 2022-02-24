@@ -68,6 +68,7 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
             comb = dactable['iq']
 
     print(f"Comb shape: {comb.shape}. \nTotal Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
+    _gen3_overlay.dac_table_axim_0.stop()
     _gen3_overlay.dac_table_axim_0.replay(comb, **kwarg)
     return dactable
 
