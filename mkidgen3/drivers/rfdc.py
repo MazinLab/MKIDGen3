@@ -126,4 +126,4 @@ def parse_ticspro(file):
 def patch_xrfclk_lmk():
     # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
     tpro_file = pkg_resources.resource_filename('mkidgen3','config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt')
-    xrfclk._Config['LMK04208']['122.88_viaext10M'] = parse_ticspro(tpro_file)
+    xrfclk.xrfclk._Config['lmk04208']['122.88_viaext10M'] = parse_ticspro(tpro_file)
