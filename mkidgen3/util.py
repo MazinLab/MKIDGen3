@@ -7,7 +7,7 @@ import requests
 
 def set_anritsu(f):
     """NB make sure Anritsu server is running"""
-    requests.get(f'http://blacklab.physics.ucsb.edu:51111/loset/{f}')
+    requests.get(f'http://skynet.physics.ucsb.edu:51111/loset/{f}')
 
 
 def setup_logging(name):
