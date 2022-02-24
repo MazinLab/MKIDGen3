@@ -192,8 +192,7 @@ class IFBoard(SerialDevice):
         except TypeError:
             raise ValueError('Attenuations must be float or None')
 
-        if not self.send('AT' + ','.join(attens)):
-            raise ValueError('Failed to set attenuations')
+        self.send('AT' + ','.join(attens))
 
     @property
     def powered(self):
