@@ -240,20 +240,30 @@ class IFBoard(SerialDevice):
         getLogger(__name__).debug(response)
         lines = response.split('\n')
         lines = [l for l in lines if not l.startswith('#')]
-        return json.loads(''.join(lines))
+        return IFStatus(''.join(lines))
 
-        # powered = json.loads(lines[1].partition(':')[2].strip())
-        # attens = json.loads(lines[2])
-        # lo_data = lines[5:-2]
-        # version = lines[-2]
-        # return {'device': 'online',
-        #         'device_firmware': response_fwv or 'unknown',
-        #         'target_frequency': self.target,
-        #         'programmed_frequency': response_freq or 'unknown',
-        #         'locked': response_locked or 'unknown',
-        #         'output_atten': response_atten_out or 'unknown',
-        #         'input_atten': response_atten_in or 'unknown',
-        #         'f_ref': response_fref or 'unknown'}
+
+class IFStatus:
+    def __init__(self, jsonstr):
+        self._data = d = json.loads(jsonstr)
+        self.general = g = d['global']
+        self.fresh_boot = g['coms']
+        self.boot = g['boot']
+        self.power = g['power']
+        self.trf_general = t = d['trf']
+        self.trf_regs = d['trf'][1:]
+        self.dac_attens = (d['attens']['dac1'], d['attens']['dac2'])
+        self.adc_attens = (d['attens']['adc1'], d['attens']['adc2'])
+        fullcal = ~(not g['gen2'] and g['g3fcal'])
+        s='LO gen{} {} mode, {} calibration. PLL {}locked. Req: {} MHz Attained: {} MHz Err: {} MHz'
+        self.lo_mode = s.format('32'[g['gen2']], ('integer', 'fractional')[g['fract']], ('partial', 'full')[fullcal],
+                                g['lo'], t['f_LO'], t['f_LO']-g['lo'], ('un', '')[t['pll_locked']])
+
+    def __str__(self):
+            stat = 'IFStatus: {}, boot{}. {}\n\t{}\n\tDAC attens: {}\n\tADC Attens: {}'
+            return stat.format('Powered' if self.power else 'Unpowered', self.boot,
+                               ' freshly booted' if self.fresh_boot else '',
+                               self.lo_mode, self.dac_attens, self.adc_attens)
 
 
 
