@@ -120,14 +120,12 @@ def set_frequencies(freq, amplitudes=None):
     set_tones(freq)
 
 
-
-
 def plstatus():
     from pynq import PL
     print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
 
 
-def configure(bitstream, mig=False, ignore_version=False, clocks=False):
+def configure(bitstream, mig=False, ignore_version=False, clocks=False, external_10mhz=False):
     import pynq, xrfclk
     from pynq import PL
 
@@ -135,13 +133,10 @@ def configure(bitstream, mig=False, ignore_version=False, clocks=False):
     bitstream='/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/rst_rfdconly_axipc/gen3_512_iqsweep.bit'
     _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=True)
 
-    if mig:
-        migbit='/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/mig_modified_ip_layout_mem_topology.xclbin'
-        _mig_overlay = pynq.Overlay(migbit, device=pynq.Device.devices[0], download=True)
+    # This code is related to pynq2.6
+    # if mig:
+    #     migbit='/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/mig_modified_ip_layout_mem_topology.xclbin'
+    #     _mig_overlay = pynq.Overlay(migbit, device=pynq.Device.devices[0], download=True)
 
     if clocks:
-        try:
-            xrfclk.set_all_ref_clks(409.6)
-        except:
-            print('Failed to set clocks with set_all_ref_clks, trying new driver call')
-            xrfclk.set_ref_clks(409.6)
+        _gen3_overlay.rfdc.start_clocks(external_10mhz=external_10mhz)
