@@ -1,4 +1,20 @@
 from pynq import allocate, DefaultIP
+import numpy as np
+
+
+def opfb_bin_number(freq):
+    """
+    Compute the OPFB bin number corresponding to each frequency, specified in Hz
+
+    Frequencies are are assumed to be in [0, 4.096) GHz, that OPFB bins are in order of increasing frequency,
+    and of equal bandwidth.
+
+    Frequencies are placed in the closest bin by central frequency. Bins are centered on 0.5MHz increments
+    so bin 1 gets [0.5, 1.5) MHz. NB that bin 0 is assigned [0, 0.5) MHz and [4095.5, 4096) MHz
+
+    """
+    # if opfb bins werent shifted then it would be: strt_bins=np.round(freq/1e6).astype(int)+2048
+    return ((np.round(freq / 1e6).astype(int) + 2048) + 2048) % 4096
 
 
 class BinToResIP(DefaultIP):

@@ -1,9 +1,10 @@
 from logging import getLogger
 import numpy as np
-import time
 try:
     import pynq
     from .drivers import *
+    from .drivers.bintores import opfb_bin_number
+    from .drivers.ddc import tone_increments
 except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')
 
@@ -11,34 +12,30 @@ except ImportError:
 _gen3_overlay, _mig_overlay, _frequencies = [None]*3
 
 
-def set_lo_freq(lo_ghz):
-    import requests
-    r = requests.get(f'http://skynet.physics.ucsb.edu:51111/loset/{lo_ghz}')
-    return r.json()
-
-
-def iqcapture(n):
-    """ Capture and return n samples for the currently configured frequencies"""
-    if _frequencies is None:
-        return None
-
-    _gen3_overlay.capture.axis_switch_0.set_master(1, commit=True)  # After the FIR
-
-    #4 bytes per IQ * n * np.ceil(_frequencies.size/8)
-    buf = pynq.allocate((2*n*int(np.ceil(_frequencies.size/8)), 2), 'i2', target=_mig_overlay.MIG0)  # 2**30 is 4 GiB
-
-    captime = _gen3_overlay.capture.iq_capture_0.capture(n, groups=np.arange(np.ceil(_frequencies.size/8), dtype=int),
-                                                         device_addr=buf.device_address, start=False)
-    #TODO we need to wait for the core to signal done
-    time.sleep(captime*2)
-
-    # buf now has IQ data in the 16_15 format IQ0_0 IQ1_0 ... IQnfreq*8-1_0  IQ0_1......  IQnfreq*8-1_n-1
-
-    return list(buf)
-
-
 def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg):
-    """ freq in Hz amplitude 0-1"""
+    """
+    Configure the DAC replay table to output a waveform containing the specified frequencies.
+
+    frequencies are in Hz, amplitudes are from 0-1, attenuations are in dB
+
+    Additional keyword arguments are passed on when calling the dac table drivers replay() method.
+
+    Do this either simply, and directly within this function or via either dactable.daccomb or
+    dactable.generate_dac_comb.
+
+    Manual loading of a waveform can be attained by performing
+    table = generate_dac_comb(frequencies=np.array([0.3e9]), n_samples=2**19, sample_rate=4.096e9,
+                              amplitudes=np.array([1.0]))
+    ol.dac_table_axim_0.stop()
+    ol.dac_table_axim_0.replay(table['iq'], fpgen=lambda x: (x*2**15).astype(np.uint16))
+
+    and looking at the contents of ol.dac_table_axim_0._buffer which should match
+
+    buf = np.zeros((2 ** 15, 2, 16), dtype=np.int16)
+    buf[:, 0, :] = table['iq'].real.reshape((2 ** 15,16)) * 2**15
+    buf[:, 1,: ] = table['iq'].imag.reshape((2 ** 15,16)) * 2**15
+
+    in Hz amplitude 0-1"""
     from .daccomb import daccomb, generate_dac_comb
     n_samples = 2 ** 19
     sample_rate = 4.096e9
@@ -57,7 +54,7 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
     else:
         if attenuations is not None:
             dactable = daccomb(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
-                            sample_rate=sample_rate, return_full=True)
+                               sample_rate=sample_rate, return_full=True)
             comb=dactable['comb']
         else:
             if amplitudes is None:
@@ -67,58 +64,65 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
                                          amplitudes=amplitudes)
             comb = dactable['iq']
 
-    print(f"Comb shape: {comb.shape}. \nTotal Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
+    getLogger(__name__).debug(f"Comb shape: {comb.shape}. \n"
+                              f"Total Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
     _gen3_overlay.dac_table_axim_0.stop()
     _gen3_overlay.dac_table_axim_0.replay(comb, **kwarg)
     return dactable
 
 
-def opfb_bin_number(freq):
-    """Compute the OPFB bin number corresponding to each frequency, specified in Hz"""
-    # if opfb bins werent shifted then it would be: strt_bins=np.round(freq/1e6).astype(int)+2048
-    return ((np.round(freq / 1e6).astype(int) + 2048) + 2048) % 4096
-
-
 def set_channels(freq):
     """
     Set each resonator channel to use the correct OPFB bin given the 2048 frequencies (in Hz) for each channel.
+
+    Only the first 2048 frequencies will be used. Channels are assigned in the order frequencies are specified.
+    If fewer than 2048 frequencies are specified no assumptions may be made about which OPFB bin number(s) drive the
+    remaining channels, however they may be determined by inspecting the .bins property of bin_to_res.
     """
+    freq = freq[:2048]
     bins = np.arange(2048, dtype=int)
     bins[:freq.size] = opfb_bin_number(freq)
     _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = bins
 
 
-def tone_increments(freq):
-    """Compute the DDS tone increment for each frequency (in Hz), assumes optimally selected OPFB bin when computing
-    central frequency"""
+def configure_ddc(freq, phase_offset=None):
+    """
+    Configure the DDC to down-convert resonator channels containing the specified frequencies.
 
-    f_center = np.fft.fftfreq(4096, d=1 / 4.096e9)
-    shft_bins = opfb_bin_number(freq)
+    Optionally phase offsets may be specified for each channel. Phase offsets are in [-pi,pi] radians. Values outside
+    are clipped.
 
-    # This must be 2MHz NOT 2.048MHz, the sign matters! Use 1MHz as that corresponds to ±PI
-    return (freq - f_center[shft_bins]) / 1e6
-
-
-def set_tones(freq):
+    Only the first 2048 frequencies/offsets will be used. DDC tones are assigned in the order frequencies are
+    specified. If fewer than 2048 frequencies are specified no assumptions may be made about the DDC settings for the
+    remaining channels, however they may be determined by inspecting the .tones property of resonator_ddc.
+    """
     tones = np.zeros((2, 2048))
-    tones[0, :min(freq.size, 2048)] = tone_increments(freq)
-    tones[1, :] = np.zeros(2048)
-    print('Writing tones...')  # The core expects normalized increments
+    if phase_offset is not None:
+        phase_offset /= (phase_offset/np.pi).clip(-1, 1)
+    tones[0, :min(freq.size, 2048)] = tone_increments(freq[:2048])
+    tones[1, :min(freq.size, 2048)] = np.zeros(2048) if phase_offset is None else phase_offset[:2048]
+    getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
     _gen3_overlay.photon_pipe.reschan.resonator_ddc.tones = tones
+    getLogger(__name__).debug('DDC tones written.')
 
 
-def set_frequencies(freq, amplitudes=None):
-    """ Set the bins and ddc values so that freq are in the associated resonator channels"""
+def set_frequencies(freq, **kwargs):
+    """ Set the DAC waveform, OPFB bins, and DDC tones so that frequencies being fed through the photon pipeline.
+
+    The order of the frequencies is preserved (they are not sorted).
+
+    kwargs is passed on to set_waveform.
+
+    The device must be suitably configured.
+    """
     global _frequencies
     _frequencies = freq
-    configure('/home/xilinx/jupyter_notebooks/Unit_Tests/Full_Channelizer/rst_rfdconly_axipc/gen3_512_iqsweep.bit',
-              ignore_version=True)
     getLogger(__name__).info('setting waveform')
-    set_waveform(freq, amplitudes=amplitudes)
+    set_waveform(freq, **kwargs)
     getLogger(__name__).info('setting resonator channels')
     set_channels(freq)
     getLogger(__name__).info('setting ddc tones')
-    set_tones(freq)
+    configure_ddc(freq)
 
 
 def plstatus():
@@ -126,7 +130,7 @@ def plstatus():
     print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
 
 
-def configure(bitstream, mig=False, ignore_version=False, clocks=False, external_10mhz=False, download=True):
+def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=False, download=True):
     import pynq
 
     global _gen3_overlay

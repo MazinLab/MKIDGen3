@@ -2,6 +2,20 @@ import numpy as np
 from fpbinary import FpBinary
 from pynq import DefaultIP
 from mkidgen3.mkidpynq import fp_factory
+from .bintores import opfb_bin_number
+
+
+def tone_increments(freq):
+    """
+    Compute the DDS tone increment for each frequency (in Hz),
+    assumes channel will use OPFB bin returned by mkidgen3.drivers.bintores.opfb_bin_number
+    when computing central frequency
+    """
+    f_center = np.fft.fftfreq(4096, d=1 / 4.096e9)
+    shft_bins = opfb_bin_number(freq)
+
+    # This must be 2MHz NOT 2.048MHz, the sign matters! Use 1MHz as that corresponds to ±Pi
+    return (freq - f_center[shft_bins]) / 1e6
 
 
 class DDC(DefaultIP):
