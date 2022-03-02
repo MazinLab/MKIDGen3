@@ -417,6 +417,15 @@ class CaptureHierarchy(DefaultHierarchy):
                                                     'xilinx.com:module_ref:axis2mm'))
         return description['fullpath'] == 'capture' and bool(len(found['xilinx.com:module_ref:axis2mm']))
 
+    def prepare(self, source):
+        """Call this before capturing data, if things aren't looking right, of if you get an capture IOError"""
+        self.axis2mm.abort()
+        self.axis2mm.clear_error()
+        capture_bytes = 256*4*4
+        buffer = allocate(256*4, dtype='u4', target=self.ddr4_0)
+        self._capture(source, capture_bytes, buffer.device_address)
+        buffer.freebuffer()
+
     def _capture(self, source, n, buffer):
         if self.switch is not None:
             self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
@@ -465,6 +474,7 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
+        self.prepare(tap_location)
         self._capture(tap_location, capture_bytes, addr)
         time.sleep(captime)
 
@@ -603,7 +613,9 @@ class _AXIS2MM:
         self.write(0, 0x40000000)
 
     def start(self, continuous=False, increment=True):
-        x = 0xc0000000  # start and clear error
+        if not self.ready:
+            raise IOError('Not ready, need to abort and/or clear errors')
+        x = 0x80000000  # start and do not clear error
         x |= continuous << 28
         x |= (not increment) << 27
         self.write(0, x)
