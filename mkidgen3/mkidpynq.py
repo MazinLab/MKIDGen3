@@ -24,6 +24,24 @@ def fp_factory(int, frac, signed, frombits=False):
         return lambda x: FpBinary(int_bits=int, frac_bits=frac, signed=signed, value=x)
 
 
+def enable_axi_timeout():
+    """ See https://discuss.pynq.io/t/help-debuging-chronic-pynq-system-hang/970"""
+    import pynq
+    #LPD
+    mmio = pynq.MMIO(0xFF416000, 64)
+    mmio.write(0x18, 3)  # Return slave errors when timeouts occur
+    mmio.write(0x20, 0x1020)  # Set and enable prescale of 32 which should be about 10 ms
+    mmio.write(0x10, 0x3)  # Enable transactions tracking
+    mmio.write(0x14, 0x3)  # Enable timeouts
+
+    #FPD
+    mmio = pynq.MMIO(0xFD610000, 64)
+    mmio.write(0x18, 7)  # Return slave errors when timeouts occur
+    mmio.write(0x20, 0x1020)  # Set and enable prescale of 32 which should be about 10 ms
+    mmio.write(0x10, 0x7)  # Enable transactions tracking
+    mmio.write(0x14, 0x7)  # Enable timeouts
+
+
 def get_pldram_addr(hwhpath):
     """Return PL DRAM start address as specified in hwh"""
     pldram_addr = None

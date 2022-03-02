@@ -9,7 +9,7 @@ except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')
 
 
-_gen3_overlay, _mig_overlay, _frequencies = [None]*3
+_gen3_overlay, _frequencies = [None]*2
 
 
 def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg):
@@ -138,7 +138,6 @@ def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=Fals
 
     if clocks:
         import mkidgen3.drivers.rfdc
-        rfdc.patch_xrfclk_lmk()
-        _gen3_overlay.rfdc.start_clocks(external_10mhz=external_10mhz)
+        mkidgen3.drivers.rfdc.start_clocks(external_10mhz=external_10mhz)
 
     return _gen3_overlay

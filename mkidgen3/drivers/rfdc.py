@@ -32,6 +32,31 @@ def reset():
     rfdc.write(0x0004, 0x00000001)
 
 
+def parse_ticspro(file):
+    with open(file, 'r') as f:
+        lines = [l.rstrip("\n") for l in f]
+
+        registers = []
+        for i in lines:
+            m = re.search('[\t]*(0x[0-9A-F]*)', i)
+            registers.append(int(m.group(1), 16), )
+    return registers
+
+
+def patch_xrfclk_lmk():
+    # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
+    tpro_file = pkg_resources.resource_filename('mkidgen3','config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt')
+    xrfclk.xrfclk._Config['lmk04208']['122.88_viaext10M'] = parse_ticspro(tpro_file)
+
+
+def start_clocks(external_10mhz=False):
+    if external_10mhz:
+        patch_xrfclk_lmk()
+        xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M')
+    else:
+        xrfclk.set_ref_clks()
+
+
 class RFDCHierarchy(DefaultHierarchy):
     def __init__(self, description):
         super().__init__(description)
@@ -43,11 +68,7 @@ class RFDCHierarchy(DefaultHierarchy):
             getLogger(__name__).info('RFDCHierarchy does not support switching ADCs')
 
     def start_clocks(self, external_10mhz=False):
-        if external_10mhz:
-            patch_xrfclk_lmk()
-            xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M')
-        else:
-            xrfclk.set_ref_clks()
+        start_clocks(external_10mhz=external_10mhz)
 
     def reset(self):
         self.rfdc.write(0x0004, 0x00000001)
@@ -114,20 +135,3 @@ class RFDCHierarchy(DefaultHierarchy):
         self.rfdc.dac_tiles[1].blocks[2].UpdateEvent(xrfdc.EVENT_QMC)
         self.rfdc.dac_tiles[1].blocks[3].QMCSettings = settings
         self.rfdc.dac_tiles[1].blocks[3].UpdateEvent(xrfdc.EVENT_QMC)
-
-
-def parse_ticspro(file):
-    with open(file, 'r') as f:
-        lines = [l.rstrip("\n") for l in f]
-
-        registers = []
-        for i in lines:
-            m = re.search('[\t]*(0x[0-9A-F]*)', i)
-            registers.append(int(m.group(1), 16), )
-    return registers
-
-
-def patch_xrfclk_lmk():
-    # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
-    tpro_file = pkg_resources.resource_filename('mkidgen3','config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt')
-    xrfclk.xrfclk._Config['lmk04208']['122.88_viaext10M'] = parse_ticspro(tpro_file)
