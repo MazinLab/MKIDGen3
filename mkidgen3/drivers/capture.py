@@ -438,7 +438,7 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
 
-    def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
+    def capture_iq(self, n, groups='all', tap_location='iq', duration=False, prepare=True):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
         if buffer is None one will be allocated
@@ -474,7 +474,9 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        self.prepare(tap_location)
+        if prepare:
+            self.prepare(tap_location)
+            time.sleep(1)
         self._capture(tap_location, capture_bytes, addr)
         time.sleep(captime)
 
