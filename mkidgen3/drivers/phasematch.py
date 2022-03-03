@@ -66,13 +66,13 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         reload_packet[1:] = [fp_format(c) for c in self.reorder_coeffs(coeffs)]
 
         cfg_packet = pack16_to_32(np.arange(self.N_RES_P_LANE, dtype=np.uint16))
-        if max(self.pending) >= self.N_SLOTS:
+        if max(self._pending) >= self.N_SLOTS:
             getLogger(__name__).warning('Forcing config before load as reload slots are full')
             self.fifo.tx(cfg_packet, destination=4)  # Send a config packet to trigger reload
             self._pending = [0, 0, 0, 0]
 
         self.fifo.tx(pack16_to_32(reload_packet), destination=lane, last_bytes=2)  # reload channels are 0,2,4,6
-        self.pending[lane] += 1
+        self._pending[lane] += 1
         if force_commit or max(self.pending) == self.N_SLOTS:
             if not force_commit:
                 getLogger(__name__).debug('Sending config packet')
