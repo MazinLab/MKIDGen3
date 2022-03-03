@@ -429,6 +429,8 @@ class CaptureHierarchy(DefaultHierarchy):
     def _capture(self, source, n, buffer):
         if self.switch is not None:
             self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
+        if n % 64:
+            raise ValueError('Can only capture in multiples of 64 bytes')
         if not self.axis2mm.ready:
             raise IOError("capture core not ready, this shouldn't happen."
                           " Try calling .axis2mm.abort() followed by .axis2mm.clear_error()"
@@ -437,8 +439,13 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.addr = buffer
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
+        try:
+            self.stream_limit_0.register_map.n = n // 64
+            self.stream_limit_0.register_map.n = 0
+        except AttributeError:
+            pass
 
-    def capture_iq(self, n, groups='all', tap_location='iq', duration=False, prepare=True):
+    def capture_iq(self, n, groups='all', tap_location='iq', duration=False, prepare=False):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
         if buffer is None one will be allocated
