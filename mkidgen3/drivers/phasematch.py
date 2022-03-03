@@ -2,7 +2,7 @@ import numpy as np
 import pynq
 from logging import getLogger
 from mkidgen3.mkidpynq import pack16_to_32, check_description_for, fp_factory
-
+import time
 
 class PhasematchDriver(pynq.DefaultHierarchy):
     N_TEMPLATE_TAPS = 30
@@ -80,4 +80,6 @@ class PhasematchDriver(pynq.DefaultHierarchy):
 
     def load_coeff_sets(self, coeff_sets):
         for res in range(self.N_RES):
+            if self.fifo.tx_vacancy < 500:
+                time.sleep(.1)
             self.load_coeff(res, coeff_sets[res], vet=True, force_commit=False)
