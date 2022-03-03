@@ -41,7 +41,7 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         """convert taps to order needed by a reload packet"""
         return coeffs[::-1]  # see coefficient reload tab for order in block design
 
-    def load_coeff(self, res_id, coeffs, vet=True, force_commit=False):
+    def load_coeff(self, res_id, coeffs, vet=True, force_commit=False, raw=False):
         """
         A reload packet consists of the coefficients and the coefficient set number
 
@@ -55,18 +55,21 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         if vet:
             self.vet_coeffs(coeffs)
 
-        cfg_packet = pack16_to_32(np.arange(self.N_RES_P_LANE, dtype=np.uint16))
+        if raw:
+            fp_format = lambda x: x
+        else:
+            fp_format = fp_factory(*self.COEFF_FORMAT, True, include_index=True)
 
+        lane = res_id % self.N_LANES
+        reload_packet = np.zeros(self.N_TEMPLATE_TAPS + 1, dtype=np.uint16)
+        reload_packet[0] = res_id // self.N_LANES
+        reload_packet[1:] = [fp_format(c) for c in self.reorder_coeffs(coeffs)]
+
+        cfg_packet = pack16_to_32(np.arange(self.N_RES_P_LANE, dtype=np.uint16))
         if max(self.pending) >= self.N_SLOTS:
             getLogger(__name__).warning('Forcing config before load as reload slots are full')
             self.fifo.tx(cfg_packet, destination=4)  # Send a config packet to trigger reload
             self._pending = [0, 0, 0, 0]
-
-        fp_format = fp_factory(*self.COEFF_FORMAT, True)
-        lane = res_id % self.N_LANES
-        reload_packet = np.zeros(self.N_TEMPLATE_TAPS + 1, dtype=np.uint16)
-        reload_packet[0] = res_id // self.N_LANES
-        reload_packet[1:] = [fp_format(c).__index__() for c in self.reorder_coeffs(coeffs)]
 
         self.fifo.tx(pack16_to_32(reload_packet), destination=lane, last_bytes=2)  # reload channels are 0,2,4,6
         self.pending[lane] += 1
