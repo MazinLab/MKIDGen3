@@ -166,13 +166,12 @@ class CaptureHierarchy(DefaultHierarchy):
                                                     'xilinx.com:module_ref:axis2mm'))
         return description['fullpath'] == 'capture' and bool(len(found['xilinx.com:module_ref:axis2mm']))
 
-    def prepare(self, source):
-        """Call this before capturing data, if things aren't looking right, of if you get an capture IOError"""
-        self.axis2mm.abort()
-        self.axis2mm.clear_error()
-        capture_bytes = 256*4*4
-        buffer = allocate(256*4, dtype='u4', target=self.ddr4_0)
-        self._capture(source, capture_bytes, buffer.device_address)
+    def flush(self, n):
+        """Capture n*64 bytes to flush a fifo"""
+        buffer = allocate(n, dtype='u64', target=self.ddr4_0)
+        self.axis2mm.addr = buffer
+        self.axis2mm.len = 64*n
+        self.axis2mm.start(continuous=False, increment=True)
         buffer.freebuffer()
 
     def _capture(self, source, n, buffer):
@@ -185,16 +184,19 @@ class CaptureHierarchy(DefaultHierarchy):
                           " Try calling .axis2mm.abort() followed by .axis2mm.clear_error()"
                           " then try a small throwaway capture (data order may not be aligned in the first capture "
                           "after a reset).")
+        getLogger(__name__).debug(f'Starting capture of {n} bytes ({n // 64} beats) to address {hex(buffer)} from '
+                                  f'source {source}')
         self.axis2mm.addr = buffer
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
         try:
             self.stream_limit_0.register_map.n = n // 64
-            self.stream_limit_0.register_map.n = 0
+            self.stream_limit_0.register_map.togglearm = not self.stream_limit_0.register_map.togglearm
         except AttributeError:
+            getLogger(__name__).warning('No stream_limit_0 block')
             pass
 
-    def capture_iq(self, n, groups='all', tap_location='iq', duration=False, prepare=False):
+    def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
         if buffer is None one will be allocated
@@ -230,12 +232,8 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        if prepare:
-            self.prepare(tap_location)
-            time.sleep(1)
         self._capture(tap_location, capture_bytes, addr)
         time.sleep(captime)
-
         return buffer
 
     def capture_adc(self, n, duration=False):
