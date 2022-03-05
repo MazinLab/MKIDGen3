@@ -191,7 +191,7 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.start(continuous=False, increment=True)
         try:
             self.stream_limit_0.register_map.n = n // 64
-            self.stream_limit_0.register_map.togglearm = not self.stream_limit_0.register_map.togglearm
+            self.stream_limit_0.register_map.togglearm = not self.stream_limit_0.register_map.togglearm.togglearm
         except AttributeError:
             getLogger(__name__).warning('No stream_limit_0 block')
             pass
