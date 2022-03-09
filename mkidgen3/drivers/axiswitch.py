@@ -26,3 +26,29 @@ class AxisSwitch(DefaultIP):
     def commit(self):
         """Commit config, triggers a soft 16 cycle reset"""
         self.write(0x0000, 0x2)
+
+
+class SwitchOnLast(DefaultIP):
+    bindto = ['mazinlab:mkidgen3:switch_on_last:0.1']
+
+    def __init__(self, description):
+        super().__init__(description=description)
+
+    def set_driver(self, slave=0, master=0, disable=False, commit=True):
+        """Set the slave for the master"""
+        slave = max(min(slave, 5), 0)
+        if disable:
+            self.register_map.enable = False
+        self.register_map.stream = slave
+        if commit:
+            self.commit()
+
+    def is_disabled(self, master=0):
+        return self.register_map.enable.enable
+
+    def driver_for(self, master=0):
+        return self.register_map.stream.stream
+
+    def commit(self):
+        """Commit config, triggers a soft 16 cycle reset"""
+        self.register_map.enable=True
