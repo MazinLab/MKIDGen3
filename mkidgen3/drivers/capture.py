@@ -59,11 +59,13 @@ class FilterIQ(DefaultIP):
                 groups = set([g // 8 for g in groups])  # convert channel to group
             last = max(groups)
 
-            if max(groups) > 255:
-                raise ValueError(f'Groups must be  not in range 0-255')
+            if len(groups) % 2:
+                raise ValueError('Groups must be captured in multiples of two')
+
+            if max(groups) > 255 or min(groups) < 0:
+                raise ValueError(f'Groups must be in range 0-255')
+
             for g in groups:
-                if not 0 <= g < 256:
-                    raise ValueError(f'Groups {g} not in range 0-255')
                 i = g // 32  # (0-7)
                 keep[i] |= (1 << (g % 32))  # set the correct bit
 
@@ -118,17 +120,17 @@ class FilterPhase(DefaultIP):
             keep += 0xFFFFFFFF
             last = 127
         else:
-
             if max(groups) > 127:
                 groups = set([g // 16 for g in groups])  # convert channel to group
             last = max(groups)
 
-            if max(groups) > 127:
-                raise ValueError(f'Groups must be  not in range 0-127')
+            if len(groups) % 2:
+                raise ValueError('Groups must be captured in multiples of two')
+
+            if max(groups) > 127 or min(groups) < 0:
+                raise ValueError(f'Groups must be in range 0-127')
 
             for g in groups:
-                if not 0 <= g < 128:
-                    raise ValueError(f'Groups {g} not in range 0-127')
                 i = g // 32  # (0-7)
                 keep[i] |= (1 << (g % 32))  # set the correct bit
 
@@ -189,12 +191,6 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.addr = buffer
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
-        try:
-            self.stream_limit_0.register_map.n = n // 64
-            self.stream_limit_0.register_map.togglearm = not self.stream_limit_0.register_map.togglearm.togglearm
-        except AttributeError:
-            getLogger(__name__).warning('No stream_limit_0 block')
-            pass
 
     def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
         """
