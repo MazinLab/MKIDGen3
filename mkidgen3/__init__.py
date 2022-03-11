@@ -134,7 +134,8 @@ def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=Fals
     import pynq
 
     global _gen3_overlay
-    _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
+    ol = _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
+    getLogger(__name__).info(f"PL Bitfile: {pynq.PL.bitfile_name} ({ol.timestamp})  Loaded: {ol.is_loaded()}")
 
     if clocks:
         import mkidgen3.drivers.rfdc
