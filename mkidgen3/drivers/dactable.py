@@ -5,11 +5,18 @@ from ..mkidpynq import FP16_15
 
 
 class DACTableAXIM(pynq.DefaultIP):
-    bindto = ['mazinlab:mkidgen3:dac_table_axim:0.6', 'mazinlab:mkidgen3:dac_table_axim:1.33']
+    bindto = ['mazinlab:mkidgen3:dac_table_axim:1.33']
 
     def __init__(self, description):
         super().__init__(description=description)
         self._buffer=None
+
+    def replay_ramp(self, tlast_every=256):
+        ramp = np.arange(2 ** 19, dtype=np.complex64)
+        ramp.real %= (2 ** 16)
+        ramp.imag = ramp.real
+        self.stop()
+        self.replay(ramp, tlast_every=tlast_every, fpgen=None)
 
     def replay(self, data, tlast=True, tlast_every=256, replay_len=None, start=True,
                fpgen=lambda x: [FP16_15(v).__index__() for v in x]):
