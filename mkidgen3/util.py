@@ -3,6 +3,28 @@ import os
 import yaml
 import logging.config
 import requests
+import numpy as np
+
+
+def buf2complex(b, free=True, unsigned=False, floating=True):
+    """ Convert a pynq buffer to normal numpy array, copying it out of PL DDR4
+
+    Treat input as uint16 if unsigned is set.
+
+    Divide by 2**15 (or 2**16 if unsigned) if floating is set.
+
+    Frees the pynq buffer if free is set
+    """
+    x = np.array(b)
+    if unsigned:
+        x = x.astype(np.uint16, copy=False)
+    if floating:
+        x /= 2 ** (16 if unsigned else 15)
+    x = x[..., 0] + 1j * x[..., 1]
+    if free:
+        b.freebuffer()
+    return x
+
 
 
 def set_anritsu(f):

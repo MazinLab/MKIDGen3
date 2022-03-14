@@ -28,5 +28,3 @@ setuptools.setup(
         "Development Status :: 1 - Planning",
         "Intended Audience :: Science/Research"],
 )
-
-#sudo cp udev/gen3.rules /etc/udev/rules.d/

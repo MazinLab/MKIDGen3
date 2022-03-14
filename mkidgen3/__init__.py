@@ -1,5 +1,6 @@
 from logging import getLogger
 import numpy as np
+from . import util
 try:
     import pynq
     from .drivers import *
@@ -142,3 +143,13 @@ def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=Fals
         mkidgen3.drivers.rfdc.start_clocks(external_10mhz=external_10mhz)
 
     return _gen3_overlay
+
+
+def capture_opfb(n=256):
+    """Capture the OPFB output, exercise caution with large n as the result is copied from PL to PS DDR4"""
+    out = np.zeros((n, 4096), dtype=np.complex64)
+    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(0, 4096, 2)
+    out[:, ::2] = util.buf2complex(_gen3_overlay.capture.capture_iq(n, 'all', tap_location='rawiq'))
+    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(1, 4096, 2)
+    out[:, 1::2] = util.buf2complex(_gen3_overlay.capture.capture_iq(n, 'all', tap_location='rawiq'))
+    return out
