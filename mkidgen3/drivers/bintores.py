@@ -6,15 +6,41 @@ def opfb_bin_number(freq):
     """
     Compute the OPFB bin number corresponding to each frequency, specified in Hz
 
-    Frequencies are are assumed to be in [0, 4.096) GHz, that OPFB bins are in order of increasing frequency,
+    Frequencies are assumed to be in [-2.048, 2.048) GHz, that OPFB bins are in order of the Xilinx SSR FFT
     and of equal bandwidth.
 
     Frequencies are placed in the closest bin by central frequency. Bins are centered on 0.5MHz increments
     so bin 1 gets [0.5, 1.5) MHz. NB that bin 0 is assigned [0, 0.5) MHz and [4095.5, 4096) MHz
 
     """
-    # if opfb bins werent shifted then it would be: strt_bins=np.round(freq/1e6).astype(int)+2048
-    return ((np.round(freq / 1e6).astype(int) + 2048) + 2048) % 4096
+    return (np.round(freq / 1e6).astype(int) + 4096) % 4096
+
+
+def opfb_bin_freq(bins, resolution, Fs=4.096e9, M=4096, OS=2, left_snip=1):
+    """
+    Inputs:
+    - bin: OPFB bin (0-4095). bin 0 contains -2048 to -2046 MHz, bin 4095 contains 2045 to 2047 MHz.
+    - resolution: the number of samples from a single bin to take the FFT of. This dictates the frequency
+        resolution in a single OPFB bin.
+    - Fs: ADC Sampling Rate.
+    - M: OPFB FFT Size.
+    - OS: Oversample ratio.
+    - left_snip: Cuts out the left most sample in a bin. This is an annoying crutch to handle the
+        fact we place the N/2 bin on the far left.
+        See https://www.gaussianwaves.com/2015/11/interpreting-fft-results-complex-dft-frequency-bins-and-fftshift/
+        for explanation.
+
+    Outputs:
+    - Returns an array of frequency values in Hz for the given OPFB bin. """
+    try:
+        len(bins)
+    except TypeError:
+        bins = [bins]
+    bins = np.asarray(bins).astype(int)
+    bin_centers = (Fs / M) * np.linspace(-M / 2, M / 2 - 1, M)
+    bin_width = (Fs / M) * OS
+    base_freq = np.linspace(-bin_width / 2, bin_width / 2 - 1, resolution - left_snip)
+    return base_freq[:, None] + bin_centers[bins]
 
 
 class BinToResIP(DefaultIP):
