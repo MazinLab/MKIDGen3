@@ -2,18 +2,34 @@ from pynq import allocate, DefaultIP
 import numpy as np
 
 
-def opfb_bin_number(freq):
+def opfb_bin_number(freq, ssr_raw_order=False):
     """
-    Compute the OPFB bin number corresponding to each frequency, specified in Hz
+    Compute the OPFB bin number corresponding to each frequency, specified in Hz.
 
-    Frequencies are assumed to be in [-2.048, 2.048) GHz, that OPFB bins are in order of the Xilinx SSR FFT
-    and of equal bandwidth.
+    Frequencies are assumed to be in [-2.048, 2.048) GHz. Frequencies are placed in
+    the closest bin by central frequency. Bins are 2 MHz wide and centered on 1 MHz
+    increments (50% overlapping).
 
-    Frequencies are placed in the closest bin by central frequency. Bins are centered on 0.5MHz increments
-    so bin 1 gets [0.5, 1.5) MHz. NB that bin 0 is assigned [0, 0.5) MHz and [4095.5, 4096) MHz
+    bins are indexed 0 to 4095 from left to right across the 4 GHz IQ spectrum.
+    bin 0 is centered at -2048 MHz and contains [2047, -2047) MHz.
+    bin 1 contains [-2048, -2046) MHz.
+    bin 2048 contains [-1, 1) MHz.
+    bin 4095 contains [2046, 2048) MHz.    
+
+    ssr_raw_order: 
+        the OPFB bins are in order receviced from the Xilinx SSR FFT with no shift applied
+        bin 0 contains frequencies in the interval [-1, 1) MHz, bin 1 [0, 2) MHz...
+        bin 2047 contains [2046, 2048) MHz.
+        The nyquist frequency component in bin 2048 is common to both positive
+        and negative frequencies. By convention it is the highest negative frequency so
+        bin 2048 contains the highest negative frequency [2047, -2047) MHz
+        bins 2049 + contain negative frequencies progressing towards 0 MHz.
 
     """
-    return (np.round(freq / 1e6).astype(int) + 4096) % 4096
+    if ssr_raw_order:
+        return (np.round(freq / 1e6).astype(int) + 4096) % 4096
+    else:
+        return (np.round(freq / 1e6).astype(int) + 2048
 
 
 def opfb_bin_freq(bins, resolution, Fs=4.096e9, M=4096, OS=2, left_snip=1):
