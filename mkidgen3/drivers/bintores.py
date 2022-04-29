@@ -29,7 +29,7 @@ def opfb_bin_number(freq, ssr_raw_order=False):
     if ssr_raw_order:
         return (np.round(freq / 1e6).astype(int) + 4096) % 4096
     else:
-        return (np.round(freq / 1e6).astype(int) + 2048
+        return np.round(freq / 1e6).astype(int) + 2048
 
 
 def opfb_bin_freq(bins, resolution, Fs=4.096e9, M=4096, OS=2, left_snip=1):
