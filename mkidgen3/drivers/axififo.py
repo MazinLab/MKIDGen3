@@ -5,6 +5,7 @@ import numpy as np
 
 #TODO enhance with cutthrough support
 
+
 class AxisFIFO(DefaultIP):
     bindto = ['xilinx.com:ip:axi_fifo_mm_s:4.2']
 
