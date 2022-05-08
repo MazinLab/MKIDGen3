@@ -21,10 +21,12 @@ def buf2complex(b, free=True, unsigned=False, floating=True):
     if floating:
         x /= 2 ** (16 if unsigned else 15)
     x = x[..., 0] + 1j * x[..., 1]
-    if free:
-        b.freebuffer()
+    try:
+        if free:
+            b.freebuffer()
+    except AttributeError:
+        pass  # not a pynq buffer
     return x
-
 
 
 def set_anritsu(f):
