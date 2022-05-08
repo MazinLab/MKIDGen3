@@ -232,9 +232,12 @@ class CaptureHierarchy(DefaultHierarchy):
         time.sleep(captime)
         return buffer
 
-    def capture_adc(self, n, duration=False):
+    def capture_adc(self, n, duration=False, complex=False):
         """
         samples are captured in multiples of 8 will be clipped as necessary
+
+        Set complex to return a numpy complex array of the result. This implies a copy out of the buffer so care is
+        required with memory sizes (i.e. will use 5x standard memory in PS DDR).
         """
         if n <= 0:
             raise ValueError('Must request at least 1 sample')
@@ -268,7 +271,13 @@ class CaptureHierarchy(DefaultHierarchy):
 
         self._capture('adc', capture_bytes, addr)
         time.sleep(captime)
-        return buffer
+
+        if complex:
+            ret = buffer[:, 0] + 1j * buffer[:, 1]
+            del buffer
+            return ret
+        else:
+            return buffer
 
     def capture_phase(self, n, groups='all', duration=False):
         """
