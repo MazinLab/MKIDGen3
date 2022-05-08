@@ -145,11 +145,23 @@ def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=Fals
     return _gen3_overlay
 
 
-def capture_opfb(n=256):
+def capture_opfb(n=256, raw=False):
     """Capture the OPFB output, exercise caution with large n as the result is copied from PL to PS DDR4"""
-    out = np.zeros((n, 4096), dtype=np.complex64)
-    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(0, 4096, 2)
-    out[:, ::2] = util.buf2complex(_gen3_overlay.capture.capture_iq(n, 'all', tap_location='rawiq'))
-    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(1, 4096, 2)
-    out[:, 1::2] = util.buf2complex(_gen3_overlay.capture.capture_iq(n, 'all', tap_location='rawiq'))
+    out = np.zeros((n, 4096, 2) if raw else (n, 4096), dtype=np.int16 if raw else np.complex64)
+    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(0, 2048)
+    x = _gen3_overlay.capture.capture_iq(n, 'all', tap_location='rawiq')
+    if raw:
+        out[:, :2048, :] = x
+        x.freebuffer()
+    else:
+        out[:, :2048] = util.buf2complex(x, free=True)
+    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(2048,4096)
+
+    x = _gen3_overlay.capture.capture_iq(n, 'all', tap_location='rawiq')
+    if raw:
+        out[:, 2048:, :] = x
+        x.freebuffer()
+    else:
+        out[:, 2048:] = util.buf2complex(x, free=True)
+
     return out
