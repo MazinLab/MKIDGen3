@@ -30,6 +30,9 @@ class DACTableAXIM(pynq.DefaultIP):
         fpgen - set to a function to convert floating point numbers to integers. must work on arrays of data
         if None data will be truncated.
         """
+        if fpgen == 'simple':
+            data = (data*2048).round().clip(-2048, 2047)*16
+            fpgen=None
         # Data has right shape
         if data.size < 2 ** 19:
             getLogger(__name__).warning('Insufficient data, padding with zeros')
@@ -63,8 +66,9 @@ class DACTableAXIM(pynq.DefaultIP):
         if self._buffer is not None:
             self._buffer.freebuffer()
         self._buffer = pynq.allocate(2 ** 20, dtype=np.uint16)
-        iload = fpgen(data.real) if fpgen is not None else data.real
-        qload = fpgen(data.imag) if fpgen is not None else data.imag
+
+        iload = fpgen(data.real) if fpgen is not None else data.real.astype(np.int16)
+        qload = fpgen(data.imag) if fpgen is not None else data.imag.astype(np.int16)
         for i in range(16):
             self._buffer[i:data.size * 2:32] = iload[i::16]
             self._buffer[i+16:data.size * 2:32] = qload[i::16]
