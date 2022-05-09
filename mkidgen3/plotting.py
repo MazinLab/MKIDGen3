@@ -33,6 +33,7 @@ def adc_test_plot(adc_data, timerange, fft_range, fft_zoom,  db=True, fs=4.096e9
 
     adc_timeseries(adc_data, timerange, fs=fs, ax=adcax)
 
+
     fft_start, fft_stop = fft_range
     fft_sl = slice(*fft_range)
     fft_freqs = np.linspace(-fs/2, fs/2, fft_stop - fft_start)
@@ -92,3 +93,23 @@ def plot_fft(f, y, db=True, xlim=(-2.048e9, 2.048e9), ylim=None, ax=None):
     if db:
         plt.ylabel("power (dB)", position=(1, 0.5))
     plt.title('FFT')
+
+def plot_adc_fft(data, fs=4.096e9, db=True, fft_points=2**14, xlim=None, ylim=None, ax=None):
+    fft_freqs=np.linspace(-2.048e9,2.048e9,fft_points)
+    fft_data=np.abs(np.fft.fftshift(np.fft.fft(data[:fft_points])))
+    if db:
+        fft_data = 20*np.log10(fft_data)
+    fft_data=fft_data-max(fft_data)
+    if ax is not None:
+        plt.sca(ax)
+    plt.plot(fft_freqs, fft_data)
+    plt.grid(True)
+    if ylim is not None:
+        plt.ylim(*ylim)
+    if xlim is not None:
+        plt.xlim(*xlim)
+    plt.xlabel("Frequency (Hz)", position=(0.5, 0.5))
+    plt.ylabel("power (linear)", position=(1, 0.5))
+    if db:
+        plt.ylabel("power (dB)", position=(1, 0.5))
+    plt.title('Spectrum')
