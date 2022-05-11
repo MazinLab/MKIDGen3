@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from mkidgen3.dsp import opfb_bin_spectrum, opfb_bin_freq
 import numpy as np
 
 
@@ -24,7 +25,7 @@ import numpy as np
 #     fig.suptitle('ADC Data')
 
 
-def adc_test_plot(adc_data, timerange, fft_range, fft_zoom,  db=True, fs=4.096e9, figsize=(13, 8), **mosaic_kw):
+def adc_test_plot(adc_data, timerange, fft_range, fft_zoom,  db=True, fs=4.096e9, figsize=(16, 8), **mosaic_kw):
     fig = plt.figure(figsize=figsize, constrained_layout=True)
     spec = fig.add_gridspec(2, 2, width_ratios=[1, 1], height_ratios=[1, 1.8])
     adcax = fig.add_subplot(spec[0, :])
@@ -68,8 +69,8 @@ def adc_timeseries(data, timerange=(None, None), fs=4.096e9, ax=None, **kwargs):
     n = data.shape[0]  # total samples
     tvec = np.linspace(0, n/fs, n)*1e9  # time vector [nano seconds]  TODO only generate used samples
     sl = slice(*timerange)  # plt slice
-    plt.plot(tvec[sl], data.real[sl])
-    plt.plot(tvec[sl], data.real[sl], "o")
+    plt.plot(tvec[sl], data.real[sl], color='#34D576', linewidth=6)
+    plt.plot(tvec[sl], data.real[sl], "o", color='#346B76', linewidth=8)
     plt.grid(True)
     plt.xlabel("time (ns)", position=(0.5, 1))
     plt.ylabel("signal (V)", position=(0, 0.5))
@@ -82,7 +83,7 @@ def adc_timeseries(data, timerange=(None, None), fs=4.096e9, ax=None, **kwargs):
 def plot_fft(f, y, db=True, xlim=(-2.048e9, 2.048e9), ylim=None, ax=None):
     if ax is not None:
         plt.sca(ax)
-    plt.plot(f, y)
+    plt.plot(f, y,color='#346B76', linewidth=3)
     plt.grid(True)
     if ylim is not None:
         plt.ylim(*ylim)
@@ -102,7 +103,7 @@ def plot_adc_fft(data, fs=4.096e9, db=True, fft_points=2**14, xlim=None, ylim=No
     fft_data=fft_data-max(fft_data)
     if ax is not None:
         plt.sca(ax)
-    plt.plot(fft_freqs, fft_data)
+    plt.plot(fft_freqs, fft_data,color='#346B76', linewidth=3)
     plt.grid(True)
     if ylim is not None:
         plt.ylim(*ylim)
@@ -113,3 +114,37 @@ def plot_adc_fft(data, fs=4.096e9, db=True, fft_points=2**14, xlim=None, ylim=No
     if db:
         plt.ylabel("power (dB)", position=(1, 0.5))
     plt.title('Spectrum')
+
+def plot_opfb_bins(data, bins, fine_fft_shift = True, fft_shift = True, left_snip=0, ol=True):
+    """
+    Inputs:
+    - data: Raw data out of OPFB. Should be in the form N x 4096 where N is the number of samples from a single bin.
+    - bins: list of OPFB bins 0 to 4095 (note bin 0 is far left in the +/- 2 GHz spectrum).
+    - fine_fft_shift: boolean. To apply an fft shift to the fine fft spectrum of each bin or not. (You should.)
+    - fft_shift: boolean. To apply an fft shift to the entire OPFB output spectrum or not. (You should.)
+    - ol: To plot the bins as overlapping or discard the overlap region."""
+
+    if fft_shift:
+        data = np.fft.fftshift(data, axes=1)
+    bin_freqs=opfb_bin_freq(bins, data.shape[0])
+    spectra=opfb_bin_spectrum(data,bins)
+    
+    plt.figure(figsize=(16,6))
+    sl = slice(data.shape[0]//3, -data.shape[0]//3) if not ol else slice(0,-1)
+    plt.plot(bin_freqs[sl]*1e-6, spectra[sl])
+    plt.xlabel("Frequency (MHz)", position=(0.5, 0.5))
+    plt.ylabel("power (dB)", position=(1, 0.5))
+    plt.xlim(-2000,2000)
+    return bin_freqs[sl], spectra[sl]
+
+def find_opfb_tones(data):
+    """
+    Plot the absolute value of the average of the real signal in each OPFB bin. Also report the max peak.
+    This quickly gives the location of the peak tone in the OPFB
+    Inputs:
+    - data: Raw data out of OPFB. Should be in the form N x 4096 where N is the number of samples from a single bin.
+    """
+    plt.plot(abs(data.real.mean(0)), linewidth=3)
+    plt.xlabel("OPFB Bin (Raw SSR FFT Output Order)")
+    plt.ylabel("|Averge Value of Real Signal|")
+    print(f"peak in bin: {np.argmax(abs(data.real.mean(0)))}")
