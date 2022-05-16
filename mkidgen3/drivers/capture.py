@@ -234,7 +234,7 @@ class CaptureHierarchy(DefaultHierarchy):
         time.sleep(captime)
         return buffer
 
-    def capture_adc(self, n, duration=False, complex=False):
+    def capture_adc(self, n, duration=False, complex=False, sleep=True):
         """
         samples are captured in multiples of 8 will be clipped as necessary
 
@@ -272,6 +272,7 @@ class CaptureHierarchy(DefaultHierarchy):
         getLogger(__name__).debug(msg)
 
         self._capture('adc', capture_bytes, addr)
+        if sleep or complex:
         time.sleep(captime)
 
         if complex:
