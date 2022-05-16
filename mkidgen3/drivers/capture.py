@@ -234,12 +234,14 @@ class CaptureHierarchy(DefaultHierarchy):
         time.sleep(captime)
         return buffer
 
-    def capture_adc(self, n, duration=False, complex=False, sleep=True):
+    def capture_adc(self, n, duration=False, complex=False, sleep=True, use_interrupt=False):
         """
         samples are captured in multiples of 8 will be clipped as necessary
 
         Set complex to return a numpy complex array of the result. This implies a copy out of the buffer so care is
         required with memory sizes (i.e. will use 5x standard memory in PS DDR).
+
+        use_interrupt is in testing, requires interrupt controller be configured
         """
         if n <= 0:
             raise ValueError('Must request at least 1 sample')
@@ -273,7 +275,12 @@ class CaptureHierarchy(DefaultHierarchy):
 
         self._capture('adc', capture_bytes, addr)
         if sleep or complex:
-        time.sleep(captime)
+            time.sleep(captime)
+        if use_interrupt and not sleep:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            task = loop.create_task(self.axis2mm.o_int.wait())
+            loop.run_until_complete(task)
 
         if complex:
             d = np.array(buffer)

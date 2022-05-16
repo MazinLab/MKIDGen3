@@ -131,6 +131,12 @@ def plstatus():
     print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
 
 
+def enable_interrupts():
+    _gen3_overlay.axi_intc_0.register_map.IER = -1
+    _gen3_overlay.axi_intc_0.register_map.MER.HIE = True
+    _gen3_overlay.axi_intc_0.register_map.MER.ME = True
+
+
 def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=False, download=True):
     import pynq
 
