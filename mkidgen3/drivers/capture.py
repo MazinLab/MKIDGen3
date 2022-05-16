@@ -155,7 +155,9 @@ class CaptureHierarchy(DefaultHierarchy):
                 getLogger(__name__).debug(f'Capture of {n} not supported')
             self.filter_iq[n] = dev
 
-        self.switch = getattr(self,'axis_switch_0', None) or getattr(self,'axis_switch', None)
+        switchloc = getattr(self,'Switchboard', None) or getattr(self,'switchboard', None) or self
+        self.switch = getattr(switchloc,'axis_switch_0', None) or getattr(switchloc,'axis_switch', None)
+
         try:
             self.filter_phase = self.filter_phase_0
         except AttributeError:
