@@ -273,9 +273,9 @@ class CaptureHierarchy(DefaultHierarchy):
         time.sleep(captime)
 
         if complex:
-            ret = buffer[:, 0] + 1j * buffer[:, 1]
+            d = np.array(buffer)
             del buffer
-            return ret
+            return d[:, 0] + 1j * d[:, 1]
         else:
             return buffer
 
