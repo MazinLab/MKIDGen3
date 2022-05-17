@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from mkidgen3.dsp import opfb_bin_spectrum, opfb_bin_freq
+from mkidgen3.dsp import opfb_bin_spectrum, opfb_bin_frequencies
 import numpy as np
 
 
@@ -83,7 +83,7 @@ def adc_timeseries(data, timerange=(None, None), fs=4.096e9, ax=None, **kwargs):
 def plot_fft(f, y, db=True, xlim=(-2.048e9, 2.048e9), ylim=None, ax=None):
     if ax is not None:
         plt.sca(ax)
-    plt.plot(f, y,color='#346B76', linewidth=3)
+    plt.plot(f, y, color='#346B76', linewidth=3)
     plt.grid(True)
     if ylim is not None:
         plt.ylim(*ylim)
@@ -126,9 +126,9 @@ def plot_opfb_bins(data, bins, fine_fft_shift = True, fft_shift = True, left_sni
 
     if fft_shift:
         data = np.fft.fftshift(data, axes=1)
-    bin_freqs=opfb_bin_freq(bins, data.shape[0])
+    bin_freqs=opfb_bin_frequencies(bins, data.shape[0])
     spectra=opfb_bin_spectrum(data,bins)
-    
+
     plt.figure(figsize=(16,6))
     sl = slice(data.shape[0]//3, -data.shape[0]//3) if not ol else slice(0,-1)
     plt.plot(bin_freqs[sl]*1e-6, spectra[sl])

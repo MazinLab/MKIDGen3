@@ -1,62 +1,4 @@
-from pynq import allocate, DefaultIP
-import numpy as np
-
-
-def opfb_bin_number(freq, ssr_raw_order=False):
-    """
-    Compute the OPFB bin number corresponding to each frequency, specified in Hz.
-
-    Frequencies are assumed to be in [-2.048, 2.048) GHz. Frequencies are placed in
-    the closest bin by central frequency. Bins are 2 MHz wide and centered on 1 MHz
-    increments (50% overlapping).
-
-    bins are indexed 0 to 4095 from left to right across the 4 GHz IQ spectrum.
-    bin 0 is centered at -2048 MHz and contains [2047, -2047) MHz.
-    bin 1 contains [-2048, -2046) MHz.
-    bin 2048 contains [-1, 1) MHz.
-    bin 4095 contains [2046, 2048) MHz.    
-
-    ssr_raw_order: 
-        the OPFB bins are in order receviced from the Xilinx SSR FFT with no shift applied
-        bin 0 contains frequencies in the interval [-1, 1) MHz, bin 1 [0, 2) MHz...
-        bin 2047 contains [2046, 2048) MHz.
-        The nyquist frequency component in bin 2048 is common to both positive
-        and negative frequencies. By convention it is the highest negative frequency so
-        bin 2048 contains the highest negative frequency [2047, -2047) MHz
-        bins 2049 + contain negative frequencies progressing towards 0 MHz.
-
-    """
-    if ssr_raw_order:
-        return (np.round(freq / 1e6).astype(int) + 4096) % 4096
-    else:
-        return np.round(freq / 1e6).astype(int) + 2048
-
-
-def opfb_bin_freq(bins, resolution, Fs=4.096e9, M=4096, OS=2, left_snip=1):
-    """
-    Inputs:
-    - bin: OPFB bin (0-4095). bin 0 contains -2048 to -2046 MHz, bin 4095 contains 2045 to 2047 MHz.
-    - resolution: the number of samples from a single bin to take the FFT of. This dictates the frequency
-        resolution in a single OPFB bin.
-    - Fs: ADC Sampling Rate.
-    - M: OPFB FFT Size.
-    - OS: Oversample ratio.
-    - left_snip: Cuts out the left most sample in a bin. This is an annoying crutch to handle the
-        fact we place the N/2 bin on the far left.
-        See https://www.gaussianwaves.com/2015/11/interpreting-fft-results-complex-dft-frequency-bins-and-fftshift/
-        for explanation.
-
-    Outputs:
-    - Returns an array of frequency values in Hz for the given OPFB bin. """
-    try:
-        len(bins)
-    except TypeError:
-        bins = [bins]
-    bins = np.asarray(bins).astype(int)
-    bin_centers = (Fs / M) * np.linspace(-M / 2, M / 2 - 1, M)
-    bin_width = (Fs / M) * OS
-    base_freq = np.linspace(-bin_width / 2, bin_width / 2 - 1, resolution - left_snip)
-    return base_freq[:, None] + bin_centers[bins]
+from pynq import DefaultIP
 
 
 class BinToResIP(DefaultIP):
@@ -79,7 +21,6 @@ class BinToResIP(DefaultIP):
                  Word 4n+3 : bit [31:0] - rid_to_bin[n][127:96]  (unused)
         """
         super().__init__(description=description)
-
 
     @staticmethod
     def _checkgroup(group_ndx):

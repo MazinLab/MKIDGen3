@@ -4,7 +4,7 @@ from . import util
 try:
     import pynq
     from .drivers import *
-    from .drivers.bintores import opfb_bin_number
+    from .dsp import opfb_bin_number
     from .drivers.ddc import tone_increments
 except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')
