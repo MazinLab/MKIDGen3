@@ -1,6 +1,8 @@
 import numpy as np
+import pynq.buffer
 from pynq import allocate, DefaultIP, DefaultHierarchy
 import time
+import asyncio
 import mkidgen3.mkidpynq
 from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, check_description_for  # config, overlay details
 from logging import getLogger
@@ -178,7 +180,8 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.start(continuous=False, increment=True)
         buffer.freebuffer()
 
-    def _capture(self, source, n, buffer):
+    def looping_capture(self, source: str, n: int, buffers: pynq.buffer.PynqBuffer, callback):
+        getLogger(__name__).warning('Looping capture untested, exercise case')
         if self.switch is not None:
             self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
         if n % 64:
@@ -188,9 +191,40 @@ class CaptureHierarchy(DefaultHierarchy):
                           " Try calling .axis2mm.abort() followed by .axis2mm.clear_error()"
                           " then try a small throwaway capture (data order may not be aligned in the first capture "
                           "after a reset).")
-        getLogger(__name__).debug(f'Starting capture of {n} bytes ({n // 64} beats) to address {hex(buffer)} from '
+
+        i = 0
+        self.axis2mm.addr = buffers[0].device_address
+        self.axis2mm.len = n
+        self.axis2mm.start(continuous=True, increment=True)
+
+        loop = asyncio.get_event_loop()
+        while not self.terminate_looped_capture:
+            task = loop.create_task(self.o_int.wait())
+            loop.run_until_complete(task)
+            stat = self.cmd_ctrl_reg
+            if stat['r_err']:
+                getLogger(__name__).error(f'Aborting capture loop due to error: {stat}')
+                break
+            else:
+                callback(buffers[i])
+                i = i+1 if i < len(buffers) else 0
+                self.axis2mm.addr = buffers[i].device_address
+                self.axis2mm.len = n
+        self.abort()
+
+    def _capture(self, source, n, buffer_addr):
+        if self.switch is not None:
+            self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
+        if n % 64:
+            raise ValueError('Can only capture in multiples of 64 bytes')
+        if not self.axis2mm.ready:
+            raise IOError("capture core not ready, this shouldn't happen."
+                          " Try calling .axis2mm.abort() followed by .axis2mm.clear_error()"
+                          " then try a small throwaway capture (data order may not be aligned in the first capture "
+                          "after a reset).")
+        getLogger(__name__).debug(f'Starting capture of {n} bytes ({n // 64} beats) to address {hex(buffer_addr)} from '
                                   f'source {source}')
-        self.axis2mm.addr = buffer
+        self.axis2mm.addr = buffer_addr
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
 
