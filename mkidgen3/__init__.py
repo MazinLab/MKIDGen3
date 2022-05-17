@@ -98,10 +98,16 @@ def configure_ddc(freq, phase_offset=None):
     remaining channels, however they may be determined by inspecting the .tones property of resonator_ddc.
     """
     tones = np.zeros((2, 2048))
-    if phase_offset is not None:
-        phase_offset /= (phase_offset/np.pi).clip(-1, 1)
+    freq = np.asarray(freq)
+    if freq.size >2048:
+        getLogger(__name__).warning(f'Using first 2048 of {freq.size} provided frequencies')
     tones[0, :min(freq.size, 2048)] = tone_increments(freq[:2048])
-    tones[1, :min(freq.size, 2048)] = np.zeros(2048) if phase_offset is None else phase_offset[:2048]
+    if phase_offset is not None:
+        phase_offset = np.asarray(phase_offset)
+        if freq.size != phase_offset.size:
+            raise ValueError('If provided, phase_offsets must match frequencies')
+        phase_offset /= (phase_offset/np.pi).clip(-1, 1)
+        tones[1, :min(freq.size, 2048)] = phase_offset[:2048]
     getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
     _gen3_overlay.photon_pipe.reschan.resonator_ddc.tones = tones
     getLogger(__name__).debug('DDC tones written.')
