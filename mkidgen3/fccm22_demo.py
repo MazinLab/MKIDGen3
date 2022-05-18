@@ -12,8 +12,8 @@ def fccm_tone_bins_spectra(data, bins=(2347, 2348, 2349, 2350), fft_shift=True, 
     return bin_freqs[sl], spectra[sl]
 
 
-def plot_fccm_demo_bins(opfb_shifted, bins=(2347, 2348, 2349, 2350)):
-    a = fccm_tone_bins_spectra(opfb_shifted, bins)
+def plot_fccm_demo_bins(opfb_shifted, bins=(2347, 2348, 2349, 2350), left_snip=1):
+    a = fccm_tone_bins_spectra(opfb_shifted, bins,left_snip=left_snip)
     plt.figure(figsize=(16, 6))
     plt.title('OPFB Data')
     plt.plot(a[0][:, 0] * 1e-6, a[1][:, 0], color=(0.8, 0.2, 0.3, 0.9), linewidth=2)

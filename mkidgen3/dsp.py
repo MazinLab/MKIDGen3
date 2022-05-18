@@ -22,7 +22,7 @@ def opfb_bin_spectrum(data, bins=None, norm_max=True, shift=True, left_snip=1, d
     if shift:
         x = np.fft.fftshift(x, axes=0)
     if norm_max:
-        x-=np.max(x)
+        x -= np.max(x)
     return np.flip(x[left_snip:, bins], axis=0)
 
 
@@ -38,7 +38,6 @@ The SSR FFT used in the OPFB produces bins in a shifted order:
     [-1, 1), ..., [2046, 2048), [2047, -2047), ..., [-2, -1)
 this on-fpga order that is ingested by bin_to_res we refer to as the raw ssr order.
 """
-
 
 def opfb_bin_number(freq, ssr_raw_order=True):
     """
@@ -100,10 +99,12 @@ def opfb_bin_frequencies(bins, resolution, Fs=4.096e9, M=4096, OS=2, left_snip=1
     return base_freq[:, None] + bin_centers[bins]
 
 
-def opfb_bin_center(bins, Fs=4.096e9, M=4096):
+def opfb_bin_center(bins, Fs=4.096e9, M=4096, ssr_order=True):
     try:
         len(bins)
     except TypeError:
         bins = [bins]
     bins = np.asarray(bins).astype(int)
-    return (Fs / M) * np.linspace(-M / 2, M / 2 - 1, M)[bins]  # TODO Don't compute all the centers only to subscript
+    # TODO Don't compute all the centers only to subscript
+    f=(Fs / M) * np.linspace(-M / 2, M / 2 - 1, M)
+    return np.fft.fftshift(f)[bins] if ssr_order else f[bins]
