@@ -11,15 +11,14 @@ def tone_increments(freq):
     assumes channel will use OPFB bin returned by mkidgen3.drivers.bintores.opfb_bin_number
     when computing central frequency
     """
-    centers = opfb_bin_center(opfb_bin_number(freq, ssr_raw_order=True))
-
+    centers = opfb_bin_center(opfb_bin_number(freq, ssr_raw_order=True), ssr_order=True)
     # This must be 2MHz NOT 2.048MHz, the sign matters! Use 1MHz as that corresponds to ±Pi
     return (freq - centers) / 1e6
 
 
 class DDC(DefaultIP):
     offset_tones = 0x2000
-    TONE_FORMAT = (1, 10, 'signed')  #ap_fixed<11,1>
+    TONE_FORMAT = (1, 10, 'signed')  # ap_fixed<11,1>
     PHASE0_FORMAT = (1, 20, 'signed')  # ap_fixed<21,1>
 
     def __init__(self, description):
@@ -55,16 +54,16 @@ class DDC(DefaultIP):
         """Read the numbers in the group from the core and convert them from binary data to python numbers"""
         self._checkgroup(group_ndx)
         vals = [self.read(offset + 32 * group_ndx + 4 * i) for i in range(8)]  # 32 bit packed word
-        tone_mask = 2**12-1
+        tone_mask = 2 ** 12 - 1
         tone_fmt = fp_factory(*self.TONE_FORMAT, frombits=True)
         phase_fmt = fp_factory(*self.PHASE0_FORMAT, frombits=True)
 
         if raw:
             tones = [np.uint16(v & tone_mask) for v in vals]
-            offsets = [np.uint16(v>>11) for v in vals]
+            offsets = [np.uint32(v >> 11) for v in vals]
         else:
             tones = [float(tone_fmt(v & tone_mask)) for v in vals]
-            offsets = [float(phase_fmt(v>>11)) for v in vals]
+            offsets = [float(phase_fmt(v >> 11)) for v in vals]
         return tones, offsets
 
     def write_group(self, group_ndx, increments, phases):
@@ -73,14 +72,11 @@ class DDC(DefaultIP):
         if len(increments) != 8 or len(phases) != 8:
             raise ValueError('len(group)!=8')
         bits = 0
-        tone_fmt = fp_factory(*self.TONE_FORMAT)
-        phase_fmt = fp_factory(*self.PHASE0_FORMAT)
-        fixedgroup = list(map(tone_fmt, increments)) + list(map(phase_fmt, phases))
-        fixedgroup = list(map(lambda x: x.__index__(),fixedgroup))
-        for i, (g0, g1) in enumerate(zip(*[iter(fixedgroup)] * 2)):  # take them by twos
+        tone_fmt = fp_factory(*self.TONE_FORMAT, include_index=True)
+        phase_fmt = fp_factory(*self.PHASE0_FORMAT, include_index=True)
+        for i, (g0, g1) in enumerate(zip(map(tone_fmt, increments), map(phase_fmt, phases))):
             bits |= ((g1 << 11) | g0) << (32 * i)
         data = bits.to_bytes(32, 'little', signed=False)
-        bits.to_bytes(32, 'little', signed=False)
         self.write(self.offset_tones + 32 * group_ndx, data)
 
     @property
