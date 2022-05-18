@@ -1,5 +1,6 @@
 from logging import getLogger
 import numpy as np
+import time
 import pynq
 from ..mkidpynq import FP16_15
 
@@ -19,7 +20,7 @@ class DACTableAXIM(pynq.DefaultIP):
         self.replay(ramp, tlast_every=tlast_every, fpgen=None)
 
     def replay(self, data, tlast=True, tlast_every=256, replay_len=None, start=True,
-               fpgen=lambda x: [FP16_15(v).__index__() for v in x]):
+               fpgen=lambda x: [FP16_15(v).__index__() for v in x], stop_if_needed=False):
         """
         data - an array of complex numbers, nominally 2^19 samples
         tlast - Set to true to emit a tlast pulse every tlast_every transactions
@@ -30,6 +31,8 @@ class DACTableAXIM(pynq.DefaultIP):
         fpgen - set to a function to convert floating point numbers to integers. must work on arrays of data
         if None data will be truncated.
         """
+        if self.register_map.run.run and not stop_if_needed:
+            raise RuntimeError('Replay in progress. Call .stop() or with stop_if_needed=True')
         if fpgen == 'simple':
             data = (data*2048).round().clip(-2048, 2047)*16
             fpgen=None
@@ -73,6 +76,10 @@ class DACTableAXIM(pynq.DefaultIP):
             self._buffer[i:data.size * 2:32] = iload[i::16]
             self._buffer[i+16:data.size * 2:32] = qload[i::16]
 
+        if self.register_map.run.run:
+            self.stop()
+            while not self.register_map.CTRL.AP_IDLE:
+                time.sleep(.0001)
         self.register_map.a_1 = self._buffer.device_address
         self.register_map.length_r = replay_len - 1  # length counter
         self.register_map.tlast = bool(tlast)
@@ -87,7 +94,8 @@ class DACTableAXIM(pynq.DefaultIP):
         self.register_map.run = False
 
     def quiet(self):
-        self.replay(np.zeros(16, dtype=np.complex64), tlast=False, replay_len=16)
+        """Replay 0s"""
+        self.replay(np.zeros(16, dtype=np.complex64), tlast=False, replay_len=16, stop_if_needed=True)
 
     def start(self):
         #TODO probably need to check for the case where not idle and run = False (axis stall to completion)
