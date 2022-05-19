@@ -109,7 +109,7 @@ def configure_ddc(freq, phase_offset=None, center_relative=False):
         phase_offset = np.asarray(phase_offset)
         if freq.size != phase_offset.size:
             raise ValueError('If provided, phase_offsets must match frequencies')
-        phase_offset /= (phase_offset/np.pi).clip(-1, 1)
+        phase_offset = (phase_offset/np.pi).clip(-1, 1)
         data[1, :min(freq.size, 2048)] = phase_offset[:2048]
     getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
     _gen3_overlay.photon_pipe.reschan.resonator_ddc.tones = data
