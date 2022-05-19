@@ -3,7 +3,7 @@ import scipy.special
 from logging import getLogger
 import logging
 from mkidgen3.gen2 import SweepFile, parse_lo
-
+from mkidgen3.dsp import quantize_frequencies
 
 DAC_REPLAY_SAMPLES=262144
 
@@ -39,8 +39,7 @@ def generate_dac_comb(frequencies, n_samples, sample_rate, amplitudes=None, phas
         phase_offsets = np.zeros_like(frequencies)
 
     # Quantize the frequencies to their closest digital value
-    freq_res = sample_rate / n_samples
-    quantized_freqs = np.round(frequencies / freq_res) * freq_res
+    quantized_freqs = quantize_frequencies(frequencies, rate=sample_rate, n_samples=n_samples)
     phase_offsets_radians = np.deg2rad(phase_offsets)
 
     if return_merged:
