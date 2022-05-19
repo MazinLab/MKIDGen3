@@ -26,6 +26,8 @@ class DDC(DefaultIP):
     TONE_FORMAT = (1, 10, 'signed')  # ap_fixed<11,1>
     PHASE0_FORMAT = (1, 20, 'signed')  # ap_fixed<21,1>
 
+    bindto = ['mazinlab:mkidgen3:resonator_dds:1.33']
+
     def __init__(self, description):
         """
         The core uses an array of 256 values, each consisting of 8 32 bit numbers packed into 256 bit word that
@@ -48,8 +50,6 @@ class DDC(DefaultIP):
         """
         super().__init__(description=description)
 
-    bindto = ['mazinlab:mkidgen3:resonator_dds:1.33']
-
     @staticmethod
     def _checkgroup(group_ndx):
         if group_ndx < 0 or group_ndx > 255:
@@ -58,36 +58,53 @@ class DDC(DefaultIP):
     def read_group(self, group_ndx, raw=False):
         """Read the numbers in the group from the core and convert them from binary data to python numbers"""
         self._checkgroup(group_ndx)
-        vals = [self.read(self.offset_tones + 32 * group_ndx + 4 * i) for i in range(8)]  # 32 bit packed word
-        tone_mask = 2 ** 12 - 1
-        phase_mask = 2 ** 22 - 1
+
         tone_fmt = fp_factory(*self.TONE_FORMAT, frombits=True)
         phase_fmt = fp_factory(*self.PHASE0_FORMAT, frombits=True)
 
-        x = 0
-        for i, v in enumerate(vals):
-            x |= v << (32 * i)
-        tones = x
-        offsets = x >> (11 * 8)
+        t_bits = sum(self.TONE_FORMAT[:2])
+        p_bits = sum(self.PHASE0_FORMAT[:2])
 
-        tones = [int((tones >> (11 * i)) & tone_mask) for i in range(8)]
-        offsets = [int((offsets >> (21 * i)) & phase_mask) for i in range(8)]
+        t_mask = 2 ** t_bits - 1
+        p_mask = 2 ** p_bits - 1
+
+        x = 0
+        for i in range(8):
+            v = self.read(self.offset_tones + 32 * group_ndx + i * 4)
+            x |= v << (32 * i)
+
+        tones = [(x >> (t_bits * i)) & t_mask for i in range(8)]
+        x >>= 88
+        phases = [(x >> (p_bits * i)) & p_mask for i in range(8)]
+
         if not raw:
             tones = [float(tone_fmt(v)) for v in tones]
-            offsets = [float(phase_fmt(v)) for v in offsets]
-        return tones, offsets
+            phases = [float(phase_fmt(v)) for v in phases]
 
-    def write_group(self, group_ndx, increments, phases):
+        return tones, phases
+
+    def write_group(self, group_ndx, increments, phases, raw=False):
         """ Convert the numbers in the group from python data to binary data and load it into the core """
         self._checkgroup(group_ndx)
         if len(increments) != 8 or len(phases) != 8:
             raise ValueError('len(group)!=8')
-        bits = 0
-        tone_fmt = fp_factory(*self.TONE_FORMAT, include_index=True)
-        phase_fmt = fp_factory(*self.PHASE0_FORMAT, include_index=True)
-        for i, (g0, g1) in enumerate(zip(map(tone_fmt, increments), map(phase_fmt, phases))):
-            bits |= ((g1 << (11 * 8)) | g0) << (11 * i)
-        data = bits.to_bytes(32, 'little', signed=False)
+
+        tone_fmt = (lambda x: x) if raw else fp_factory(*self.TONE_FORMAT, include_index=True)
+        phase_fmt = (lambda x: x) if raw else fp_factory(*self.PHASE0_FORMAT, include_index=True)
+
+        t_bits = sum(self.TONE_FORMAT[:2])
+        p_bits = sum(self.PHASE0_FORMAT[:2])
+
+        inc = 0
+        for i, v in enumerate(map(tone_fmt, increments)):
+            inc |= v << (t_bits * i)
+
+        pha = 0
+        for i, v in enumerate(map(phase_fmt, phases)):
+            pha |= v << (p_bits * i)
+
+        d = (pha << 88) | inc
+        data = d.to_bytes(32, 'little', signed=False)
         self.write(self.offset_tones + 32 * group_ndx, data)
 
     @property
