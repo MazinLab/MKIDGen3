@@ -1,6 +1,12 @@
 import numpy as np
 
 
+def quantize_frequencies(x, rate=4.096e9, n_samples=2 ** 19):
+    x = np.asarray(x) if not isinstance(x, (int, float)) else x
+    freq_res = rate / n_samples
+    return np.round(x / freq_res) * freq_res
+
+
 def opfb_bin_spectrum(data, bins=None, norm_max=True, shift=True, left_snip=1, db=True):
     """
     Inputs:
