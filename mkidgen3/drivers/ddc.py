@@ -2,18 +2,23 @@ import numpy as np
 from fpbinary import FpBinary
 from pynq import DefaultIP
 from mkidgen3.mkidpynq import fp_factory
-from mkidgen3.dsp import opfb_bin_number, opfb_bin_center
+from mkidgen3.dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
 
 
-def tone_increments(freq):
+def tone_increments(freq, quantize=True, **kwargs):
     """
     Compute the DDS tone increment for each frequency (in Hz),
     assumes channel will use OPFB bin returned by mkidgen3.drivers.bintores.opfb_bin_number
     when computing central frequency
+
+    If quantize, the tone increment frequencies will be quantized via dsp.quantize_frequencies
     """
     centers = opfb_bin_center(opfb_bin_number(freq, ssr_raw_order=True), ssr_order=True)
     # This must be 2MHz NOT 2.048MHz, the sign matters! Use 1MHz as that corresponds to ±Pi
-    return (freq - centers) / 1e6
+    x = (freq - centers)
+    if quantize:
+        x = quantize_frequencies(x, **kwargs)
+    return x / 1e6
 
 
 class DDC(DefaultIP):

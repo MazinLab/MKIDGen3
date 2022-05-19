@@ -4,7 +4,7 @@ from . import util
 try:
     import pynq
     from .drivers import *
-    from .dsp import opfb_bin_number, opfb_bin_center
+    from .dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
     from .drivers.ddc import tone_increments
 except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')
@@ -86,7 +86,7 @@ def set_channels(freq):
     _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = bins
 
 
-def configure_ddc(freq, phase_offset=None, center_relative=False):
+def configure_ddc(freq, phase_offset=None, center_relative=False, quantize=True):
     """
     Configure the DDC to down-convert resonator channels containing the specified frequencies.
 
@@ -102,9 +102,10 @@ def configure_ddc(freq, phase_offset=None, center_relative=False):
     if freq.size >2048:
         getLogger(__name__).warning(f'Using first 2048 of {freq.size} provided frequencies')
     if center_relative:
+        freq = dsp.quantize_frequencies(freq) if quantize else freq
         data[0, :min(freq.size, 2048)] = freq[:2048]/1e6
     else:
-        data[0, :min(freq.size, 2048)] = tone_increments(freq[:2048])
+        data[0, :min(freq.size, 2048)] = tone_increments(freq[:2048], quantize=quantize)
     if phase_offset is not None:
         phase_offset = np.asarray(phase_offset)
         if freq.size != phase_offset.size:
