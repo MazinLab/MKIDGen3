@@ -50,20 +50,26 @@ class DDC(DefaultIP):
         if group_ndx < 0 or group_ndx > 255:
             raise ValueError('group_ndx must be in [0,255]')
 
-    def read_group(self, group_ndx, offset, raw=False):
+    def read_group(self, group_ndx, raw=False):
         """Read the numbers in the group from the core and convert them from binary data to python numbers"""
         self._checkgroup(group_ndx)
-        vals = [self.read(offset + 32 * group_ndx + 4 * i) for i in range(8)]  # 32 bit packed word
+        vals = [self.read(self.offset_tones + 32 * group_ndx + 4 * i) for i in range(8)]  # 32 bit packed word
         tone_mask = 2 ** 12 - 1
+        phase_mask = 2 ** 22 - 1
         tone_fmt = fp_factory(*self.TONE_FORMAT, frombits=True)
         phase_fmt = fp_factory(*self.PHASE0_FORMAT, frombits=True)
 
-        if raw:
-            tones = [np.uint16(v & tone_mask) for v in vals]
-            offsets = [np.uint32(v >> 11) for v in vals]
-        else:
-            tones = [float(tone_fmt(v & tone_mask)) for v in vals]
-            offsets = [float(phase_fmt(v >> 11)) for v in vals]
+        x = 0
+        for i, v in enumerate(vals):
+            x |= v << (32 * i)
+        tones = x
+        offsets = x >> (11 * 8)
+
+        tones = [int((tones >> (11 * i)) & tone_mask) for i in range(8)]
+        offsets = [int((offsets >> (21 * i)) & phase_mask) for i in range(8)]
+        if not raw:
+            tones = [float(tone_fmt(v)) for v in tones]
+            offsets = [float(phase_fmt(v)) for v in offsets]
         return tones, offsets
 
     def write_group(self, group_ndx, increments, phases):
@@ -75,13 +81,13 @@ class DDC(DefaultIP):
         tone_fmt = fp_factory(*self.TONE_FORMAT, include_index=True)
         phase_fmt = fp_factory(*self.PHASE0_FORMAT, include_index=True)
         for i, (g0, g1) in enumerate(zip(map(tone_fmt, increments), map(phase_fmt, phases))):
-            bits |= ((g1 << 11) | g0) << (32 * i)
+            bits |= ((g1 << (11 * 8)) | g0) << (11 * i)
         data = bits.to_bytes(32, 'little', signed=False)
         self.write(self.offset_tones + 32 * group_ndx, data)
 
     @property
     def tones(self):
-        return np.hstack([self.read_group(g, self.offset_tones) for g in range(256)])
+        return np.hstack([self.read_group(g) for g in range(256)])
 
     @tones.setter
     def tones(self, tones):
