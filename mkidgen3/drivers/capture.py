@@ -4,7 +4,8 @@ from pynq import allocate, DefaultIP, DefaultHierarchy
 import time
 import asyncio
 import mkidgen3.mkidpynq
-from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, check_description_for  # config, overlay details
+from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
+    check_description_for  # config, overlay details
 from logging import getLogger
 
 
@@ -143,28 +144,21 @@ class FilterPhase(DefaultIP):
 
 class CaptureHierarchy(DefaultHierarchy):
     IQ_MAP = {'rawiq': 0, 'iq': 1, 'ddciq': 2}
-    SOURCE_MAP = dict(adc=0, iq=2, rawiq=1, phase=3)
+    PHASE_MAP = {'rawphase': 0, 'phase': 1}
+    SOURCE_MAP = dict(adc=0, rawiq=1, iq=2, phase=3, rawphase=4)
 
     def __init__(self, description):
         super().__init__(description)
-
         self.filter_iq = {}
-        for n, i in self.IQ_MAP.items():
-            try:
-                dev = getattr(self, f'filter_iq_{i}')
-            except AttributeError:
-                dev = None
-                getLogger(__name__).debug(f'Capture of {n} not supported')
-            self.filter_iq[n] = dev
+        self.filter_phase = {}
 
-        switchloc = getattr(self,'Switchboard', None) or getattr(self,'switchboard', None) or self
-        self.switch = getattr(switchloc,'axis_switch_0', None) or getattr(switchloc,'axis_switch', None)
+        switchloc = getattr(self, 'Switchboard', None) or getattr(self, 'switchboard', None) or self
+        self.switch = getattr(switchloc, 'axis_switch_0', None) or getattr(switchloc, 'axis_switch', None)
 
-        try:
-            self.filter_phase = self.filter_phase_0
-        except AttributeError:
-            self.filter_phase = None
-        self.axis2mm = self.axis2mm_0
+        if not hasattr(self, 'axis2mm'):
+            self.axis2mm = self.axis2mm_0
+
+        self._fetch_filter_blocks()
 
     @staticmethod
     def checkhierarchy(description):
@@ -172,11 +166,55 @@ class CaptureHierarchy(DefaultHierarchy):
                                                     'xilinx.com:module_ref:axis2mm'))
         return description['fullpath'] == 'capture' and bool(len(found['xilinx.com:module_ref:axis2mm']))
 
+    def _fetch_filter_blocks(self):
+        i = 0
+        while True:
+            try:
+                self.filter_iq[i] = getattr(self, f'filter_iq_{i}')
+                i += 1
+            except AttributeError:
+                break
+        if not i:
+            getLogger(__name__).warning(f'Capture does not support iq capture')
+        else:
+            getLogger(__name__).debug(f'Found {i} iq capture taps')
+
+        for n, i in self.IQ_MAP.items():
+            self.filter_iq[n] = self.filter_iq.get(i, None)
+
+        i = 0
+        while True:
+            try:
+                self.filter_phase[i] = getattr(self, f'phase_iq_{i}')
+                i += 1
+            except AttributeError:
+                break
+        if not i:
+            getLogger(__name__).warning(f'Capture does not support phase capture')
+        else:
+            getLogger(__name__).debug(f'Found {i} phase capture taps')
+
+        for n, i in self.PHASE_MAP.items():
+            self.filter_phase[n] = self.filter_phase.get(i, None)
+
+        base = pbase = 1
+        iqs = list(self.IQ_MAP.items())
+        iqs.sort(key=lambda x: x[1])
+        for k, v in iqs:
+            if self.filter_phase.get(k, None):
+                self.SOURCE_MAP[k] = v+base
+                pbase = v+base
+
+        ph = list(self.PHASE_MAP.items())
+        ph.sort(key=lambda x: x[1])
+        for k, v in ph:
+            self.SOURCE_MAP[k] = v + pbase
+
     def flush(self, n):
         """Capture n*64 bytes to flush a fifo"""
         buffer = allocate(n, dtype='u64', target=self.ddr4_0)
         self.axis2mm.addr = buffer
-        self.axis2mm.len = 64*n
+        self.axis2mm.len = 64 * n
         self.axis2mm.start(continuous=False, increment=True)
         buffer.freebuffer()
 
@@ -207,7 +245,7 @@ class CaptureHierarchy(DefaultHierarchy):
                 break
             else:
                 callback(buffers[i])
-                i = i+1 if i < len(buffers) else 0
+                i = i + 1 if i < len(buffers) else 0
                 self.axis2mm.addr = buffers[i].device_address
                 self.axis2mm.len = n
         self.abort()
@@ -323,13 +361,13 @@ class CaptureHierarchy(DefaultHierarchy):
         else:
             return buffer
 
-    def capture_phase(self, n, groups='all', duration=False):
+    def capture_phase(self, n, groups='all', duration=False, tap_location='phase'):
         """
         samples are captured in multiples of 16 will be clipped ad necessary
         groups is 0-127 or all
         """
-        if self.filter_phase is None:
-            getLogger(__name__).error('Bitstream does not support phase capture')
+        if self.filter_phase.get(tap_location, None) is None:
+            getLogger(__name__).error(f'Bitstream does not support phase capture at tap {tap_location}')
             return None
 
         if duration:
@@ -339,8 +377,8 @@ class CaptureHierarchy(DefaultHierarchy):
         if n <= 0:
             raise ValueError('Must request at least 1 sample')
 
-        self.filter_phase.keep = groups
-        n_groups = len(self.filter_phase.keep)
+        self.filter_phase[tap_location].keep = groups
+        n_groups = len(self.filter_phase[tap_location].keep)
 
         # each group is 16 phases (32 bytes)
         capture_bytes = n * 2 * n_groups * 16
