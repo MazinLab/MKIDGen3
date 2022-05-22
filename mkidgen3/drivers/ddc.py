@@ -21,6 +21,24 @@ def tone_increments(freq, quantize=True, **kwargs):
     return x / 1e6
 
 
+# The DDC tone table registers are arranged with least significant bits and bytes at
+# lower addresses in 256bit words of p0_7 ... p0_0 i_7 ... i_0
+# the increments i are 11 bits and the phase offsets 21 bits.
+#
+# Addrresses are written by read and write which rea and write 32 bit words.
+# so the first 32bit word of the tone table consists of 10 bits of i2, i1 and i0:  i2_9 ... i2_0 i1 i0
+# .to_bytes(4, 'big', signed=False) will create a string that prints like this is written, but do not match how
+# mimo.write writes the data.
+#
+# bitstruct.compile('>u11'*8).pack(*[1021]*8) will also printlike this is written, but it too is wrong
+# bitstruct.compile('>u11'*8+'<').pack(*[1021]*8)
+#
+# mimo.write(addr, b'\x??\x??\x??\x??...')  writes to the core as
+# B0 B1 B2 .... The key here is that \x## is read as the number 0x00, so 0xF0 is 240 and 0x0F is 15. So we are writing the numbers least significant byte in first (and least significant bit as well) and will read from the core in the same manner.
+#
+# bitstruct does not seem to be able to properly render this
+# bitstruct.pack('>u32<', x) will properly pack a u32 into bytes but fails with u11
+
 class DDC(DefaultIP):
     offset_tones = 0x2000
     TONE_FORMAT = (1, 10, 'signed')  # ap_fixed<11,1>
