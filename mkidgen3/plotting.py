@@ -148,3 +148,19 @@ def find_opfb_tones(data):
     plt.xlabel("OPFB Bin (Raw SSR FFT Output Order)")
     plt.ylabel("|Averge Value of Real Signal|")
     print(f"peak in bin: {np.argmax(abs(data.real.mean(0)))}")
+
+
+def plot_waveform(x, sample_rate=2e6, phase=False, ax=None, label=None, xlabel='t (ms)', **pltargs):
+    if ax is not None:
+        plt.sca(ax)
+    t=np.arange(x.size)/sample_rate*1e3
+    if phase:
+        plt.plot(t, np.angle(x)/np.pi, **pltargs)
+        plt.ylim(-1.1,1.1)
+    else:
+        plt.plot(t, x.real, **pltargs)
+        plt.plot(t, x.imag, **pltargs)
+    if label:
+        plt.ylabel(label)
+    if xlabel:
+        plt.xlabel(xlabel)
