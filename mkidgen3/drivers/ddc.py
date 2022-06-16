@@ -1,6 +1,9 @@
+import logging
+
 import numpy as np
 from fpbinary import FpBinary
 from pynq import DefaultIP
+from pynq.mmio import MMIO
 from mkidgen3.mkidpynq import fp_factory
 from mkidgen3.dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
 
@@ -38,6 +41,7 @@ def tone_increments(freq, quantize=True, **kwargs):
 #
 # bitstruct does not seem to be able to properly render this
 # bitstruct.pack('>u32<', x) will properly pack a u32 into bytes but fails with u11
+
 
 class DDC(DefaultIP):
     offset_tones = 0x2000
@@ -296,3 +300,40 @@ class OldOldDDC(DefaultIP):
             raise ValueError('Phase offsets must be in [0,1]')
         for i in range(256):
             self.write_group(self.phase0_offset, i, phase0s[i * 8:i * 8 + 8])
+
+
+class CenteringDDC(DDC):
+    CENTER_FORMAT = (1,15, 'signed') #ap_fixed<16,15>
+    offset_centers = 0x4000
+    bindto = ['mazinlab:mkidgen3:resonator_ddc:2.0']
+
+    @property
+    def centers(self):
+        """ Returns an array of 2048 complex loop centers [1,1] """
+        mmio = MMIO(self.offset_centers, length=4*2048)
+        u32d = np.array(mmio.array, dtype=np.uint32)
+        u16 = np.frombuffer(u32d, dtype=np.uint32).reshape((2048,2))
+        center_fmt = fp_factory(*self.CENTER_FORMAT, frombits=True, include_index=True)
+        data = np.zeros(2048, dtype=np.complex64)
+        data.real=[float(center_fmt(x)) for x in u16[:,0]]
+        data.imag=[float(center_fmt(x)) for x in u16[:,1]]
+        return data
+
+    @centers.setter
+    def centers(self, centers):
+        """ Centers is an array of 2048 complex loop centers [1,1] """
+        if centers.shape != (2048,):
+            raise ValueError('centers.shape != (2048,)')
+        if np.abs(centers.real).max() >1 or np.abs(centers.imag).max() > 1:
+            raise ValueError('Centers must be in [-1,1)')
+        if np.abs(centers).max()>1:
+            logging.getLogger(__name__).warning('Centers contains magnitudes outside of the unit circle')
+
+        center_fmt = fp_factory(*self.CENTER_FORMAT, frombits=False, include_index=True)
+
+        data = np.zeros((2048,2), dtype=np.uint16)
+        data[:,0]=[center_fmt(x.real) for x in centers]
+        data[:,1]=[center_fmt(x.imag) for x in centers]
+        u32d = np.frombuffer(data, dtype=np.uint32)
+        mmio = MMIO(self.offset_centers, length=4*2048)
+        mmio.array[:]=u32d
