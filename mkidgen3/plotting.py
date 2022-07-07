@@ -144,7 +144,7 @@ def find_opfb_tones(data):
     Inputs:
     - data: Raw data out of OPFB. Should be in the form N x 4096 where N is the number of samples from a single bin.
     """
-    plt.plot(abs(data.real.mean(0)), linewidth=3)
+    plt.plot(np.abs(data).mean(0), linewidth=3)
     plt.xlabel("OPFB Bin (Raw SSR FFT Output Order)")
     plt.ylabel("|Averge Value of Real Signal|")
     print(f"peak in bin: {np.argmax(abs(data.real.mean(0)))}")
