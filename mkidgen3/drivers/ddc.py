@@ -312,11 +312,11 @@ class CenteringDDC(DDC):
         """ Returns an array of 2048 complex loop centers [1,1] """
         mmio = MMIO(self.offset_centers, length=4*2048)
         u32d = np.array(mmio.array, dtype=np.uint32)
-        u16 = np.frombuffer(u32d, dtype=np.uint32).reshape((2048,2))
+        u16 = np.frombuffer(u32d, dtype=np.uint16).reshape((2048,2))
         center_fmt = fp_factory(*self.CENTER_FORMAT, frombits=True, include_index=True)
         data = np.zeros(2048, dtype=np.complex64)
-        data.real=[float(center_fmt(x)) for x in u16[:,0]]
-        data.imag=[float(center_fmt(x)) for x in u16[:,1]]
+        data.real=[float(center_fmt(int(x))) for x in u16[:,0]]
+        data.imag=[float(center_fmt(int(x))) for x in u16[:,1]]
         return data
 
     @centers.setter
