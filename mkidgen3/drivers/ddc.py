@@ -305,7 +305,7 @@ class OldOldDDC(DefaultIP):
 class CenteringDDC(DDC):
     CENTER_FORMAT = (1,15, 'signed') #ap_fixed<16,15>
     offset_centers = 0x4000
-    bindto = ['mazinlab:mkidgen3:resonator_ddc:2.0']
+    bindto = ['mazinlab:mkidgen3:resonator_ddc:2.0','mazinlab:mkidgen3:isolated_accumulator:0.1']
 
     @property
     def centers(self):
