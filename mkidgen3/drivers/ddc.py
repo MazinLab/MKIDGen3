@@ -303,20 +303,20 @@ class OldOldDDC(DefaultIP):
 
 
 class CenteringDDC(DDC):
-    CENTER_FORMAT = (1,15, 'signed') #ap_fixed<16,15>
+    CENTER_FORMAT = (1, 15, 'signed')  # ap_fixed<16,15>
     offset_centers = 0x4000
-    bindto = ['mazinlab:mkidgen3:resonator_ddc:2.0','mazinlab:mkidgen3:isolated_accumulator:0.1']
+    bindto = ['mazinlab:mkidgen3:resonator_ddc:2.0']
 
     @property
     def centers(self):
         """ Returns an array of 2048 complex loop centers [1,1] """
-        mmio = MMIO(self.offset_centers, length=4*2048)
+        mmio = MMIO(self.offset_centers, length=4 * 2048)
         u32d = np.array(mmio.array, dtype=np.uint32)
-        u16 = np.frombuffer(u32d, dtype=np.uint16).reshape((2048,2))
+        u16 = np.frombuffer(u32d, dtype=np.uint16).reshape((2048, 2))
         center_fmt = fp_factory(*self.CENTER_FORMAT, frombits=True, include_index=True)
         data = np.zeros(2048, dtype=np.complex64)
-        data.real=[float(center_fmt(int(x))) for x in u16[:,0]]
-        data.imag=[float(center_fmt(int(x))) for x in u16[:,1]]
+        data.real = [float(center_fmt(int(x))) for x in u16[:, 0]]
+        data.imag = [float(center_fmt(int(x))) for x in u16[:, 1]]
         return data
 
     @centers.setter
@@ -324,16 +324,23 @@ class CenteringDDC(DDC):
         """ Centers is an array of 2048 complex loop centers [1,1] """
         if centers.shape != (2048,):
             raise ValueError('centers.shape != (2048,)')
-        if np.abs(centers.real).max() >1 or np.abs(centers.imag).max() > 1:
+        if np.abs(centers.real).max() > 1 or np.abs(centers.imag).max() > 1:
             raise ValueError('Centers must be in [-1,1)')
-        if np.abs(centers).max()>1:
+        if np.abs(centers).max() > 1:
             logging.getLogger(__name__).warning('Centers contains magnitudes outside of the unit circle')
 
         center_fmt = fp_factory(*self.CENTER_FORMAT, frombits=False, include_index=True)
 
-        data = np.zeros((2048,2), dtype=np.uint16)
-        data[:,0]=[center_fmt(x.real) for x in centers]
-        data[:,1]=[center_fmt(x.imag) for x in centers]
+        data = np.zeros((2048, 2), dtype=np.uint16)
+        data[:, 0] = [center_fmt(x.real) for x in centers]
+        data[:, 1] = [center_fmt(x.imag) for x in centers]
         u32d = np.frombuffer(data, dtype=np.uint32)
-        mmio = MMIO(self.offset_centers, length=4*2048)
-        mmio.array[:]=u32d
+        mmio = MMIO(self.offset_centers, length=4 * 2048)
+        mmio.array[:] = u32d
+
+
+class CenteringDDCTwoCore(DDC):
+    CENTER_FORMAT = (1, 15, 'signed')  # ap_fixed<16,15>
+    offset_centers = 0x2000
+    offset_tones = 0x4000
+    bindto = ['mazinlab:mkidgen3:isolated_accumulator:0.1']
