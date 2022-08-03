@@ -25,7 +25,7 @@ import numpy as np
 #     fig.suptitle('ADC Data')
 
 
-def adc_test_plot(adc_data, timerange, fft_range, fft_zoom,  db=True, fs=4.096e9, figsize=(16, 8), **mosaic_kw):
+def adc_test_plot(adc_data, timerange, fft_range, fft_zoom, db=True, fs=4.096e9, figsize=(16, 8), **mosaic_kw):
     fig = plt.figure(figsize=figsize, constrained_layout=True)
     spec = fig.add_gridspec(2, 2, width_ratios=[1, 1], height_ratios=[1, 1.8])
     adcax = fig.add_subplot(spec[0, :])
@@ -34,15 +34,13 @@ def adc_test_plot(adc_data, timerange, fft_range, fft_zoom,  db=True, fs=4.096e9
 
     adc_timeseries(adc_data, timerange, fs=fs, ax=adcax)
 
-
     fft_start, fft_stop = fft_range
     fft_sl = slice(*fft_range)
-    fft_freqs = np.linspace(-fs/2, fs/2, fft_stop - fft_start)
+    fft_freqs = np.linspace(-fs / 2, fs / 2, fft_stop - fft_start)
     y_fft = np.abs(np.fft.fftshift(np.fft.fft(adc_data[fft_sl])))
 
-
     if db:
-        y_fft = 20*np.log10(y_fft)
+        y_fft = 20 * np.log10(y_fft)
 
     plot_fft(fft_freqs[::2], y_fft[::2] - max(y_fft), ax=fftax)
     plot_fft(fft_freqs[::2], y_fft[::2] - max(y_fft), ax=fftzoomax, xlim=fft_zoom)
@@ -67,7 +65,7 @@ def adc_timeseries(data, timerange=(None, None), fs=4.096e9, ax=None, **kwargs):
         plt.sca(ax)
 
     n = data.shape[0]  # total samples
-    tvec = np.linspace(0, n/fs, n)*1e9  # time vector [nano seconds]  TODO only generate used samples
+    tvec = np.linspace(0, n / fs, n) * 1e9  # time vector [nano seconds]  TODO only generate used samples
     sl = slice(*timerange)  # plt slice
     plt.plot(tvec[sl], data.real[sl], color='#34D576', linewidth=6)
     plt.plot(tvec[sl], data.real[sl], "o", color='#346B76', linewidth=8)
@@ -95,15 +93,16 @@ def plot_fft(f, y, db=True, xlim=(-2.048e9, 2.048e9), ylim=None, ax=None):
         plt.ylabel("power (dB)", position=(1, 0.5))
     plt.title('FFT')
 
-def plot_adc_fft(data, fs=4.096e9, db=True, fft_points=2**14, xlim=None, ylim=None, ax=None):
-    fft_freqs=np.linspace(-2.048e9,2.048e9,fft_points)
-    fft_data=np.abs(np.fft.fftshift(np.fft.fft(data[:fft_points])))
+
+def plot_adc_fft(data, fs=4.096e9, db=True, fft_points=2 ** 14, xlim=None, ylim=None, ax=None):
+    fft_freqs = np.linspace(-2.048e9, 2.048e9, fft_points)
+    fft_data = np.abs(np.fft.fftshift(np.fft.fft(data[:fft_points])))
     if db:
-        fft_data = 20*np.log10(fft_data)
-    fft_data=fft_data-max(fft_data)
+        fft_data = 20 * np.log10(fft_data)
+    fft_data = fft_data - max(fft_data)
     if ax is not None:
         plt.sca(ax)
-    plt.plot(fft_freqs, fft_data,color='#346B76', linewidth=3)
+    plt.plot(fft_freqs, fft_data, color='#346B76', linewidth=3)
     plt.grid(True)
     if ylim is not None:
         plt.ylim(*ylim)
@@ -115,7 +114,8 @@ def plot_adc_fft(data, fs=4.096e9, db=True, fft_points=2**14, xlim=None, ylim=No
         plt.ylabel("power (dB)", position=(1, 0.5))
     plt.title('Spectrum')
 
-def plot_opfb_bins(data, bins, fine_fft_shift = True, fft_shift = True, left_snip=0, ol=True):
+
+def plot_opfb_bins(data, bins, fine_fft_shift=True, fft_shift=True, left_snip=0, ol=True):
     """
     Inputs:
     - data: Raw data out of OPFB. Should be in the form N x 4096 where N is the number of samples from a single bin.
@@ -126,16 +126,17 @@ def plot_opfb_bins(data, bins, fine_fft_shift = True, fft_shift = True, left_sni
 
     if fft_shift:
         data = np.fft.fftshift(data, axes=1)
-    bin_freqs=opfb_bin_frequencies(bins, data.shape[0])
-    spectra=opfb_bin_spectrum(data,bins)
+    bin_freqs = opfb_bin_frequencies(bins, data.shape[0])
+    spectra = opfb_bin_spectrum(data, bins)
 
-    plt.figure(figsize=(16,6))
-    sl = slice(data.shape[0]//3, -data.shape[0]//3) if not ol else slice(0,-1)
-    plt.plot(bin_freqs[sl]*1e-6, spectra[sl])
+    plt.figure(figsize=(16, 6))
+    sl = slice(data.shape[0] // 3, -data.shape[0] // 3) if not ol else slice(0, -1)
+    plt.plot(bin_freqs[sl] * 1e-6, spectra[sl])
     plt.xlabel("Frequency (MHz)", position=(0.5, 0.5))
     plt.ylabel("power (dB)", position=(1, 0.5))
-    plt.xlim(-2000,2000)
+    plt.xlim(-2000, 2000)
     return bin_freqs[sl], spectra[sl]
+
 
 def find_opfb_tones(data):
     """
@@ -153,10 +154,10 @@ def find_opfb_tones(data):
 def plot_waveform(x, sample_rate=2e6, phase=False, ax=None, label=None, xlabel='t (ms)', **pltargs):
     if ax is not None:
         plt.sca(ax)
-    t=np.arange(x.size)/sample_rate*1e3
+    t = np.arange(x.size) / sample_rate * 1e3
     if phase:
-        plt.plot(t, np.angle(x)/np.pi, **pltargs)
-        plt.ylim(-1.1,1.1)
+        plt.plot(t, np.angle(x) / np.pi, **pltargs)
+        plt.ylim(-1.1, 1.1)
     else:
         plt.plot(t, x.real, **pltargs)
         plt.plot(t, x.imag, **pltargs)

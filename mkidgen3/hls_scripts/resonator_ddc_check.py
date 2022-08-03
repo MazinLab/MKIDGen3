@@ -5,35 +5,44 @@ from collections import defaultdict
 file = '/Users/one/result.txt'
 
 def load_data(file):
-    # tone_id = (j * 8 + k) % 128 - 64;
-    # inc = tone_id * 4.096e9 / 262144.0 / 1e6;
-    # -17, -0.265625, (0.364471435546875, 0.34228515625), (0.7289686274214116, -0.6845471059286886), (
-    # 0.4999985552182034, 1.727414099803037e-005), (-0.78314208984375, 0.53240966796875)
+    # res:<< ":" << samp << ":" << inc << ":" << phase << ":" << phasev[ k].to_double() << ":"
+    # << bin_iq << ":" << dds_val << ":" << centerv << ":" << ddcd << ":" << out.data[k]
+    keys = ['id', 'i', 'increment','phase0', 'phase_tb', 'phase_core', 'iq_tb', 'dds_tb', 'center', 'result_tb', 'out']
 
     def parse_line(l):
-        tone, _, other = l.partition(',')
-        inc, _, other = other.partition(',')
-        iq_in, dds_v, ddcd, iq_out = other.split('),(')
-        vals=[]
-        for v in (iq_in, dds_v, ddcd, iq_out):
-            r,i=v.replace('(','').replace(')','').split(',')
-            vals.append(float(r.strip())+float(i.strip())*1j)
-        return int(tone.strip()),float(inc.strip()), vals
-    d = defaultdict(lambda:defaultdict(list))
+        vals = l.split(':')
+        ret=[]
+        for v in vals:
+            if ',' in v:
+                r, i = v.replace('(', '').replace(')', '').split(',')
+                v=float(r.strip()) + float(i.strip()) * 1j
+            else:
+                v=float(v)
+            ret.append(v)
+        return ret
+
+    lines = []
     with open(file) as f:
         for l in f.readlines():
             if l.startswith('#'):
                 continue
-            tone,inc, vals=parse_line(l)
-            d[tone]['increment']=inc
-            d[tone]['in'].append(vals[0])
-            d[tone]['dds_gold'].append(vals[1])
-            d[tone]['out_gold'].append(vals[2])
-            d[tone]['out'].append(vals[3])
-    for v in d.values():
-        for k in ('in', 'out_gold', 'out', 'dds_gold'):
-            v[k]=np.asarray(v[k])
-    return d
+            lines.append(parse_line(l))
+
+    dat = np.array(lines)
+
+    nres = len(set(dat[:, 0].astype(int)))
+    nsamp = len(set(dat[:, 1].astype(int)))
+
+    keys=['increment', 'phase0', 'phase_tb', 'phase_core', 'iq_tb', 'dds_tb', 'center', 'result_tb', 'out']
+    complex_keys = ['iq_tb', 'dds_tb', 'center', 'result_tb', 'out']
+
+    ret = {}
+    for i,k in enumerate(keys):
+        x = dat[:, 2+i].reshape((nsamp, nres))
+        x = x.astype(float) if k not in complex_keys else x
+        ret[k]=x
+
+    return ret
 
 
 def piq(d, k):
@@ -41,33 +50,56 @@ def piq(d, k):
     plt.plot(x.real,label=k)
     plt.plot(x.imag)
 
-f='/Volumes/BOOTCAMP/Users/one/xilinx_projects/hls/resonator-dds/resonator-dds-2021_1/bwfix5/csim/build/result16_8_17.txt'
-f='/Volumes/BOOTCAMP/Users/one/xilinx_projects/hls/resonator-dds/result16_8_17.txt'
+
+f='/Users/one/result16_8_17.txt'
 data = load_data(f)
+
+pyres = data['dds_tb']*data['iq_tb']-data['center']
 plt.close('all')
-f,axes = plt.subplots(3,4, figsize=(13,6))
-for ax,id in zip(axes.T,(0,33,128, 250)):
+f,axes = plt.subplots(4, 4, figsize=(13, 6))
+for ax, id in zip(axes.T, (0, 12, 33, 54)):
     plt.sca(ax[0])
-    tdata=data[id]
-    tone=tdata['increment']*1e3
-    plt.plot(tdata['in'].real,label='IQ')
-    plt.plot(tdata['in'].imag)
-    plt.title(f'In, {tone:.3f} kHz')
+    tone = data['increment'][:, id][0]
+    p0 = data['phase0'][:, id][0]
+
+    t=np.linspace(0, data['increment'][:, id].size, num=data['increment'][:, id].size*10)
+    pyphase = -t*tone-p0
+    pydds = np.cos(np.pi*pyphase)+1j*np.sin(np.pi*pyphase)
+    pyres = data['iq_tb'][:, id]*pydds[::10]-data['center'][:, id]
+
+    plt.plot(data['iq_tb'][:, id].real, label='IQ')
+    plt.plot(data['iq_tb'][:, id].imag)
+    plt.title(f'In, {tone*1e3:.3f} kHz')
+    plt.ylim(-.2,.2)
 
     plt.sca(ax[1])
-    plt.plot(tdata['out_gold'].real,'C0--', label='Gold')
-    plt.plot(tdata['out_gold'].imag,'C1--')
-    plt.plot(tdata['out'].real,'C0', label='HLS')
-    plt.plot(tdata['out'].imag,'C1')
-    x=tdata['dds_gold']*tdata['in']
-    plt.plot(x.real, '.', label='Goldpy')
-    plt.plot(x.imag,'.')
+    plt.plot(data['result_tb'][:, id].real, 'C0--', label='TB')
+    plt.plot(data['result_tb'][:, id].imag, 'C1--')
+    plt.plot(data['out'][:, id].real, 'C0', label='HLS')
+    plt.plot(data['out'][:, id].imag, 'C1')
+    plt.plot(pyres.real, 'C0.', label='Py')
+    plt.plot(pyres.imag, 'C1.')
     plt.title('Out')
+    plt.ylim(-1.1,1.1)
     plt.legend()
 
     plt.sca(ax[2])
-    plt.plot(tdata['dds_gold'].real,label='DDS')
-    plt.plot(tdata['dds_gold'].imag)
+    plt.plot(data['dds_tb'][:, id].real, 'C0.', label='TB')
+    plt.plot(data['dds_tb'][:, id].imag, 'C1.')
+    plt.plot(t, pydds.real, 'C0', label='Py')
+    plt.plot(t, pydds.imag, 'C1')
+    plt.title('DDS')
+    plt.legend()
+    plt.ylim(-1,1)
+
+    plt.sca(ax[3])
+    pyphase = (pyphase*np.pi + np.pi) % (2 * np.pi) - np.pi
+    plt.plot(data['phase_tb'][:, id]*np.pi, '.', label='TB')
+    plt.plot(data['phase_core'][:, id] * np.pi,'x', label='Core')
+    plt.plot(t, pyphase, label='Py')
+    plt.title('Phase')
+    plt.legend()
+    # plt.ylim(-1,1)
 
 from mkidgen3.fixedpoint import FP16_15, FP18_17
 

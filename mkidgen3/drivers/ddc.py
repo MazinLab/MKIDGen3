@@ -6,7 +6,7 @@ from pynq import DefaultIP
 from pynq.mmio import MMIO
 from mkidgen3.mkidpynq import fp_factory
 from mkidgen3.dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
-
+import time
 
 def tone_increments(freq, quantize=True, **kwargs):
     """
@@ -305,7 +305,13 @@ class OldOldDDC(DefaultIP):
 class CenteringDDC(DDC):
     CENTER_FORMAT = (1, 15, 'signed')  # ap_fixed<16,15>
     offset_centers = 0x4000
-    bindto = ['mazinlab:mkidgen3:resonator_ddc:2.0']
+    bindto = ['mazinlab:mkidgen3:resonator_ddc_control:1.0']
+
+    def reset_accumulator(self):
+        """ Reset any accumulated phase """
+        self.register_map.clear_accumulator = True
+        time.sleep(256*4/512e6)
+        self.register_map.clear_accumulator = False
 
     @property
     def centers(self):
@@ -337,10 +343,3 @@ class CenteringDDC(DDC):
         u32d = np.frombuffer(data, dtype=np.uint32)
         mmio = MMIO(self.offset_centers, length=4 * 2048)
         mmio.array[:] = u32d
-
-
-class CenteringDDCTwoCore(DDC):
-    CENTER_FORMAT = (1, 15, 'signed')  # ap_fixed<16,15>
-    offset_centers = 0x2000
-    offset_tones = 0x4000
-    bindto = ['mazinlab:mkidgen3:isolated_accumulator:0.1']
