@@ -123,8 +123,9 @@ def configure_ddc(freq, phase_offset=None, loop_center=None, center_relative=Fal
         loop_center = np.asarray(loop_center)
         if freq.size != loop_center.size:
             raise ValueError('If provided, loop_center must match frequencies')
-        loop_center = loop_center[:2048]
-        if (np.abs(loop_center) > 1).any():
+        centers = np.zeros(2048, dtype=np.complex64)
+        centers[:loop_center[:2048].size] = loop_center[:2048]
+        if (np.abs(centers) > 1).any():
             getLogger(__name__).warning(f'Loop centers exist outside of the unit circle')
 
     getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
@@ -132,7 +133,7 @@ def configure_ddc(freq, phase_offset=None, loop_center=None, center_relative=Fal
     getLogger(__name__).debug('DDC tones written.')
 
     if loop_center is not None:
-        _gen3_overlay.photon_pipe.reschan.resonator_ddc.centers = loop_center
+        _gen3_overlay.photon_pipe.reschan.resonator_ddc.centers = centers
 
 
 
