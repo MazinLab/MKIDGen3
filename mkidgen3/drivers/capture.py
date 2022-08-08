@@ -145,7 +145,7 @@ class FilterPhase(DefaultIP):
 class CaptureHierarchy(DefaultHierarchy):
     IQ_MAP = {'rawiq': 0, 'iq': 1, 'ddciq': 2}
     PHASE_MAP = {'rawphase': 0, 'phase': 1}
-    SOURCE_MAP = dict(adc=0, rawiq=1, iq=2, phase=3, rawphase=4)
+    SOURCE_MAP = dict(adc=0, rawiq=1, iq=2, phase=4, rawphase=3)
 
     def __init__(self, description):
         super().__init__(description)
@@ -201,14 +201,14 @@ class CaptureHierarchy(DefaultHierarchy):
         iqs = list(self.IQ_MAP.items())
         iqs.sort(key=lambda x: x[1])
         for k, v in iqs:
-            if self.filter_phase.get(k, None):
+            if self.filter_iq.get(k, None):
                 self.SOURCE_MAP[k] = v+base
                 pbase = v+base
 
         ph = list(self.PHASE_MAP.items())
         ph.sort(key=lambda x: x[1])
         for k, v in ph:
-            self.SOURCE_MAP[k] = v + pbase
+            self.SOURCE_MAP[k] = v + pbase + 1
 
     def flush(self, n):
         """Capture n*64 bytes to flush a fifo"""
@@ -399,7 +399,7 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        self._capture('phase', capture_bytes, addr)
+        self._capture('tap_location', capture_bytes, addr)
         time.sleep(captime)
 
         return buffer
