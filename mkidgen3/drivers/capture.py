@@ -399,7 +399,7 @@ class CaptureHierarchy(DefaultHierarchy):
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
-        self._capture('tap_location', capture_bytes, addr)
+        self._capture(tap_location, capture_bytes, addr)
         time.sleep(captime)
 
         return buffer
