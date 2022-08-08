@@ -124,7 +124,7 @@ def configure_ddc(freq, phase_offset=None, loop_center=None, center_relative=Fal
         if freq.size != loop_center.size:
             raise ValueError('If provided, loop_center must match frequencies')
         loop_center = loop_center[:2048]
-        if np.abs(loop_center) > 1:
+        if (np.abs(loop_center) > 1).any():
             getLogger(__name__).warning(f'Loop centers exist outside of the unit circle')
 
     getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
