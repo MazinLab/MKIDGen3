@@ -185,7 +185,7 @@ class CaptureHierarchy(DefaultHierarchy):
         i = 0
         while True:
             try:
-                self.filter_phase[i] = getattr(self, f'phase_iq_{i}')
+                self.filter_phase[i] = getattr(self, f'filter_phase_{i}')
                 i += 1
             except AttributeError:
                 break
