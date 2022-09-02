@@ -27,10 +27,10 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
     Manual loading of a waveform can be attained by performing
     table = generate_dac_comb(frequencies=np.array([0.3e9]), n_samples=2**19, sample_rate=4.096e9,
                               amplitudes=np.array([1.0]))
-    ol.dac_table_axim_0.stop()
-    ol.dac_table_axim_0.replay(table['iq'], fpgen=lambda x: (x*2**15).astype(np.uint16))
+    ol.dac_table.stop()
+    ol.dac_table.replay(table['iq'], fpgen=lambda x: (x*2**15).astype(np.uint16))
 
-    and looking at the contents of ol.dac_table_axim_0._buffer which should match
+    and looking at the contents of ol.dac_table._buffer which should match
 
     buf = np.zeros((2 ** 15, 2, 16), dtype=np.int16)
     buf[:, 0, :] = table['iq'].real.reshape((2 ** 15,16)) * 2**15
@@ -67,8 +67,8 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
 
     getLogger(__name__).debug(f"Comb shape: {comb.shape}. \n"
                               f"Total Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
-    _gen3_overlay.dac_table_axim_0.stop()
-    _gen3_overlay.dac_table_axim_0.replay(comb, **kwarg)
+    _gen3_overlay.dac_table.stop()
+    _gen3_overlay.dac_table.replay(comb, **kwarg)
     return dactable
 
 
