@@ -151,13 +151,15 @@ def find_opfb_tones(data):
     print(f"peak in bin: {np.argmax(abs(data.real.mean(0)))}")
 
 
-def plot_waveform(x, sample_rate=2e6, phase=False, ax=None, label=None, xlabel='t (ms)', **pltargs):
+def plot_waveforms(x, sample_rate=2e6, sw_phase=False, cordic=False, ax=None, label=None, xlabel='t (ms)', **pltargs):
     if ax is not None:
         plt.sca(ax)
     t = np.arange(x.size) / sample_rate * 1e3
-    if phase:
+    if sw_phase:
         plt.plot(t, np.angle(x) / np.pi, **pltargs)
         plt.ylim(-1.1, 1.1)
+    if cordic:
+        plt.plot(t, x, **pltargs)
     else:
         plt.plot(t, x.real, **pltargs)
         plt.plot(t, x.imag, **pltargs)
@@ -165,3 +167,9 @@ def plot_waveform(x, sample_rate=2e6, phase=False, ax=None, label=None, xlabel='
         plt.ylabel(label)
     if xlabel:
         plt.xlabel(xlabel)
+
+def plot_res_chan(riq,channel,**kwargs):
+    reschan_fft = 20*np.log10(np.abs(np.fft.fftshift(np.fft.fft(riq[:,channel]))))
+    reschan_norm = reschan_fft-max(reschan_fft)
+    f_ax = np.linspace(-1.024,1.024,riq.shape[0])
+    plt.plot(f_ax,reschan_norm,**kwargs)

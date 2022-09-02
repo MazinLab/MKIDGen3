@@ -404,6 +404,29 @@ class CaptureHierarchy(DefaultHierarchy):
 
         return buffer
 
+    def ddc_compare_cap(self, n_points=1024):
+        """A helper function to capture data just after bin2res and after reschan"""
+        x = self.capture_iq(n_points, 'all', tap_location='rawiq')
+        riq = np.array(x)
+        x.freebuffer()
+        x = self.capture_iq(n_points, 'all', tap_location='iq')
+        iq = np.array(x)
+        x.freebuffer()
+        riq = riq[..., 0] + riq[..., 1] * 1j
+        iq = iq[..., 0] + iq[..., 1] * 1j
+        print(int(np.abs(riq).max()), int(np.abs(iq).max()))
+        return riq, iq
+
+    def cap_cordic_compare(self, n_points=1024):
+        """A helper function to capture data just after lowpass and after conversion to phase"""
+        x = self.capture_iq(n_points, 'all', tap_location='iq')
+        riq = np.array(x)
+        x.freebuffer()
+        x = self.capture_phase(n_points, 'all', tap_location='rawphase')
+        phase = np.array(x)
+        x.freebuffer()
+        riq = riq[..., 0] + riq[..., 1] * 1j
+        return riq, phase
 
 class _AXIS2MM:
     @property

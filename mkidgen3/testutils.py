@@ -268,25 +268,3 @@ def extract_opfb_spec(data, OS=2, exclude_overlap=True, linear=False):
     # shift the negative frequency components back to the correct place
     return xax_t.ravel() - M / 2, np.fft.fftshift(yax_t)
 
-def ddc_compare_cap(n_points=1024):
-    """A helper function to capture data just after bin2res and after reschan"""
-    x = ol.capture.capture_iq(n_points, 'all', tap_location='rawiq')
-    riq=np.array(x)
-    x.freebuffer()
-    x = ol.capture.capture_iq(n_points, 'all', tap_location='iq')
-    iq=np.array(x)
-    x.freebuffer()
-    riq = riq[...,0]+riq[...,1]*1j
-    iq = iq[...,0]+iq[...,1]*1j
-    print(int(np.abs(riq).max()),int(np.abs(iq).max()))
-    return riq,iq
-
-def iq_find_phase(n_points=1024):
-    """A helper function to capture data just after bin2res and after reschan. NEEDS WORK"""
-    x = ol.capture.capture_iq(n_points, 'all', tap_location='iq')
-    iq = np.array(x)
-    x.freebuffer()
-    iq = iq[..., 0] + iq[..., 1] * 1j
-
-    phase = np.angle(iq)
-    return -phase.mean(0) / (2 * np.pi), iq

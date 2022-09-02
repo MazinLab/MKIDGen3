@@ -129,13 +129,22 @@ def configure_ddc(freq, phase_offset=None, loop_center=None, center_relative=Fal
             getLogger(__name__).warning(f'Loop centers exist outside of the unit circle')
 
     getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
-    _gen3_overlay.photon_pipe.reschan.resonator_ddc.tones = data
+    _gen3_overlay.photon_pipe.reschan.resonator_ddc_control.tones = data
     getLogger(__name__).debug('DDC tones written.')
 
     if loop_center is not None:
-        _gen3_overlay.photon_pipe.reschan.resonator_ddc.centers = centers
+        _gen3_overlay.photon_pipe.reschan.resonator_ddc_control.centers = centers
 
 
+def iq_find_phase(n_points=1024):
+    """A helper function to capture data just after bin2res and after reschan. NEEDS WORK"""
+    x = _gen3_overlay.capture.capture_iq(n_points, 'all', tap_location='iq')
+    iq = np.array(x)
+    x.freebuffer()
+    iq = iq[..., 0] + iq[..., 1] * 1j
+
+    phase = np.angle(iq)
+    return -phase.mean(0) / (2 * np.pi), iq
 
 def set_frequencies(freq, **kwargs):
     """ Set the DAC waveform, OPFB bins, and DDC tones so that frequencies being fed through the photon pipeline.
