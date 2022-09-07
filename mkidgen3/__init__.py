@@ -129,11 +129,11 @@ def configure_ddc(freq, phase_offset=None, loop_center=None, center_relative=Fal
             getLogger(__name__).warning(f'Loop centers exist outside of the unit circle')
 
     getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
-    _gen3_overlay.photon_pipe.reschan.resonator_ddc_control.tones = data
+    _gen3_overlay.photon_pipe.reschan.resonator_ddc.tones = data
     getLogger(__name__).debug('DDC tones written.')
 
     if loop_center is not None:
-        _gen3_overlay.photon_pipe.reschan.resonator_ddc_control.centers = centers
+        _gen3_overlay.photon_pipe.reschan.resonator_ddc.centers = centers
 
 
 def iq_find_phase(n_points=1024):
