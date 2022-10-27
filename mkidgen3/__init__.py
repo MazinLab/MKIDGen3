@@ -67,9 +67,11 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
 
     getLogger(__name__).debug(f"Comb shape: {comb.shape}. \n"
                               f"Total Samples: {comb.size}. Memory: {comb.size * 4 / 1024 ** 2:.0f} MB\n")
-    _gen3_overlay.dac_table.stop()
-    _gen3_overlay.dac_table.replay(comb, **kwarg)
+    play_waveform(comb, **kwarg)
     return dactable
+
+def play_waveform(iq, **kwargs):
+    _gen3_overlay.dac_table.replay(iq, stop_if_needed=True, **kwargs)
 
 
 def set_channels(freq):
