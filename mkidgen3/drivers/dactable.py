@@ -34,7 +34,7 @@ class DACTableAXIM(pynq.DefaultIP):
         if self.register_map.run.run and not stop_if_needed:
             raise RuntimeError('Replay in progress. Call .stop() or with stop_if_needed=True')
         if fpgen == 'simple':
-            data = (data*2048).round().clip(-2048, 2047)*16
+            data = (data*8192).round().clip(-8192, 8191)*16
             fpgen=None
         # Data has right shape
         if data.size < 2 ** 19:

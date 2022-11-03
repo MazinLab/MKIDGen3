@@ -3,11 +3,15 @@ from fpbinary import FpBinary
 import logging
 
 DAC_MAX_OUTPUT_DBM =  1 # [dBm] see Xilinx DS926
-DAC_MAX_INT = 8191
-ADC_DAC_INTERFACE_WORD_LENGTH = 16 # bits
+DAC_MAX_INT = 8191 # see Xilinx docs
+ADC_DAC_INTERFACE_WORD_LENGTH = 16 # bits see Xilinx docs
 DAC_RESOLUTION = 14 # bits
 DAC_LUT_SIZE = 2**19 # values
 DAC_SAMPLE_RATE = 4.096e9 # GSPS
+N_OPFB_CHANNELS = 4096 # Number of DDC channels
+BANDWIDTH = 4.096e9 # Hz Full readout bandwidth
+OS = 2 # OPFB Overlap factor
+IF_ATTN_STEP = 0.25 #dB IF attenuator step size TODO: is this combined??
 
 def db2lin(values, mode='voltage'):
     """ Convert a value or values in dB to linear units.
@@ -41,6 +45,8 @@ def find_relative_amplitudes(if_attenuations):
     """
     return db2lin(-if_attenuations)/db2lin(-if_attenuations).max()
 def ensure_array_or_scalar(x):
+    if x is None:
+        return x
     return x if np.isscalar(x) else np.asarray(x)
 
 def quantize_frequencies(freqs, rate=4.096e9, n_samples=DAC_LUT_SIZE):
@@ -48,21 +54,57 @@ def quantize_frequencies(freqs, rate=4.096e9, n_samples=DAC_LUT_SIZE):
     Quantizes frequencies to nearest available value give the sample rate and number of samples.
     inputs:
     - freqs: array or list of floats
-        ppp
+        frequencies to be quantized
+    - rate: float
+        samples per second
+    - n_samples: int
+        number of samplesp
+    returns: scalar or array
+        quantized frequencies
     """
     freqs = ensure_array_or_scalar(freqs)
     freq_res = rate / n_samples
     return np.round(freqs / freq_res) * freq_res
-def predict_quantization_error(delta=2**(ADC_DAC_INTERFACE_WORD_LENGTH-DAC_RESOLUTION)):
+
+def predict_quantization_error(resolution=DAC_RESOLUTION, signed=True):
     """
-    Predict some quantization errors.
+    Predict max quantization error when quantizing to an integer with resolution bits of precision.
+    Assumes values to be quantized have been scaled to maximize dynamic range i.e max value is 2**(resolution-signed) - 1
     inputs:
-    - delta: float (power of 2)
-        delta is defined as the smallest quantization unit.
-    Note: It's assumed delta is small relative to the variation in the signal being quantized.
-    See https://en.wikipedia.org/wiki/Quantization_(signal_processing)
+    - resolution: int
+    number of integer bits with which to quantize
+    - signed: bool
+    whether or not the quantized values are signed
+
+    Note: It's assumed the quantization step size is small relative to the variation in the signal being quantized.
     """
-    mean_squared_error =  delta**2 / 12
+    max_val = 2**(resolution-signed)-1
+    min_val = -2**(resolution-signed)
+    return (max_val-min_val)/2**resolution/2
+
+def quantize_to_int(x, resolution=DAC_RESOLUTION, signed=True, word_length=ADC_DAC_INTERFACE_WORD_LENGTH, return_error=True):
+    """"""
+    if np.iscomplex(x).any():
+        max_val = max(x.real.max(), x.imag.max())
+        y = 2 ** (resolution - signed) * x / max_val  # scale to max allowed int value
+        quant_real = np.round(y.real).astype(int)
+        quant_imag = np.round(y.imag).astype(int)  # round to int
+        quant_real.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant_real)
+        quant_imag.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant_imag)
+        error = max((y.real - quant_real).max(), (y.imag - quant_imag).max())
+        quant = (quant_real << word_length - resolution) + 1j*(quant_imag << word_length - resolution)
+
+    else:
+        max_val = x.max()
+        y=2 ** (resolution - signed) * x/max_val # scale to max allowed int value
+        quant =  np.round(y).astype(int) # round to int
+        quant.clip(-2 ** (resolution - signed), 2 ** (resolution - signed)-1, out=quant)
+        error = (y-quant).max()
+        quant<<=word_length - resolution
+    if return_error:
+        return quant, error
+    else:
+        return quant
 def complex_scale(z, max_val):
     """
     Returns complex array rescaled so the maximum real or imaginary value is max_val
@@ -76,6 +118,43 @@ def complex_scale(z, max_val):
     ensure_array_or_scalar(z)
     input_max = max(z.real.max(), z.imag.max())
     return max_val*z/input_max
+
+def compute_power_sweep_attenuations(start_attn, stop_attn, step_size=IF_ATTN_STEP):
+    """
+    inputs:
+    - start_attn: float [dB]
+        the IF board combined starting attenuation
+    - stop_attn: float [dB]
+        the IF board combined stop attenuation
+    - step_size: float [dB]
+        attenuation step size
+    """
+    return np.arange(start_attn,stop_attn+step_size,step_size)
+
+def compute_lo_steps(center, resolution, bandwidth=OS*BANDWIDTH/N_OPFB_CHANNELS):
+    """
+    inputs:
+    - center: float
+        center frequency in Hz of the sweep bandwidth
+    - resolution: float
+        frequency resolution in Hz for the LO sweep
+    - bandwidth: float
+        bandwidth in Hz for the LO to sweep through
+    """
+    n_steps = np.round(bandwidth / resolution).astype('int')
+    return np.linspace(-bandwidth/2, bandwidth/2, n_steps)+center
+def power_sweep_freqs(n_opfb_channels=N_OPFB_CHANNELS, bandwidth=BANDWIDTH):
+    """
+    inputs:
+    - N_OPFB_CHANNELS: int
+        Number of channels in the OPFB (all of the places an MKID could be)
+    - BANDWIDTH: float
+        Full channelizer bandwidth (ADC Nyquist bandwidth) in Hz
+    Returns a comb with one frequency at each bin center.
+    """
+    return(np.linspace(0,n_opfb_channels-1, n_opfb_channels)-n_opfb_channels/2)*(bandwidth/n_opfb_channels)
+
+
 def generate_waveform(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,
                       phase_offsets=None, seed=2, return_merged=True):
     """
@@ -126,73 +205,68 @@ def generate_waveform(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitu
     # generate each signal
     t = 2 * np.pi * np.arange(n_samples)/sample_rate
     for i in range(frequencies.size):
-        phi = t * quantized_freqs[i]
-        exp = amplitudes[i] * np.exp(1j * (phi + phases[i]))
-        iScale = np.sqrt(2) * iq_ratios[i] / np.sqrt(1. + iq_ratios[i] ** 2)
-        qScale = np.sqrt(2) / np.sqrt(1 + iq_ratios[i] ** 2)
+        exp = amplitudes[i] * np.exp(1j * (t * quantized_freqs[i] + phases[i]))
+        scaled = np.sqrt(2) / np.sqrt(1 + iq_ratios[i] ** 2)
+        c1 = iq_ratios[i] * scaled * np.exp(1j * phase_offsets_radians[i])
         if return_merged:
-            iq.real += iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
-                                 np.sin(phase_offsets_radians[i]) * np.imag(exp))
-            iq.imag += qScale * np.imag(exp)
+            iq.real += c1.real*exp.real + c1.imag*exp.imag
+            iq.imag += scaled * exp.imag
         else:
-            iq[i].real = iScale * (np.cos(phase_offsets_radians[i]) * np.real(exp) +
-                                   np.sin(phase_offsets_radians[i]) * np.imag(exp))
-            iq[i].imag = qScale * np.imag(exp)
+            iq[i].real = c1.real*exp.real + c1.imag*exp.imag
+            iq[i].imag = scaled * exp.imag
 
     return {'iq': iq, 'frequencies': quantized_freqs, 'phases': phases}
 
-def quantize_dac_waveform(waveform):
-    """
-    Convert a floating-point waveform to a decimal representation of the binary values which will be fed to the DAC.
-    The max value in the waveform should be DAC_MAX_INT.
-    inputs:
-    - waveform: array/list of floats
-        waveform timeseries
-    - fp: fixed-point representation
-        This should correspond to the digital data format of the DAC
-    - leftshift: int
-        Per Xilinx docs DAC input values are packed as left shifted to align the input and most significant bit
-    """
-    fp = lambda x: FpBinary(int_bits=DAC_RESOLUTION, frac_bits=0, signed=True, value=x)
-    leftshift = ADC_DAC_INTERFACE_WORD_LENGTH - DAC_RESOLUTION
-    return fp(waveform) << leftshift
 def optimize_random_phase(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,
-                      phase_offsets=None, seed=2, max_quant_err=predict_quantization_error(delta=2**(ADC_DAC_INTERFACE_WORD_LENGTH-DAC_RESOLUTION)), timeout=10):
+                          phase_offsets=None, seed=2,
+                          max_quant_err=None,
+                          max_attempts=10, return_quantized=True):
     """
     #TODO: "waveform" with args(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,
                       phase_offsets=None, seed=2) should probably be a class and this function should take it's pre-computed
                       waveform and only recalculate it with different random phases if it has to.
     inputs:
     - max_quant_error: float
-        maximum allowable quantization error between real or imaginary samples see predict_quantization_error() for
-        how to estimate this value
-    - timeout: int
+        maximum allowable quantization error for real or imaginary samples.
+        see predict_quantization_error() for how to estimate this value.
+    - max_attempts: int
         Max number of times to recompute the waveform and attempt to get a quantization error below the specified max
         before giving up.
 
     returns: floating point complex waveform with optimized random phases
     TODO: should support returning quantized waveform
     """
+    if max_quant_err is None:
+        max_quant_err = 3*predict_quantization_error(resolution=DAC_RESOLUTION)
+
     waveform = generate_waveform(frequencies, n_samples, sample_rate, amplitudes, phases, iq_ratios,
                       phase_offsets, seed, return_merged=True)['iq']
-    scaled_float = complex_scale(waveform, DAC_MAX_INT)
-    quant = quantize_dac_waveform(waveform)
+
+    # Waveform is ±1 in i and q max complex amplitude of 1
+    # Normalizing by the individual I and Q components ensures that at least one dac fully utilizes its dynamic range
+    # This is acceptable as on input the attenuators on the RF electronics are set such that the measured ADC values
+    # correspond to the maximum readable input signal.
+    quant, error = quantize_to_int(waveform, resolution=DAC_RESOLUTION, signed=True, word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
+                            return_error=True)
+
     cnt=0
-    while max(scaled_float-quant)>max_quant_err:
+    while error>max_quant_err:
         logging.getLogger(__name__).warning("Max quantization error exceeded. The freq comb's relative phases may have added up sub-optimally."
                                     "Calculating with new random phases")
         seed+=1
         waveform = generate_waveform(frequencies, n_samples, sample_rate, amplitudes, phases, iq_ratios,
                       phase_offsets, seed, return_merged=True)['iq']
-        scaled_float = complex_scale(waveform, DAC_MAX_INT)
-        quant = quantize_dac_waveform(waveform)
+        quant, error = quantize_to_int(waveform, resolution=DAC_RESOLUTION, signed=True,
+                                       word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
+                                       return_error=True)
         cnt+=1
-        if cnt>timeout:
-            raise Exception("Process timeout: Could not find solution below max quantization error.")
-    return waveform
-
-
-
+        if cnt>max_attempts:
+            raise Exception("Process reach maximum attempts: Could not find solution below max quantization error.")
+    error / max_quant_err
+    if return_quantized:
+        return quant
+    else:
+        return waveform
 
 def daccomb(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, max_quant_err=.9,
             globalDacAtten=None, lo=None, return_full=True, max_chan=2048, sample_rate=4.096e9, n_iq_bits=32,

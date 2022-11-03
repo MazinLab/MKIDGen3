@@ -8,6 +8,7 @@ from .funcs import *
 # and capture. This process is repeated for various drive powers by changing the IF board attenuation and or
 # the waveform coefficient magnitude. This data is used via machine learning or click-throughs to determine
 # the MKID resonator readout frequencies and powers.
+
 connect_to_if_board()
 template_waveform=compute_waveform(random_phases, powers=ones, frequencies=uniform_comb)
 play_waveform(template_waveform)
