@@ -13,7 +13,7 @@ ol = g3.configure(bitstream, ignore_version=True, clocks=True, external_10mhz=Tr
 template_comb_freqs = power_sweep_freqs()
 template_waveform = optimize_random_phase(template_comb_freqs, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,
                       phase_offsets=None, seed=2, max_quant_err=predict_quantization_error(),
-                          timeout=10, return_quantized=True)
+                          max_attempts=10, return_quantized=True)
 
 #Now play the wavefrom
 g3.play_waveform(template_waveform)

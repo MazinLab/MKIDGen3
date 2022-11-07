@@ -80,7 +80,7 @@ def predict_quantization_error(resolution=DAC_RESOLUTION, signed=True):
     """
     max_val = 2**(resolution-signed)-1
     min_val = -2**(resolution-signed)
-    return (max_val-min_val)/2**resolution/2
+    return (max_val-min_val)/2**resolution
 
 def quantize_to_int(x, resolution=DAC_RESOLUTION, signed=True, word_length=ADC_DAC_INTERFACE_WORD_LENGTH, return_error=True):
     """"""
@@ -219,7 +219,7 @@ def generate_waveform(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitu
 
 def optimize_random_phase(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,
                           phase_offsets=None, seed=2,
-                          max_quant_err=None,
+                          max_quant_err=2,
                           max_attempts=10, return_quantized=True):
     """
     #TODO: "waveform" with args(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,
