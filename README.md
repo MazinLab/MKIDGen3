@@ -9,8 +9,8 @@ This document, package, and the firmware are still in high flux. APIs, resource 
 SSH into the ZCU.
 
     cd ~
-    mkdir ~/src
-    git clone https://github.com/MazinLab/MKIDGen3.git ~/src/
+    mkdir -p ~/src/mkidgen3/
+    git clone https://github.com/MazinLab/MKIDGen3.git ~/src/mkidgen3/
     cd ~/src/mkidgen3
     git checkout develop
     cd ~/src
