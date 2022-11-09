@@ -9,10 +9,12 @@ This document, package, and the firmware are still in high flux. APIs, resource 
 SSH into the ZCU.
 
     cd ~
-    mkdir ~/src
-    git clone https://github/com/mazinlab/mkidgen3.git ~/src/
+    mkdir -p ~/src/mkidgen3/
+    git clone https://github.com/MazinLab/MKIDGen3.git ~/src/mkidgen3/
     cd ~/src/mkidgen3
     git checkout develop
+    cd ~/src
+    git submodule init arduino/ifduino
     git submodule update arduino/ifduino
     sudo cp udev/gen3.rules /etc/udev/rules.d/  #If using the gen2 ifboard
     source /etc/profile.d/pynq_venv.sh
