@@ -1,0 +1,37 @@
+name: g3pulseanalysis
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - astropy=4.3
+  - blas
+  - blosc
+  - cython
+  - dbus
+  - ipython>=7
+  - ipywidgets
+  - jupyter
+  - lmfit>=1.0.3
+  - mkl>=2021.4
+  - multiprocessing-logging>=0.3.1
+  - numpy>=1.21.2
+  - pillow>=9.0.1
+  - pip
+  - pyqt=5.9
+  - python=3.10
+  - pyyaml
+  - ruamel.yaml=0.17.21
+  - scikit-image>=0.19.2
+  - scikit-learn
+  - pandas
+  - plotly 
+  - scipy>=1.7.3
+  - yappi
+  - tk>=8.6.10
+  - setuptools
+  - pyserial
+  - pip:
+    - fpbinary>=1.5.3
+    - pynq==2.7.0
+
+prefix: /Users/jpsmith/opt/anaconda3/envs/Pulse_Analysis
