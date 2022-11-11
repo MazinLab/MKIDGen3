@@ -4,6 +4,7 @@ from logging import getLogger
 from mkidgen3.mkidpynq import pack16_to_32, check_description_for, fp_factory
 import time
 
+
 class PhasematchDriver(pynq.DefaultHierarchy):
     N_TEMPLATE_TAPS = 30
     N_RES = 2048
@@ -45,6 +46,8 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         """
         A reload packet consists of the coefficients and the coefficient set number
 
+        If raw coeffs will be converted to np.uint16 via numpy casting/type coercion rules.
+
         See block diagram for layout. Resonators assigned to lanes 0-3 in consecutive sets of 512.
 
         FIRs have two reload slots and are in "on vector" update mode.
@@ -72,7 +75,7 @@ class PhasematchDriver(pynq.DefaultHierarchy):
             self._pending[:] = [0, 0, 0, 0]
         self.fifo.tx(pack16_to_32(reload_packet), destination=lane, last_bytes=2)  # reload channels are 0,2,4,6
         self._pending[lane] += 1
-        if force_commit or max(self._pending) == self.N_SLOTS:
+        if force_commit or max(self._pending) >= self.N_SLOTS:
             if not force_commit:
                 getLogger(__name__).debug('Sending config packet')
             self.fifo.tx(cfg_packet, destination=4)  # Send a config packet to trigger reload
