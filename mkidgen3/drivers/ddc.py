@@ -138,7 +138,7 @@ class DDC(DefaultIP):
         """tones is a [2,2048] array of tone increments and phase offsets """
         if tones.shape != (2, 2048):
             raise ValueError('tones.shape !=(2,2048)')
-        if tones.min() < -1 or tones.max() > 1:
+        if tones.min() < -1 or tones.max() >= 1:
             raise ValueError('Tones must be in [-1,1)')
         for i in range(256):
             self.write_group(i, *tones[:, i * 8:i * 8 + 8])

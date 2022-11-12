@@ -212,3 +212,7 @@ def capture_opfb(n=256, raw=False):
         out[:, 2048:] = util.buf2complex(x, free=True)
 
     return out
+
+
+def capture_iq(nsamples):
+    return np.arange(nsamples, dtype=np.complex64)
