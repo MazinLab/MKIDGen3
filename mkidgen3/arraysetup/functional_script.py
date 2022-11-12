@@ -6,7 +6,7 @@ import mkidgen3.daccomb
 from mkidgen3.ifboard import IFBoard
 import scipy.special
 
-bitstream='/home/xilinx/jupyter_notebooks/gen3top_benchmark_0831/cordic_16_15_fir_22_0.bit'
+bitstream='/home/xilinx/bit/cordic_16_15_fir_22_0.bit'
 
 ol = g3.configure(bitstream, ignore_version=True, clocks=True, external_10mhz=True, download=True)
 
