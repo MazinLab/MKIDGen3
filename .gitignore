@@ -130,3 +130,6 @@ dmypy.json
 .pyre/
 .idea
 mkidgen3/resources
+
+# Mac Cahced Files
+.DS_Store
