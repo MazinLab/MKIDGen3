@@ -27,7 +27,7 @@ if_board = IFBoard(connect=True)
 if_board.power_on()
 for if_power in attenuations:
     for lo_position in lo_sweep_freqs:
-        program_LO(lo_position)
+        if_board.set_lo(lo_position[0] * 1e-6)
         program_if_attenuation(if_power) # set power level at device
         capture_adc(N_samples)
         save_timeseries()
