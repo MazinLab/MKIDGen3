@@ -1,10 +1,5 @@
-from mkidgen3.arraysetup.funcs import *
+from arraysetup.funcs import *
 import mkidgen3 as g3
-import scipy
-from logging import basicConfig, getLogger
-import mkidgen3.daccomb
-from mkidgen3.ifboard import IFBoard
-import scipy.special
 
 bitstream='/home/xilinx/jupyter_notebooks/gen3top_benchmark_0831/cordic_16_15_fir_22_0.bit'
 

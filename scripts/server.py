@@ -1,7 +1,7 @@
 from logging import getLogger
 from flask import Flask, request, Response, stream_with_context
 from flask_restful import Api, Resource, reqparse
-from .util import setup_logging
+from mkidgen3.util import setup_logging
 import mkidgen3 as gen3
 import numpy as np
 import blosc
