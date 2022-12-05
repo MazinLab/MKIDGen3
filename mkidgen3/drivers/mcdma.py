@@ -2,6 +2,7 @@ from logging import getLogger
 import numpy as np
 from mkidgen3.mkidpynq import _which_one_bit_set
 from pynq import allocate, DefaultIP
+import bitstruct
 
 class MCMM2SBufferDescriptor:
     """

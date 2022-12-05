@@ -24,7 +24,7 @@ author = 'MazinLab'
 # The full version, including alpha/beta/rc tags
 release = '0.1'
 
-autodoc_mock_imports = ["pynq", "xrfclk", "xrfdc"]
+autodoc_mock_imports = ["pynq", "xrfclk", "xrfdc", "mcdma"]
 
 # -- General configuration ---------------------------------------------------
 

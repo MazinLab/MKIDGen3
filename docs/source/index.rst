@@ -9,8 +9,9 @@ Welcome to Third Generation MKID Readout (MKIDGen3)'s documentation!
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
-
-mkidgen3
+ intro
+ board_setup
+ mkidgen3
 
 
 
