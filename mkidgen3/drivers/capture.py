@@ -354,7 +354,11 @@ class CaptureHierarchy(DefaultHierarchy):
             task = loop.create_task(self.axis2mm.o_int.wait())
             loop.run_until_complete(task)
 
+
         if complex:
+            if not (sleep or use_interrupt):
+                getLogger(__name__).warning('Complex return not supported with immediate return.')
+                return buffer
             d = np.array(buffer)
             del buffer
             return d[:, 0] + 1j * d[:, 1]
