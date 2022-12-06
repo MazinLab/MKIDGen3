@@ -8,7 +8,8 @@ ADC_DAC_INTERFACE_WORD_LENGTH = 16 # bits see Xilinx docs
 DAC_RESOLUTION = 14 # bits
 DAC_LUT_SIZE = 2**19 # values
 DAC_SAMPLE_RATE = 4.096e9 # GSPS
-N_OPFB_CHANNELS = 4096 # Number of DDC channels
+N_OPFB_CHANNELS = 4096 # Number of OPFB channels
+N_CHANNELS = 2048 # Number of DDC channels
 BANDWIDTH = 4.096e9 # Hz Full readout bandwidth
 OS = 2 # OPFB Overlap factor
 IF_ATTN_STEP = 0.25 #dB IF attenuator step size TODO: is this combined??
@@ -143,16 +144,17 @@ def compute_lo_steps(center, resolution, bandwidth=OS*BANDWIDTH/N_OPFB_CHANNELS)
     """
     n_steps = np.round(bandwidth / resolution).astype('int')
     return np.linspace(-bandwidth/2, bandwidth/2, n_steps)+center
-def power_sweep_freqs(n_opfb_channels=N_OPFB_CHANNELS, bandwidth=BANDWIDTH):
+
+def power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=BANDWIDTH):
     """
     inputs:
-    - N_OPFB_CHANNELS: int
+    - n_channels: int
         Number of channels in the OPFB (all of the places an MKID could be)
     - BANDWIDTH: float
         Full channelizer bandwidth (ADC Nyquist bandwidth) in Hz
     Returns a comb with one frequency at each bin center.
     """
-    return(np.linspace(0,n_opfb_channels-1, n_opfb_channels)-n_opfb_channels/2)*(bandwidth/n_opfb_channels)
+    return (np.linspace(0,n_channels-1, n_channels)-n_channels/2)*(bandwidth/n_channels)
 
 
 def generate_waveform(frequencies, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,

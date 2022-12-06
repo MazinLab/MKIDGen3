@@ -1,4 +1,4 @@
-from arraysetup.funcs import *
+from mkidgen3.funcs import *
 import mkidgen3 as g3
 
 bitstream='/home/xilinx/jupyter_notebooks/gen3top_benchmark_0831/cordic_16_15_fir_22_0.bit'

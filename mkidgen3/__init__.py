@@ -9,6 +9,7 @@ try:
 except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')
 
+from .configuration_objects import *
 
 _gen3_overlay, _frequencies = [None]*2
 
@@ -216,3 +217,13 @@ def capture_opfb(n=256, raw=False):
 
 def capture_iq(nsamples):
     return np.arange(nsamples, dtype=np.complex64)
+
+
+
+
+def apply_setup(ifsetup=None, dac:DACOutputSpec=None, pipe=None):
+    global current_dac_hash
+    if dac.hash!=current_dac_hash:
+        play_waveform(dac.waveform)
+        current_dac_hash=dac.hash
+

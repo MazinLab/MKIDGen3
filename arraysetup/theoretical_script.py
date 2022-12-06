@@ -1,4 +1,4 @@
-from .funcs import *
+from mkidgen3.funcs import *
 ## Load Basic Configuration
 
 ## Find MKID Resonators:
