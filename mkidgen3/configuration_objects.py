@@ -1,5 +1,5 @@
 import numpy as np
-from funcs import *
+#from .funcs import *
 
 reg_waveformspec = DACOutputSpec('regular',
                                  freq = power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=BANDWIDTH),
