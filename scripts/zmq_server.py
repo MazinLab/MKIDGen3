@@ -49,13 +49,41 @@ class CaptureRequest:
 
 
 class PowerSweepRequest:
-    def __init__(self, natten, nfreq):
-        self.natten=natten
-        self.nfreq=nfreq
-        self.samples=2**19
-        self.attens=np.linspace(20).reshape((2,10))
-        self.bandwidth=BANDWIDTH
-        self.lo_centers = compute_lo_steps(center=0, resolution=7.14e3, bandwidth=self.bandwidth)
+    def __init__(self, ntones=2048, min_attn=0, stop_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3, use_cached=True):
+        """
+
+        Args:
+            ntones (int): Number of tones in power sweep comb. Default is 2048.
+            min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
+            stop_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
+            attn_step (float): Difference in dB between subsequent global attenuation settings.
+                               0.25 dB is default and finest resolution.
+            lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
+            fres (float): Difference in Hz between subsequent LO settings.
+                               7.14e3 Hz is default and finest resolution we can produce with a 4.096 GSPS DAC
+                               and 2**19 complex samples in the waveform look-up-table.
+
+        Returns:
+            PowerSweepRequest: Object which computes the appropriate hardware settings and produces the necessary
+            CaptureRequests to collect power sweep data.
+
+        """
+        self.freqs=power_sweep_freqs(ntones, bandwidth=SYSTEM_BANDWIDTH)
+        self.total_attens=np.arange(min_attn,stop_attn+attn_step,attn_step)
+        self._sweep_bw=SYSTEM_BANDWIDTH/ntones
+        self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
+        self.use_cached = use_cached
+
+    def compute_dac_waveform(self):
+        if self.use_cached==True:
+            pass
+        else:
+            waveform = optimize_random_phase(self.freqs, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
+                                  iq_ratios=None,
+                                  phase_offsets=None, seed=2, max_quant_err=predict_quantization_error(),
+                                  max_attempts=10, return_quantized=True)
+
+
 
     def capture_requests(self):
         dacsetup=DACOutputSpec('regular_normalized_comb', n_tines=200)
@@ -123,8 +151,7 @@ if __name__ == '__main__':
             try:
                 capture=pending_captures.pop(0)
                 capture.start()
-            except IndexError:
-                pass
+            except IndexError:                pass
         time.sleep(.01)
 
 

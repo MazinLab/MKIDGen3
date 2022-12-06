@@ -9,8 +9,8 @@ DAC_RESOLUTION = 14 # bits
 DAC_LUT_SIZE = 2**19 # values
 DAC_SAMPLE_RATE = 4.096e9 # GSPS
 N_OPFB_CHANNELS = 4096 # Number of OPFB channels
-N_CHANNELS = 2048 # Number of DDC channels
-BANDWIDTH = 4.096e9 # Hz Full readout bandwidth
+N_CHANNELS = 2048 # Number of DDC (resonator) channels
+SYSTEM_BANDWIDTH = 4.096e9 # Hz Full readout bandwidth
 OS = 2 # OPFB Overlap factor
 IF_ATTN_STEP = 0.25 #dB IF attenuator step size TODO: is this combined??
 
@@ -132,7 +132,7 @@ def compute_power_sweep_attenuations(start_attn, stop_attn, step_size=IF_ATTN_ST
     """
     return np.arange(start_attn,stop_attn+step_size,step_size)
 
-def compute_lo_steps(center, resolution, bandwidth=OS*BANDWIDTH/N_OPFB_CHANNELS):
+def compute_lo_steps(center, resolution, bandwidth):
     """
     inputs:
     - center: float
@@ -145,7 +145,7 @@ def compute_lo_steps(center, resolution, bandwidth=OS*BANDWIDTH/N_OPFB_CHANNELS)
     n_steps = np.round(bandwidth / resolution).astype('int')
     return np.linspace(-bandwidth/2, bandwidth/2, n_steps)+center
 
-def power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=BANDWIDTH):
+def power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
     """
     inputs:
     - n_channels: int

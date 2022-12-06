@@ -30,7 +30,7 @@ class DACOutputSpec:
 
     @property
     def waveform(self):
-        template_waveform = optimize_random_phase(self.tones, n_samples=2 ** 19, sample_rate=4.096e9,
+        return optimize_random_phase(self.tones, n_samples=2 ** 19, sample_rate=4.096e9,
                                                   amplitudes=None, phases=None, iq_ratios=None,
                                                   phase_offsets=None, seed=2,
                                                   max_quant_err=predict_quantization_error(),
