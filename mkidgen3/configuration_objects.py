@@ -1,5 +1,5 @@
 import numpy as np
-#from .funcs import *
+from objects import *
 
 reg_waveformspec = DACOutputSpec('regular',
                                  freq = power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=BANDWIDTH),
@@ -15,29 +15,31 @@ threetone_unity_waveform = compute_waveform(threetone_dacspec_unity)
 
 
 class DACOutputSpec:
-    def __init__(self, name, tones=None, amplitudes=None, phases=None, offsets=None,
-                 qmc_settings=None):
+    def __init__(self, ntones, name: str, n_uniform_tones=None, waveform_spec: [np.array, dict, Waveform], qmc_settings=None):
         self.spec_type = name
-        self.tones = tones
-        self.amplitudes = amplitudes
-        self.phases = phases
-        self.offsets = offsets
+        freqs = power_sweep_freqs(ntones, bandwidth=SYSTEM_BANDWIDTH)
+        wf_spec = dict(n_samples = 2 ** 19, sample_rate = 4.096e9, amplitudes = None, phases = None,
+                       iq_ratios = None, phase_offsets = None, seed = 2)
+        if isinstance(waveform_spec, (np.array, list)):
+            wf_spec['freqs']=np.asarray(waveform_spec)
+
+        if isinstance(waveform_spec,(dict, np.array, list)):
+            wf_spec.update(waveform_spec)
+            self._waveform = Waveform(**wf_spec)
+        elif isinstance(waveform_spec, Waveform):
+            self._waveform = waveform_spec
+        else:
+            raise ValueError('doing it wrong')
+
+
         self.qmc_settings = qmc_settings
 
-
     def __hash__(self):
-        return hash(f'{self.tones}{self.amplitudes}{self.phases}{self.offsets}{self.qmc_settings}')
+        return hash(f'{self.waveform.quant_vals}{self.qmc_settings}')
 
     @property
     def waveform(self):
-        return optimize_random_phase(self.tones, n_samples=2 ** 19, sample_rate=4.096e9,
-                                                  amplitudes=None, phases=None, iq_ratios=None,
-                                                  phase_offsets=None, seed=2,
-                                                  max_quant_err=predict_quantization_error(),
-                                                  max_attempts=10, return_quantized=True)
-
-
-
+        return self._waveform.values
 
 class IFSetup:
     def __init__(self, lo, adc_attn, dac_attn):

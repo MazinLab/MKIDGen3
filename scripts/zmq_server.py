@@ -8,6 +8,8 @@ import threading
 import time
 
 from mkidgen3.configuration_objects import *
+from mkidgen3.funcs import *
+from mkidgen3.objects import *
 
 
 
@@ -49,13 +51,13 @@ class CaptureRequest:
 
 
 class PowerSweepRequest:
-    def __init__(self, ntones=2048, min_attn=0, stop_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3, use_cached=True):
+    def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3, use_cached=True):
         """
-
         Args:
             ntones (int): Number of tones in power sweep comb. Default is 2048.
+            points (int): Number of I and Q samples to capture for each IF setting.
             min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
-            stop_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
+            max_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
             attn_step (float): Difference in dB between subsequent global attenuation settings.
                                0.25 dB is default and finest resolution.
             lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
@@ -68,25 +70,15 @@ class PowerSweepRequest:
             CaptureRequests to collect power sweep data.
 
         """
-        self.freqs=power_sweep_freqs(ntones, bandwidth=SYSTEM_BANDWIDTH)
-        self.total_attens=np.arange(min_attn,stop_attn+attn_step,attn_step)
+        self.freqs=
+        self.points = points
+        self.total_attens=np.arange(min_attn,max_attn+attn_step,attn_step)
         self._sweep_bw=SYSTEM_BANDWIDTH/ntones
         self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
         self.use_cached = use_cached
 
-    def compute_dac_waveform(self):
-        if self.use_cached==True:
-            pass
-        else:
-            waveform = optimize_random_phase(self.freqs, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-                                  iq_ratios=None,
-                                  phase_offsets=None, seed=2, max_quant_err=predict_quantization_error(),
-                                  max_attempts=10, return_quantized=True)
-
-
-
     def capture_requests(self):
-        dacsetup=DACOutputSpec('regular_normalized_comb', n_tines=200)
+        dacsetup=DACOutputSpec('power_sweep_comb', n_uniform_tones=self.ntones)
         return [CaptureRequest(self.samples, dac_setup=dacsetup,
                                if_setup=IFSetup(lo=freq, adc_attn=adc_atten,dac_attn=dac_atten))
                 for (adc_atten,dac_atten) in self.attens for freq in self.lo_centers]
