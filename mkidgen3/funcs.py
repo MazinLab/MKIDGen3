@@ -1,18 +1,18 @@
 import numpy as np
-from fpbinary import FpBinary
-import logging
+from mkidgen3.util import ensure_array_or_scalar
 
-DAC_MAX_OUTPUT_DBM =  1 # [dBm] see Xilinx DS926
-DAC_MAX_INT = 8191 # see Xilinx docs
-ADC_DAC_INTERFACE_WORD_LENGTH = 16 # bits see Xilinx docs
-DAC_RESOLUTION = 14 # bits
-DAC_LUT_SIZE = 2**19 # values
-DAC_SAMPLE_RATE = 4.096e9 # GSPS
-N_OPFB_CHANNELS = 4096 # Number of OPFB channels
-N_CHANNELS = 2048 # Number of DDC (resonator) channels
-SYSTEM_BANDWIDTH = 4.096e9 # Hz Full readout bandwidth
-OS = 2 # OPFB Overlap factor
-IF_ATTN_STEP = 0.25 #dB IF attenuator step size TODO: is this combined??
+DAC_MAX_OUTPUT_DBM = 1  # [dBm] see Xilinx DS926
+DAC_MAX_INT = 8191  # see Xilinx docs
+ADC_DAC_INTERFACE_WORD_LENGTH = 16  # bits see Xilinx docs
+DAC_RESOLUTION = 14  # bits
+DAC_LUT_SIZE = 2 ** 19  # values
+DAC_SAMPLE_RATE = 4.096e9  # GSPS
+N_OPFB_CHANNELS = 4096  # Number of OPFB channels
+N_CHANNELS = 2048  # Number of DDC (resonator) channels
+SYSTEM_BANDWIDTH = 4.096e9  # Hz Full readout bandwidth
+OS = 2  # OPFB Overlap factor
+IF_ATTN_STEP = 0.25  # dB IF attenuator step size TODO: is this combined??
+
 
 def db2lin(values, mode='voltage'):
     """ Convert a value or values in dB to linear units.
@@ -27,9 +27,10 @@ def db2lin(values, mode='voltage'):
     """
     values = np.asarray(values)
     if mode == 'power':
-        return 10**(values/10)
+        return 10 ** (values / 10)
     if mode == 'voltage':
-        return 10**(values/20)
+        return 10 ** (values / 20)
+
 
 def find_relative_amplitudes(if_attenuations):
     """
@@ -44,11 +45,8 @@ def find_relative_amplitudes(if_attenuations):
     returns:
     - relative_amplitudes: list of amplitudes between 0 and 1, one for each MKID in linear units.
     """
-    return db2lin(-if_attenuations)/db2lin(-if_attenuations).max()
-def ensure_array_or_scalar(x):
-    if x is None:
-        return x
-    return x if np.isscalar(x) else np.asarray(x)
+    return db2lin(-if_attenuations) / db2lin(-if_attenuations).max()
+
 
 def quantize_frequencies(freqs, rate=4.096e9, n_samples=DAC_LUT_SIZE):
     """
@@ -67,6 +65,7 @@ def quantize_frequencies(freqs, rate=4.096e9, n_samples=DAC_LUT_SIZE):
     freq_res = rate / n_samples
     return np.round(freqs / freq_res) * freq_res
 
+
 def predict_quantization_error(resolution=DAC_RESOLUTION, signed=True):
     """
     Predict max quantization error when quantizing to an integer with resolution bits of precision.
@@ -79,11 +78,13 @@ def predict_quantization_error(resolution=DAC_RESOLUTION, signed=True):
 
     Note: It's assumed the quantization step size is small relative to the variation in the signal being quantized.
     """
-    max_val = 2**(resolution-signed)-1
-    min_val = -2**(resolution-signed)
-    return (max_val-min_val)/2**resolution
+    max_val = 2 ** (resolution - signed) - 1
+    min_val = -2 ** (resolution - signed)
+    return (max_val - min_val) / 2 ** resolution
 
-def quantize_to_int(x, resolution=DAC_RESOLUTION, signed=True, word_length=ADC_DAC_INTERFACE_WORD_LENGTH, return_error=True):
+
+def quantize_to_int(x, resolution=DAC_RESOLUTION, signed=True, word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
+                    return_error=True):
     """"""
     if np.iscomplex(x).any():
         max_val = max(x.real.max(), x.imag.max())
@@ -93,19 +94,21 @@ def quantize_to_int(x, resolution=DAC_RESOLUTION, signed=True, word_length=ADC_D
         quant_real.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant_real)
         quant_imag.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant_imag)
         error = max((y.real - quant_real).max(), (y.imag - quant_imag).max())
-        quant = (quant_real << word_length - resolution) + 1j*(quant_imag << word_length - resolution)
+        quant = (quant_real << word_length - resolution) + 1j * (quant_imag << word_length - resolution)
 
     else:
         max_val = x.max()
-        y=2 ** (resolution - signed) * x/max_val # scale to max allowed int value
-        quant =  np.round(y).astype(int) # round to int
-        quant.clip(-2 ** (resolution - signed), 2 ** (resolution - signed)-1, out=quant)
-        error = (y-quant).max()
-        quant<<=word_length - resolution
+        y = 2 ** (resolution - signed) * x / max_val  # scale to max allowed int value
+        quant = np.round(y).astype(int)  # round to int
+        quant.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant)
+        error = (y - quant).max()
+        quant <<= word_length - resolution
     if return_error:
         return quant, error
     else:
         return quant
+
+
 def complex_scale(z, max_val):
     """
     Returns complex array rescaled so the maximum real or imaginary value is max_val
@@ -118,7 +121,8 @@ def complex_scale(z, max_val):
     """
     ensure_array_or_scalar(z)
     input_max = max(z.real.max(), z.imag.max())
-    return max_val*z/input_max
+    return max_val * z / input_max
+
 
 def compute_power_sweep_attenuations(start_attn, stop_attn, step_size=IF_ATTN_STEP):
     """
@@ -130,7 +134,8 @@ def compute_power_sweep_attenuations(start_attn, stop_attn, step_size=IF_ATTN_ST
     - step_size: float [dB]
         attenuation step size
     """
-    return np.arange(start_attn,stop_attn+step_size,step_size)
+    return np.arange(start_attn, stop_attn + step_size, step_size)
+
 
 def compute_lo_steps(center, resolution, bandwidth):
     """
@@ -143,7 +148,8 @@ def compute_lo_steps(center, resolution, bandwidth):
         bandwidth in Hz for the LO to sweep through
     """
     n_steps = np.round(bandwidth / resolution).astype('int')
-    return np.linspace(-bandwidth/2, bandwidth/2, n_steps)+center
+    return np.linspace(-bandwidth / 2, bandwidth / 2, n_steps) + center
+
 
 def power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
     """
@@ -154,7 +160,8 @@ def power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
         Full channelizer bandwidth (ADC Nyquist bandwidth) in Hz
     Returns a comb with one frequency at each bin center.
     """
-    return (np.linspace(0,n_channels-1, n_channels)-n_channels/2)*(bandwidth/n_channels)
+    return (np.linspace(0, n_channels - 1, n_channels) - n_channels / 2) * (bandwidth / n_channels)
+
 
 def est_loop_centers(iq):
     """
@@ -168,6 +175,7 @@ def est_loop_centers(iq):
     qctr = (np.percentile(iq.imag, 95, axis=1) + np.percentile(iq.imag, 5, axis=1)) / 2
 
     return ictr + qctr * 1j
+
 
 """
 def daccomb_old(frequencies, attenuations, phases=None, iq_ratios=None, phase_offsets=None, max_quant_err=.9,
@@ -322,4 +330,3 @@ def daccomb_old(frequencies, attenuations, phases=None, iq_ratios=None, phase_of
     else:
         return iq
 """
-

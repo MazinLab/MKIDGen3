@@ -1,10 +1,11 @@
+import mkidgen3.overlay_helpers
 from mkidgen3.funcs import *
 import mkidgen3 as g3
-from mkidgen3.ifboard import IFBoard
+from mkidgen3.drivers.ifboard import IFBoard
 
 bitstream='/home/xilinx/bit/cordic_16_15_fir_22_0.bit'
 
-ol = g3.configure(bitstream, ignore_version=True, clocks=True, external_10mhz=True, download=True)
+ol = mkidgen3.overlay_helpers.configure(bitstream, ignore_version=True, clocks=True, external_10mhz=True, download=True)
 
 n_channels=N_CHANNELS
 bandwidth=BANDWIDTH
@@ -15,7 +16,7 @@ template_waveform = optimize_random_phase(template_comb_freqs, n_samples=2**19, 
                           max_attempts=10, return_quantized=True)
 
 #Now play the wavefrom
-g3.play_waveform(template_waveform)
+mkidgen3.overlay_helpers.play_waveform(template_waveform)
 
 # IF Power Sweep Settings
 lo_sweep_freqs = compute_lo_steps(center=0, resolution=7.14e3, bandwidth=BANDWIDTH) # TODO what is the right resolution

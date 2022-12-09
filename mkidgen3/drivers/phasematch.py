@@ -1,7 +1,8 @@
 import numpy as np
 import pynq
 from logging import getLogger
-from mkidgen3.mkidpynq import pack16_to_32, check_description_for, fp_factory
+from mkidgen3.mkidpynq import check_description_for, fp_factory
+from mkidgen3.util import pack16_to_32
 import time
 
 

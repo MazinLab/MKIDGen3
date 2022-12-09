@@ -66,3 +66,28 @@ def setup_logging(name):
     logging.config.dictConfig(config)
 
     return logging.getLogger(name)
+
+
+def _which_one_bit_set(x, nbits):
+    """
+    Given the number x that only has a single bit set return the index of that bit.
+    Return None if no bits < nbits bit is set (e.g. nbits=16 will check bits 0-15)
+    """
+    for i in range(nbits):
+        if x & (1 << i):
+            return i
+    return None
+
+
+def pack16_to_32(data):
+    it = iter(data)
+    vals = [x | (y << 16) for x, y in zip(it, it)]
+    if data.size % 2:
+        vals.append(data[-1])
+    return np.array(vals, dtype=np.uint32)
+
+
+def ensure_array_or_scalar(x):
+    if x is None:
+        return x
+    return x if np.isscalar(x) else np.asarray(x)

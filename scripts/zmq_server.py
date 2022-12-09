@@ -1,14 +1,12 @@
 from time import sleep
 
-import numpy as np
-
 import mkidgen3 as g3
 import zmq
 import threading
 import time
 
-from mkidgen3.configuration_objects import *
-from mkidgen3.funcs import *
+import mkidgen3.overlay_helpers
+from mkidgen3 import DACOutputSpec, IFSetup
 from mkidgen3.objects import *
 
 
@@ -124,8 +122,8 @@ if __name__ == '__main__':
     socket.bind("tcp://*:5555")
     sleep(1)
 
-    ol = g3.configure('/home/xilinx/bit/cordic_16_15_fir_22_0.bit', clocks=False,
-                      external_10mhz=False, ignore_version=True, download=False)
+    ol = mkidgen3.overlay_helpers.configure('/home/xilinx/bit/cordic_16_15_fir_22_0.bit', clocks=False,
+                                            external_10mhz=False, ignore_version=True, download=False)
     xmitThread = None
     capture = None
     last = None
@@ -145,6 +143,3 @@ if __name__ == '__main__':
                 capture.start()
             except IndexError:                pass
         time.sleep(.01)
-
-
-

@@ -1,11 +1,3 @@
-import subprocess
-subprocess.run(['ls', '-l'], stdout=subprocess.PIPE).stdout.decode('utf-8')
-
-from pynq import DefaultHierarchy
-import numpy as np
-from fpbinary import FpBinary
-from logging import getLogger
-from mkidgen3.fixedpoint import FP16_15, FP32_8, fp_factory
 MAX_CAP_RAM_BYTES = 2**32
 PL_DDR4_ADDR = 0x500000000
 N_IQ_GROUPS = 256
@@ -42,25 +34,6 @@ def get_pldram_addr(hwhpath):
         except LookupError:
             print('PL DRAM not found')
     return pldram_addr
-
-
-def _which_one_bit_set(x, nbits):
-    """
-    Given the number x that only has a single bit set return the index of that bit.
-    Return None if no bits < nbits bit is set (e.g. nbits=16 will check bits 0-15)
-    """
-    for i in range(nbits):
-        if x & (1 << i):
-            return i
-    return None
-
-
-def pack16_to_32(data):
-    it = iter(data)
-    vals = [x | (y << 16) for x, y in zip(it, it)]
-    if data.size % 2:
-        vals.append(data[-1])
-    return np.array(vals, dtype=np.uint32)
 
 
 def dma_status(dma):

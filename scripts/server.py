@@ -1,6 +1,8 @@
 from logging import getLogger
 from flask import Flask, request, Response, stream_with_context
 from flask_restful import Api, Resource, reqparse
+
+import mkidgen3.overlay_helpers
 from mkidgen3.util import setup_logging
 import mkidgen3 as gen3
 import numpy as np
@@ -53,7 +55,7 @@ class IQConfigAPI(Resource):
     def post(self):
         try:
             print('setting freq')
-            gen3.set_frequencies(request.json['frequencies'], request.json.get('amplitudes',None))
+            mkidgen3.overlay_helpers.set_frequencies(request.json['frequencies'], request.json.get('amplitudes', None))
         except ValueError:
             getLogger(__name__).info(f'Bad frequencies: {request.json}')
             return 'Bad JSON data', 400
@@ -74,7 +76,7 @@ def remote_capture(tap, nsamples, url=f'http://mkidzcu111b.physics.ucsb.edu:{SER
 
 
 if __name__=='__main__':
-    gen3.configure(.....)
+    mkidgen3.overlay_helpers.configure(.....)
     setup_logging('gen3-flask')
     app = Flask(__name__, static_url_path="")
     api = Api(app)
