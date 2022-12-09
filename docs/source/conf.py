@@ -43,6 +43,18 @@ templates_path = ['_templates']
 # This pattern also affects html_static_path and html_extra_path.
 exclude_patterns = []
 
+# If false, no module index is generated.
+html_domain_indices = False
+
+# If false, no index is generated.
+html_use_index = False
+
+# If true, the index is split into individual pages for each letter.
+html_split_index = False
+
+# If true, links to the reST sources are added to the pages.
+html_show_sourcelink = True
+
 
 # -- Options for HTML output -------------------------------------------------
 

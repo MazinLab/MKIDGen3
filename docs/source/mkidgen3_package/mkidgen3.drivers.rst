@@ -52,10 +52,18 @@ mkidgen3.drivers.ddc module
    :undoc-members:
    :show-inheritance:
 
-mkidgen3.drivers.deprecated module
-----------------------------------
+mkidgen3.drivers.if111 module
+-----------------------------
 
-.. automodule:: mkidgen3.drivers.deprecated
+.. automodule:: mkidgen3.drivers.if111
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+mkidgen3.drivers.ifboard module
+-------------------------------
+
+.. automodule:: mkidgen3.drivers.ifboard
    :members:
    :undoc-members:
    :show-inheritance:
