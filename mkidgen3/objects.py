@@ -1,7 +1,14 @@
+import threading
+
 import numpy
+
+import mkidgen3 as g3
+from scripts.zmq_server import ol
 
 from . import power_sweep_freqs, N_CHANNELS, SYSTEM_BANDWIDTH
 from .funcs import *
+from .funcs import SYSTEM_BANDWIDTH, compute_lo_steps
+
 
 # _waveforms={}
 # def WaveformFactory(*args, allow_caching=True, **kwargs):
@@ -181,3 +188,103 @@ class PowerSweepPipeCfg(PhotonPipeCfg):
         dac = DACOutputSpec('regular_comb')
         super().__init__(dac)
         self.channels = np.arange(0, 4096, 2, dtype=int)
+
+class FLSetup:
+    pass
+
+    def compatible_with(self, other) -> bool:
+        return False
+
+
+class PhotonBuffer:
+    """An nxm+1 sparse array full of photon events"""
+    WATERMARK = 4500
+    def __init__(self, _buf=None):
+        self._buf=_buf
+
+    @property
+    def full(self):
+        return (self._buf[0,:]>self.WATERMARK).any()
+
+class CaptureRequest:
+    def __init__(self, n, if_setup: IFSetup, pipe_setup, dac_setup: DACOutputSpec, channel_spec, ):
+        self.ol =ol
+        self._buffer=None
+        self._thread=None
+        self.points = n
+        self.tap=None
+        self.points=n
+        self.if_setup=if_setup
+        self.pipe_setup=pipe_setup
+        self.dac_setup=dac_setup
+        self.channel_spec=channel_spec
+        self._id = hash(repr(self))
+
+    @property
+    def id(self):
+        return self._id
+
+    @property
+    def size(self):
+        return self.points*2048
+
+    @property
+    def settings(self)->FLSetup:
+        return FLSetup(if_setup=self.if_setup, pipe_setup=self.pipe_setup, dac_setup=self.dac_setup,
+                       channel_spec=self.channel_spec)
+
+    @property
+    def complete(self):
+        return self.ol.capture.axis2mm.complete
+
+    def start(self):
+        g3.apply_setup(ifsetup=self.if_setup, pipe=self.pipe_setup, dac=self.dac_setup)
+        self._buffer = self.ol.capture.capture_adc(2 ** 19, complex=False, sleep=False, use_interrupt=False)
+
+    def send(self, socket):
+        def send_data(socket, capture_data):
+            socket.send_pyobj(capture_data)
+        self._thread = threading.Thread(target=send_data, args=(socket, self._buffer.copy()), daemon=True,
+                                        name=f'CapXmit: {self}')
+        self._thread.start()
+
+    def sent(self):
+        return self._thread is not None and not self._thread.is_alive()
+
+    def __del__(self):
+        if self._buffer is not None:
+            self._buffer.free()
+
+
+class PowerSweepRequest:
+    def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3, use_cached=True):
+        """
+        Args:
+            ntones (int): Number of tones in power sweep comb. Default is 2048.
+            points (int): Number of I and Q samples to capture for each IF setting.
+            min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
+            max_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
+            attn_step (float): Difference in dB between subsequent global attenuation settings.
+                               0.25 dB is default and finest resolution.
+            lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
+            fres (float): Difference in Hz between subsequent LO settings.
+                               7.14e3 Hz is default and finest resolution we can produce with a 4.096 GSPS DAC
+                               and 2**19 complex samples in the waveform look-up-table.
+
+        Returns:
+            PowerSweepRequest: Object which computes the appropriate hardware settings and produces the necessary
+            CaptureRequests to collect power sweep data.
+
+        """
+        self.freqs=
+        self.points = points
+        self.total_attens=np.arange(min_attn,max_attn+attn_step,attn_step)
+        self._sweep_bw=SYSTEM_BANDWIDTH/ntones
+        self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
+        self.use_cached = use_cached
+
+    def capture_requests(self):
+        dacsetup=DACOutputSpec('power_sweep_comb', n_uniform_tones=self.ntones)
+        return [CaptureRequest(self.samples, dac_setup=dacsetup,
+                               if_setup=IFSetup(lo=freq, adc_attn=adc_atten,dac_attn=dac_atten))
+                for (adc_atten,dac_atten) in self.attens for freq in self.lo_centers]

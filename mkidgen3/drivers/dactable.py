@@ -102,3 +102,7 @@ class DACTableAXIM(pynq.DefaultIP):
         if self._buffer is None:
             raise RuntimeError('Must call replay first to configure the core')
         self.register_map.CTRL.AP_START = 1
+
+    def status(self):
+        return {'running': self.register_map.run and self.register_map.CTRL.AP_START,
+                'buffer': self._buffer.copy() if self._buffer is not None else None }

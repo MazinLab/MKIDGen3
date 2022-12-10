@@ -253,6 +253,12 @@ class IFBoard(SerialDevice):
         lines = [l for l in lines if not l.startswith('#')]
         return IFStatus(''.join(lines))
 
+    def stop_lo(self):
+        """
+        Stop the LO from oscillating
+        Returns:
+
+        """
 
 class IFStatus:
     def __init__(self, jsonstr):
