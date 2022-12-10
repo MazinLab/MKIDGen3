@@ -4,12 +4,13 @@ from .status_keeper import StatusKeeper
 from logging import getLogger
 import pynq
 import mkidgen3.drivers.rfdc
-from objects import CaptureRequest
+from objects import CaptureRequest, CaptureAbortedException
 from typing import List
 import zmq
 import blosc
 import time
 import threading
+from datetime import datetime
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
@@ -85,67 +86,73 @@ class FeedlineReadoutServer:
 
 
     @staticmethod
-    def plram_cap(context, id, tap, size, settings):
-        capdata = context.socket(zmq.PUB)
-        capdata.connect('TODO')
+    def plram_cap(context, cr, ol):
+        try:
+            cr.establish(context)
+        except Exception:
+            getLogger(__name__).error(f"Unable to establish capture {cr.id}, dropping request.")
+            return
         abort = context.socket(zmq.SUB)
         abort.setsockopt(zmq.SUBSCRIBE, id)
-        abort.connect(id, 'inproc://cap_abort')
-        abort_message = [id, -1, 'Aborted']
+        abort.connect('inproc://cap_abort')
         try:
-            nchunks = size//CHUNKING_THRESHOLD
-            partial = size - CHUNKING_THRESHOLD*nchunks
-            chunks = [CHUNKING_THRESHOLD]*nchunks
+            nchunks = cr.size // CHUNKING_THRESHOLD
+            partial = cr.size - CHUNKING_THRESHOLD * nchunks
+            chunks = [CHUNKING_THRESHOLD] * nchunks
             if partial:
                 chunks.appned(partial)
-
-            for i, cs in enumerate(chunks):
-                if abort.poll(1):
-                    break
-                data = self._ol.capture(cs, tap=tap, wait=True, **settings)
-                capdata.send_multipart([id, i, blosc.compress(data)])
-
+            for i, csize in enumerate(chunks):
+                if cr.aborted() or abort.poll(1)!=0:
+                    raise CaptureAbortedException
+                data = ol.capture(csize, tap=cr.tap, wait=True)
+                cr.add_data(data, status=f'Captured {i} of {len(chunks)}')
+            cr.finish()
+        except CaptureAbortedException:
+            cr.fail(f'Aborted.')
         except Exception as e:
             getLogger(__name__).error(f'Terminating capture {id} due to {e}')
-            abort_message[-1] += f' due to {str(e)}'
+            cr.fail(f'Aborted due to {str(e)}')
         finally:
-            capdata.send_multipart(abort_message)
-            capdata.close()
+            del cr
             abort.close()
-            del self._active_captures[id]
 
     @staticmethod
-    def photon_cap(context, id):
-        capdata = context.socket(zmq.PUB)
-        capdata.connect('TODO')
+    def photon_cap(context, cr, ol):
+        try:
+            cr.establish(context)
+        except Exception:
+            getLogger(__name__).error(f"Unable to establish capture {cr.id}, dropping request.")
+            return
 
         abort = context.socket(zmq.SUB)
         abort.setsockopt(zmq.SUBSCRIBE, id)
-        abort.connect("inproc://cap_abort")
-        abort_message = [id, -1, 'Aborted']
+        abort.connect('inproc://cap_abort')
+
+        buffers = []
         try:
-            buffers = [pynq.allocate(PHOTON_BUFFER_SHAPE, PHOTON_BUFFER_TYPE) for _ in range(2)]
+            buffers = [PhotonBuffer() for _ in range(2)]
             buf = None
-            while not abort.poll(1):
+            while not cr.aborted() and abort.poll(1)==0:
                 to_send = buf
                 buf = buffers.pop(0)
                 buffers.append(buf)
-                self._ol.photon_capture.capture(buf)
+                ol.photon_capture.capture(buf.buffer)
                 if to_send:
-                    capdata.send_multipart([id, 0, blosc.compress(to_send)])
-                while not PhotonBuffer(buf).full and not abort.poll(5):
+                    cr.add_data(to_send.buffer)
+                while not buf.full and not abort.poll(5):
                     pass
-            self._ol.photon_capture.stop()
-            capdata.send_multipart([id, 0, blosc.compress(buf)])
+            ol.photon_capture.stop()
+            cr.add_data(buf.buffer)
+            cr.finish()
         except Exception as e:
             getLogger(__name__).error(f'Terminating capture {id} due to {e}')
-            abort_message[-1] += f' due to {str(e)}'
+            cr.fail(f'Aborted due to {str(e)}')
         finally:
-            capdata.send_multipart(abort_message)
+            ol.photon_capture.stop()
+            del cr
+            for b in buffers:
+                b.buffer.freebuffer()
             abort.close()
-            capdata.close()
-            del self._active_captures[id]
-
 
     def _capture_main(self, context: zmq.Context, CHUNKING_THRESHOLD=1024**2*100):
         """
@@ -158,11 +165,10 @@ class FeedlineReadoutServer:
         Returns: None
 
         """
-        requests = context.socket(zmq.SUB)
+        requests = context.socket(zmq.REP)
         requests.connect('inproc://cap_request')
 
-        capdata = context.socket(zmq.PUB)
-        capdata.connect('TODO')
+        request_resubmit = context.socket(zmq.REQ)
 
         tap_threads = {k:None for k in ('photon','stamp', 'iq', 'phase', 'adc') }
         active_settings = None
@@ -174,20 +180,33 @@ class FeedlineReadoutServer:
                 needed_settings = cr.settings
 
                 active_taps = tuple(t for t,v in tap_threads.items() if v is not None)
-                if not needed_settings.compatible_with(active_settings) and active_taps:
-                    capdata.send_multipart([cr.id, -1, 'Request not compatible with running captures.'])
+
+                request_blocked = needed_settings.compatible_with(active_settings) or cr.tap in active_taps
+
+                if request_blocked:
+                    try:
+                        cr.set_status('submitted', 'Request not compatible with running captures. '
+                                      f'Resubmitting to queue at {datetime.utcnow()}', context=context)
+                    except Exception:
+                        getLogger(__name__).error(f"Unable to update capture status for {cr.id}, dropping request.")
+                        continue
+
+                    try:
+                        request_resubmit.send_pyobj(cr)
+                    except Exception:
+                        cr.fail('Resubmission failed.', context=context)
+                        getLogger(__name__).error(f"Resubmission failed for {cr.id}, dropping request.")
+
                 else:
+
                     active_settings = apply_fl_settings(cr.settings)
                     if cr.tap in ('iq', 'phase', 'adc'):
                         target=self.plram_cap
-                        args=(cr.id, cr.tap, cr.size, cr.settings)
                     elif cr.tap == 'photon':
-                        args = (cr.id,)
                         target = self.photon_cap
                     else:
-                        args = (cr.id, cr.settings)
                         target = self.stamp_cap
-                    t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=args)
+                    t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(context, cr, self._ol))
                     tap_threads[cr.tap] = t
                     t.start()
 
@@ -195,7 +214,6 @@ class FeedlineReadoutServer:
             getLogger(__name__).error(e)
         finally:
             requests.close()
-            capdata.close()
 
 
     def _server_main(self):
