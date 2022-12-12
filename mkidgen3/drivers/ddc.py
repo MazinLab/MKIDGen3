@@ -4,7 +4,7 @@ import numpy as np
 from fpbinary import FpBinary
 from pynq import DefaultIP
 from pynq.mmio import MMIO
-from mkidgen3.mkidpynq import fp_factory
+from mkidgen3.fixedpoint import fp_factory
 from mkidgen3.dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
 import time
 

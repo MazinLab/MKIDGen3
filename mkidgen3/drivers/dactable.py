@@ -2,7 +2,7 @@ from logging import getLogger
 import numpy as np
 import time
 import pynq
-from ..mkidpynq import FP16_15
+from mkidgen3.fixedpoint import FP16_15
 
 
 class DACTableAXIM(pynq.DefaultIP):
