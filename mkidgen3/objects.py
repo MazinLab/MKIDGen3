@@ -1,7 +1,15 @@
+import threading
+
 import numpy
+import zmq
+
+import mkidgen3 as g3
+from scripts.zmq_server import ol
 
 from . import power_sweep_freqs, N_CHANNELS, SYSTEM_BANDWIDTH
 from .funcs import *
+from .funcs import SYSTEM_BANDWIDTH, compute_lo_steps
+
 
 # _waveforms={}
 # def WaveformFactory(*args, allow_caching=True, **kwargs):
@@ -166,18 +174,215 @@ class DDCConfig:
         return hash(f'{self.tones}{self.centers}{self.offsets}')
 
 
-class PhotonPipeCfg:
-    def __init__(self, dac: DACOutputSpec, channel_spec, filter_coeffs, ddc_config, trigger_settings: TriggerSettings):
-        self.dac = dac
-        self.adc = None
-        self.ddc = ddc_config
-        self.channels = None
-        self.filters = None
-        self.thresholds = None
+
+class FLSetup:
+    def __init__(self, if_setup=None, dac_setup=None, pp_setup=None, ddc=None,
+                 adc_setup=None, channels=None, filters=None, thresholds=None):
+        self.if_setup = if_setup
+        self.dac_setup = dac_setup
+        self.pp_setup = pp_setup
+        self.adc_setup = adc_setup
+        self.filters = filters
+        self.thresholds = thresholds
+        self.channels = channels
+        self.ddc = ddc
+
+    def compatible_with(self, other) -> bool:
+        dac = self.dac_setup is None or self.dac_setup.compatible_with(other.dac_setup)
+        ifb = self.if_setup is None or self.if_setup.compatible_with(other.if_setup)
+        adc = self.adc_setup is None or self.adc_setup.compatible_with(other.adc_setup)
+        pp = self.pp_setup is None or self.pp_setup.compatible_with(other.pp_setup)
+        thresh = self.thresholds is None or self.thresholds.compatible_with(other.thresholds)
+        chan = self.channels is None or self.channels.compatible_with(other.channels)
+        filt = self.filters is None or self.filters.compatible_with(other.filters)
+        ddc = self.ddc is None or self.ddc.compatible_with(other.ddc)
+        return dac and ifb and adc and pp and filt and chan and thresh and ddc
 
 
-class PowerSweepPipeCfg(PhotonPipeCfg):
+class PowerSweepPipeCfg(FLSetup):
     def __init__(self, dac: DACOutputSpec):
         dac = DACOutputSpec('regular_comb')
         super().__init__(dac)
         self.channels = np.arange(0, 4096, 2, dtype=int)
+
+
+
+class PhotonBuffer:
+    """An nxm+1 sparse array full of photon events"""
+    WATERMARK = 4500
+    def __init__(self, _buf=None):
+        self._buf=_buf
+
+    @property
+    def full(self):
+        return (self._buf[0,:]>self.WATERMARK).any()
+
+class CapDest:
+    def __init__(self, data_dest:str, status_dest:str = ''):
+        self._dest = data_dest
+        self._socket = None
+        self._status = None
+        self._status_dest = status_dest
+
+    def establish(self, context:zmq.Context):
+        if self._status_dest:
+            self._status = context.socket(zmq.REQ)
+            self._status.connect(self._dest)
+        if self._dest.startswith('file'):
+            raise NotImplementedError
+            f = os.path.open(self._dest,'ab')
+            f.close()
+        else:
+            self._socket = context.socket(zmq.PUB)
+            self._socket.connect(self._dest)
+
+    def update_status(self, status, context):
+        self._socket = context.socket(zmq.PUB)
+        self._socket.connect(self._dest)
+
+    def __del__(self):
+        try:
+            self._socket.close()
+        except AttributeError:
+            pass
+        try:
+            self._status.close()
+        except AttributeError:
+            pass
+
+class CaptureAbortedException(Exception):
+    pass
+
+class CaptureRequest:
+    def __init__(self, n, if_setup: IFSetup, pipe_setup, dac_setup: DACOutputSpec, channel_spec, ):
+        self.ol =ol
+        self._buffer=None
+        self._thread=None
+        self.points = n
+        self.tap=None
+        self.points=n
+        self.if_setup=if_setup
+        self.pipe_setup=pipe_setup
+        self.dac_setup=dac_setup
+        self.channel_spec=channel_spec
+        self._id = hash(repr(self))
+
+        self._data_dest = ''
+        self._status_dest = ''
+        self._abort_source = ''
+        self._status_socket = None
+        self._data_socket = None
+        self._abort_socket = None
+
+        self._status = 'created'
+        self._status_messages = []
+
+
+    @property
+    def id(self):
+        return self._id
+
+    def abort(self, context:zmq.Context=None):
+        if self._abort_socket is None:
+            self._abort_socket = context.socket(zmq.REQ)
+            self._abort_socket.setsockopt(zmq.SUBSCRIBE, self._id)
+            self._abort_socket.connect(self._abort_source)
+        else:
+            self._abort_socket = zmq.Socket
+            if self._abort_socket.socket_type==zmq.REP:
+                raise RuntimeError('Abort may only be called by the requester.')
+        return self._abort_socket.send(b'')
+
+    def aborted(self, context:zmq.Context=None):
+        if self._abort_socket is None:
+            self._abort_socket = context.socket(zmq.REP)
+            self._abort_socket.setsockopt(zmq.SUBSCRIBE, self._id)
+            self._abort_socket.connect(self._abort_source)
+        return self._abort_socket.poll(1)!=0
+
+    def establish(self, context:zmq.Context=None):
+        self._status_socket = context.socket(zmq.REQ)
+        self._status_socket.connect(self._status_dest)
+        self._data_socket = context.socket(zmq.PUB)
+        self._data_socket.connect(self._data_dest)
+        self._abort_socket = context.socket(zmq.REP)
+        self._abort_socket.connect(self._abort_source)
+        self._established = True
+        self.set_status('established')
+
+    def fail(self, message, context:zmq.Context=None):
+        self.set_status('failed', message, context=context)
+
+    def finish(self):
+        self.set_status('complete')
+
+    def add_data(self, data, status=''):
+        if not self._established:
+            raise RuntimeError('Establish must be called before add_data')
+        self._data_dest.send_multipart([self.id, blosc.compress(data)])
+        self.set_status('capturing', message=status)
+
+    def set_status(self, status, message='', context:zmq.Context=None):
+        self._status = status
+        if message:
+            self._status_messages.append(message)
+        """get appropriate context and send current sztatus message after connecting soocket. if no then simply log"""
+        if not self._established:
+            _status_dest = context.socket(zmq.REQ)
+            _status_dest.connect(self._status_dest)
+        else:
+            _status_dest=self._status_dest
+        _status_dest.send_multipart([status, message])
+
+    @property
+    def size(self):
+        return self.points*2048
+
+    @property
+    def settings(self)->FLSetup:
+        return FLSetup(if_setup=self.if_setup, pipe_setup=self.pipe_setup, dac_setup=self.dac_setup,
+                       channel_spec=self.channel_spec)
+
+    def __del__(self):
+        for s in (self._status_socket, self._abort_socket, self._data_socket):
+            try:
+                s.close()
+            except AttributeError:
+                pass
+
+        if self._buffer is not None:
+            self._buffer.free()
+
+
+class PowerSweepRequest:
+    def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3, use_cached=True):
+        """
+        Args:
+            ntones (int): Number of tones in power sweep comb. Default is 2048.
+            points (int): Number of I and Q samples to capture for each IF setting.
+            min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
+            max_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
+            attn_step (float): Difference in dB between subsequent global attenuation settings.
+                               0.25 dB is default and finest resolution.
+            lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
+            fres (float): Difference in Hz between subsequent LO settings.
+                               7.14e3 Hz is default and finest resolution we can produce with a 4.096 GSPS DAC
+                               and 2**19 complex samples in the waveform look-up-table.
+
+        Returns:
+            PowerSweepRequest: Object which computes the appropriate hardware settings and produces the necessary
+            CaptureRequests to collect power sweep data.
+
+        """
+        self.freqs=
+        self.points = points
+        self.total_attens=np.arange(min_attn,max_attn+attn_step,attn_step)
+        self._sweep_bw=SYSTEM_BANDWIDTH/ntones
+        self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
+        self.use_cached = use_cached
+
+    def capture_requests(self):
+        dacsetup=DACOutputSpec('power_sweep_comb', n_uniform_tones=self.ntones)
+        return [CaptureRequest(self.samples, dac_setup=dacsetup,
+                               if_setup=IFSetup(lo=freq, adc_attn=adc_atten,dac_attn=dac_atten))
+                for (adc_atten,dac_atten) in self.attens for freq in self.lo_centers]
