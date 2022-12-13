@@ -1,6 +1,7 @@
 import threading
 
 import numpy
+import numpy as np
 import zmq
 
 import mkidgen3 as g3
@@ -10,6 +11,7 @@ from . import power_sweep_freqs, N_CHANNELS, SYSTEM_BANDWIDTH
 from .funcs import *
 from .funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 
+import blosc
 
 # _waveforms={}
 # def WaveformFactory(*args, allow_caching=True, **kwargs):
@@ -207,7 +209,7 @@ class PowerSweepPipeCfg(FLSetup):
 
 
 
-class PhotonBuffer:
+class FLPhotonBuffer:
     """An nxm+1 sparse array full of photon events"""
     WATERMARK = 4500
     def __init__(self, _buf=None):
@@ -253,9 +255,105 @@ class CapDest:
 class CaptureAbortedException(Exception):
     pass
 
+class ADCCaptureSink:
+    pass
+
+class PhotonCaptureSink:
+    def __init__(self, source, context:zmq.Context=None):
+        pass
+
+    def terminate(self, context:zmq.Context=None):
+        context = context or zmq.Context.instance()
+        _terminate = context.socket(zmq.PUB)
+        _terminate.connect('inproc://PhotonCaptureSink.terminator.inproc')
+        _terminate.send(b'')
+        _terminate.close()
+
+    def capture(self):
+        t = threading.Thread(target =self._main, args=(hdf, xymap, feedline_source, fl_ids))
+        t.start()
+
+    @staticmethod
+    def _main(hdf, xymap, feedline_source, fl_ids, term_source='inproc://PhotonCaptureSink.terminator.inproc'):
+        """
+
+        Args:
+            xymap: [nfeedline, npixel, 2] array
+            feedline_source: zmq.PUB socket with photonbufers published by feedline
+            term_source: a zmq socket of undecided type for detecting shutdown requests
+
+        Returns: None
+
+        """
+
+        fl_npix = 2048
+        n_fl = 5
+        MAX_NEW_PHOTONS = 5000
+        DETECTOR_SHAPE = (128,80)
+        fl_id_to_index = np.arange(n_fl, dtype=int)
+
+        context = zmq.Context.instance()
+        term = context.socket(zmq.SUB)
+        term.setsockopt(zmq.SUBSCRIBE, id)
+        term.connect(term_source)
+
+        data = context.socket(zmq.SUB)
+        data.setsockopt(zmq.SUBSCRIBE, fl_ids)
+        data.connect(feedline_source)
+
+        poller = zmq.Poller()
+        poller.register(term, flags=zmq.POLLIN)
+        poller.register(data, flags=zmq.POLLIN)
+
+        live_image=np.zeros(DETECTOR_SHAPE)
+        live_image_by_fl = live_image.reshape(n_fl, fl_npix)
+        photons_rabuf = np.recarray(MAX_NEW_PHOTONS,
+                                       dtype=(('time', 'u32'), ('x','u32'), ('y','u32'),
+                                              ('phase','u16')))
+
+        while True:
+            avail = poller.poll()
+            if term in avail:
+                break
+
+            frame = data.recv_multipart(copy=False)
+            fl_id = frame[0]
+            time_offset = frame[1]
+            d = blosc.decompress(frame[1])
+            #buffer is nchan*nmax+1 32bit: 16bit time(base2) 16bit phase
+            #make array of to [nnmax+1, nchan, 2] uint16
+            #nmax will always be <<2^12 number valid will be at [0,:,0]
+            #times need oring w offset
+            #photon data is d[1:d[0,i,0], i, :]
+
+            nnew = d[0,:,0].sum()
+            #if we wanted to save binary data then we could save this, the x,y list, and the time offset
+            #mean pixel count rate in this packet is simply [0,:,0]/dt
+            fl_ndx = fl_id_to_index[fl_id]
+            live_image_by_fl[fl_ndx, :] += d[0,:,0]
+
+            # if live_image_ready:
+            #     live_image_socket.send_multipart([f'liveim', blosc.compress(live_image)])
+
+            cphot = np.cumsum(d[0,:,0], dtype=int)
+            for i in range(fl_npix):
+                sl_out = slice(cphot[i], cphot[i] + d[0,i,0])
+                sl_in = slice(1, d[0,i,0])
+                photons_rabuf['time'][sl_out] = d[sl_in,:, 0]
+                photons_rabuf['time'][sl_out]|=time_offset
+                photons_rabuf['phase'][sl_out] = d[sl_in, :, 1]
+                photons_rabuf['x'][sl_out] = xymap[fl_ndx, i, 0]
+                photons_rabuf['y'][sl_out] = xymap[fl_ndx, i, 1]
+            hdf.grow_by(photons_rabuf[:nnew])
+
+        term.close()
+        data.close()
+        hdf.close()
+
+
+
 class CaptureRequest:
     def __init__(self, n, if_setup: IFSetup, pipe_setup, dac_setup: DACOutputSpec, channel_spec, ):
-        self.ol =ol
         self._buffer=None
         self._thread=None
         self.points = n
@@ -289,14 +387,13 @@ class CaptureRequest:
             self._abort_socket.connect(self._abort_source)
         else:
             self._abort_socket = zmq.Socket
-            if self._abort_socket.socket_type==zmq.REP:
+            if self._abort_socket.type==zmq.REP:
                 raise RuntimeError('Abort may only be called by the requester.')
         return self._abort_socket.send(b'')
 
     def aborted(self, context:zmq.Context=None):
         if self._abort_socket is None:
             self._abort_socket = context.socket(zmq.REP)
-            self._abort_socket.setsockopt(zmq.SUBSCRIBE, self._id)
             self._abort_socket.connect(self._abort_source)
         return self._abort_socket.poll(1)!=0
 
@@ -343,15 +440,6 @@ class CaptureRequest:
         return FLSetup(if_setup=self.if_setup, pipe_setup=self.pipe_setup, dac_setup=self.dac_setup,
                        channel_spec=self.channel_spec)
 
-    def __del__(self):
-        for s in (self._status_socket, self._abort_socket, self._data_socket):
-            try:
-                s.close()
-            except AttributeError:
-                pass
-
-        if self._buffer is not None:
-            self._buffer.free()
 
 
 class PowerSweepRequest:

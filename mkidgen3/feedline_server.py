@@ -17,7 +17,7 @@ COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 CHUNKING_THRESHOLD = 1000
 
 
-class FeedlineReadoutServer:
+class FeedlineReadout:
     def __init__(self, name, bitstream, port=8000, clock_source="external_10mhz", if_port='dev/ifboard',
                  ignore_version=False, status_port=None):
         self._name = name
@@ -177,16 +177,83 @@ class FeedlineReadoutServer:
             while True:
                 cr = requests.recv_pyobj()
                 assert isinstance(cr, CaptureRequest)
+                self._service_capture_request(cr)
+
+        except Exception as e:
+            getLogger(__name__).error(e)
+        finally:
+            requests.close()
+
+    def _service_caprequest(self, cr):
+        needed_settings = cr.settings
+
+        active_taps = tuple(t for t, v in tap_threads.items() if v is not None)
+
+        request_blocked = needed_settings.compatible_with(active_settings) or cr.tap in active_taps
+
+        if request_blocked:
+            try:
+                cr.set_status('submitted', 'Request not compatible with running captures. '
+                                           f'Resubmitting to queue at {datetime.utcnow()}', context=context)
+            except Exception:
+                getLogger(__name__).error(f"Unable to update capture status for {cr.id}, dropping request.")
+                continue
+
+            try:
+                request_resubmit.send_pyobj(cr)
+            except Exception:
+                cr.fail('Resubmission failed.', context=context)
+                getLogger(__name__).error(f"Resubmission failed for {cr.id}, dropping request.")
+
+        else:
+
+            active_settings = g3.apply_fl_settings(cr.settings)
+            if cr.tap in ('iq', 'phase', 'adc'):
+                target = self.plram_cap
+            elif cr.tap == 'photon':
+                target = self.photon_cap
+            else:
+                target = self.stamp_cap
+            t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(context, cr, self._ol))
+            tap_threads[cr.tap] = t
+            t.start()
+
+    def main(self, context:zmq.Context = None):
+
+        context = context or zmq.Context.instance()
+        socket = context.socket(zmq.REP)
+        socket.bind(f"tcp://*:{self._port}")
+
+
+
+        while True:
+            cmd, args = socket.recv_multipart()
+
+            if cmd == 'reset':
+                # TODO abort all captures
+                self.reset()  #This might take a while and fail
+            elif cmd == 'status':
+                status = self.status()  #this might take a while and fail
+            elif cmd == 'bequiet':
+                # TODO should we abort all captures
+                #TODO extract bequiet kwargs from args and pass
+                self.bequiet()  #This might take a while and fail
+            elif cmd == 'capture':
+                #determine if capture is possible
+                #determine if capture compatible with current actions
+                #fire function to apply necessary pl settings and start thread to deal with capture
+                cr = args
                 needed_settings = cr.settings
 
-                active_taps = tuple(t for t,v in tap_threads.items() if v is not None)
+                self.active_capture_taps()
+                active_taps = tuple(t for t, v in tap_threads.items() if v is not None)
 
                 request_blocked = needed_settings.compatible_with(active_settings) or cr.tap in active_taps
 
                 if request_blocked:
                     try:
                         cr.set_status('submitted', 'Request not compatible with running captures. '
-                                      f'Resubmitting to queue at {datetime.utcnow()}', context=context)
+                                                   f'Resubmitting to queue at {datetime.utcnow()}', context=context)
                     except Exception:
                         getLogger(__name__).error(f"Unable to update capture status for {cr.id}, dropping request.")
                         continue
@@ -199,9 +266,9 @@ class FeedlineReadoutServer:
 
                 else:
 
-                    active_settings = apply_fl_settings(cr.settings)
+                    active_settings = g3.apply_fl_settings(cr.settings)
                     if cr.tap in ('iq', 'phase', 'adc'):
-                        target=self.plram_cap
+                        target = self.plram_cap
                     elif cr.tap == 'photon':
                         target = self.photon_cap
                     else:
@@ -209,46 +276,75 @@ class FeedlineReadoutServer:
                     t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(context, cr, self._ol))
                     tap_threads[cr.tap] = t
                     t.start()
+            # TODO sort out how to reply with the result of the command
 
-        except Exception as e:
-            getLogger(__name__).error(e)
-        finally:
-            requests.close()
+"""
+Test proceedure:
+1) Start FRS
+"""
 
 
-    def _server_main(self):
-        try:
-            context = zmq.Context()
-            socket = context.socket(zmq.REP)
-            socket.bind(f"tcp://*:{self._port}")
+import argparse
+def parse_cl():
+    parser = argparse.ArgumentParser(description='Feedline Readout Server',  add_help=True)
+    parser.add_argument('-d', '--dir', dest='dir',
+                        action='store', required=False, type=str,
+                        help='source dir for files', default='./')
+    parser.add_argument('--cr', dest='do_cosmic', default=False,
+                        action='store_true', required=False,
+                        help='Do cosmic ray rejection')
+    parser.add_argument('--num', dest='num', default='',
+                        type=str, required=False,
+                        help='#,#,... files to do. Default to all')
+    parser.add_argument('-o', dest='outdir', default='./out/',
+                        action='store', required=False, type=str,
+                        help='Out directory')
+    parser.add_argument('--sigclip', dest='sigclip', default=15.0,
+                        action='store', required=False, type=float,
+                        help='CR Sigmaclip (sigma limit for flagging as CR)')
+    parser.add_argument('--sigfrac', dest='sigfrac', default=0.3,
+                        action='store', required=False, type=float,
+                        help='CR Sigmafrac (sigclip fract for neighboring pix)')
+    parser.add_argument('--objlim', dest='objlim', default=1.4,
+                        action='store', required=False, type=float,
+                        help='CR Object Limit (raise if normal data clipped)')
+    parser.add_argument('--criter', dest='criter', default=5,
+                        action='store', required=False, type=int,
+                        help='CR Iteration Limit')
+    parser.add_argument('--overwrite', dest='overwrite', default=False,
+                        action='store_true', required=False,
+                        help='overwrite existing output')
+    return parser.parse_args()
 
-            self._capcontext.socket(zmq.REP)
-            socket.bind(f"tcp://*:{self._port}")
-        except:
+import binascii
+import os
+def zpipe(ctx):
+    """build inproc pipe for talking to threads
+    mimic pipe used in czmq zthread_fork.
+    Returns a pair of PAIRs connected via inproc
+    """
+    a = ctx.socket(zmq.PAIR)
+    b = ctx.socket(zmq.PAIR)
+    a.linger = b.linger = 0
+    a.hwm = b.hwm = 1
+    iface = "inproc://%s" % binascii.hexlify(os.urandom(8))
+    a.bind(iface)
+    b.connect(iface)
+    return a,b
 
-        while True:
-            try:
-                cmd = socket.recv_json()
+if __name__ == '__main__':
+    args = parse_cl()
 
-            xmitThread = None
-            capture = None
-            last = None
-            pending_captures = []
-            run = True
-            while run:
-                if command_available(socket):
-                    do(socket, ol)
-                if capture and capture.complete and (last is None or last.sent()):
-                    del last
-                    last = capture
-                    capture.send(socket)
-                    capture = None
-                if not capture and pending_captures:
-                    try:
-                        capture = pending_captures.pop(0)
-                        capture.start()
-                    except IndexError:
-                        pass
-                time.sleep(.01)
 
-    async def run(self):
+    fr = FeedlineReadout(args.fl_id, args.bitstream, port=args.command_port,
+                                   clock_source=args.clock,   if_port=args.if_board,
+                                   ignore_version=args.ignore_fpga_driver_version, status_port=None)
+
+    context = zmq.Context()
+    server = context.socket(zmq.XSUB)
+    server.bind(f'tcp:\\*:{args.cap_port}')
+    captures = context.socket(zmq.XPUB)
+    captures.bind(f'inproc:\\captures')
+
+    threading.Thread(target = server.main, args=(context,))
+    zmq.proxy(server, captures)
