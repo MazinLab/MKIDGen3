@@ -1,31 +1,11 @@
 import threading
-
-import numpy
 import numpy as np
 import zmq
-
-import mkidgen3 as g3
-from scripts.zmq_server import ol
+import blosc
 
 from . import power_sweep_freqs, N_CHANNELS, SYSTEM_BANDWIDTH
 from .funcs import *
 from .funcs import SYSTEM_BANDWIDTH, compute_lo_steps
-
-import blosc
-
-# _waveforms={}
-# def WaveformFactory(*args, allow_caching=True, **kwargs):
-#     global _waveforms
-#     key = (args, tuple(kwargs.items()))
-#     if allow_caching:
-#         try:
-#             return _waveforms[key]
-#         except KeyError:
-#             pass
-#     wf = Waveform(*args,**kwargs)
-#     if allow_caching:
-#         _waveforms[key]=wf
-#     return wf
 
 
 class Waveform:
@@ -176,8 +156,7 @@ class DDCConfig:
         return hash(f'{self.tones}{self.centers}{self.offsets}')
 
 
-
-class FLSetup:
+class FeedlineSetup:
     def __init__(self, if_setup=None, dac_setup=None, pp_setup=None, ddc=None,
                  adc_setup=None, channels=None, filters=None, thresholds=None):
         self.if_setup = if_setup
@@ -189,24 +168,25 @@ class FLSetup:
         self.channels = channels
         self.ddc = ddc
 
+    def __eq__(self, other):
+        for k,v in self.__dict__.items():
+            if v!=other.__dict__[k]:
+                return False
+        return True
+
+    def __hash__(self):
+        return '' #TODO ???
+
     def compatible_with(self, other) -> bool:
-        dac = self.dac_setup is None or self.dac_setup.compatible_with(other.dac_setup)
-        ifb = self.if_setup is None or self.if_setup.compatible_with(other.if_setup)
-        adc = self.adc_setup is None or self.adc_setup.compatible_with(other.adc_setup)
-        pp = self.pp_setup is None or self.pp_setup.compatible_with(other.pp_setup)
-        thresh = self.thresholds is None or self.thresholds.compatible_with(other.thresholds)
-        chan = self.channels is None or self.channels.compatible_with(other.channels)
-        filt = self.filters is None or self.filters.compatible_with(other.filters)
-        ddc = self.ddc is None or self.ddc.compatible_with(other.ddc)
-        return dac and ifb and adc and pp and filt and chan and thresh and ddc
+        for k,v in self.__dict__.items():
+            if not v.compatible_with(other[k]):
+                return False
+        return True
 
-
-class PowerSweepPipeCfg(FLSetup):
-    def __init__(self, dac: DACOutputSpec):
-        dac = DACOutputSpec('regular_comb')
-        super().__init__(dac)
-        self.channels = np.arange(0, 4096, 2, dtype=int)
-
+class PowerSweepPipeCfg(FeedlineSetup):
+    def __init__(self):
+        super().__init__(dac_setup=DACOutputSpec('regular_comb'),
+                         channels=np.arange(0, 4096, 2, dtype=int))
 
 
 class FLPhotonBuffer:
@@ -218,6 +198,7 @@ class FLPhotonBuffer:
     @property
     def full(self):
         return (self._buf[0,:]>self.WATERMARK).any()
+
 
 class CapDest:
     def __init__(self, data_dest:str, status_dest:str = ''):
@@ -238,19 +219,6 @@ class CapDest:
             self._socket = context.socket(zmq.PUB)
             self._socket.connect(self._dest)
 
-    def update_status(self, status, context):
-        self._socket = context.socket(zmq.PUB)
-        self._socket.connect(self._dest)
-
-    def __del__(self):
-        try:
-            self._socket.close()
-        except AttributeError:
-            pass
-        try:
-            self._status.close()
-        except AttributeError:
-            pass
 
 class CaptureAbortedException(Exception):
     pass
@@ -350,31 +318,42 @@ class PhotonCaptureSink:
         data.close()
         hdf.close()
 
+def CaptureSink(request, server):
+    return ADCCaptureSink(request.destination)
 
+
+class CaptureJob:
+    def __init__(self, request:CaptureRequest, server, submit=True):
+        self.request = request
+        self._status_listner = StatusListner(request.id, server, initial='CREATED')
+        self._datasaver = CaptureSink(request, server)
+        if submit:
+            self.submit()
+
+    def status(self):
+        """ Return the last known status of the request """
+        return self._status_listner.latest()
+
+    def cancel(self):
+        self.server.send_multipart(['cancel', self.request.id])
+
+    def data(self):
+        return self._datasaver.data()
+
+    def submit(self):
+        self.server.send_multipart(['capture', self.request])
 
 class CaptureRequest:
-    def __init__(self, n, if_setup: IFSetup, pipe_setup, dac_setup: DACOutputSpec, channel_spec, ):
-        self._buffer=None
-        self._thread=None
+    def __init__(self, n, tap, feedline_setup:FeedlineSetup, destination):
         self.points = n
-        self.tap=None
-        self.points=n
-        self.if_setup=if_setup
-        self.pipe_setup=pipe_setup
-        self.dac_setup=dac_setup
-        self.channel_spec=channel_spec
+        self.tap = validate(tap)
+        self.feedline_setup = feedline_setup
         self._id = hash(repr(self))
+        self._data_dest = destination
 
-        self._data_dest = ''
-        self._status_dest = ''
-        self._abort_source = ''
-        self._status_socket = None
-        self._data_socket = None
-        self._abort_socket = None
-
-        self._status = 'created'
-        self._status_messages = []
-
+    @property
+    def type(self):
+        return 'engineering' if self.tap in ('adc', 'iq', 'phase') else self.tap
 
     @property
     def id(self):
@@ -434,12 +413,6 @@ class CaptureRequest:
     @property
     def size(self):
         return self.points*2048
-
-    @property
-    def settings(self)->FLSetup:
-        return FLSetup(if_setup=self.if_setup, pipe_setup=self.pipe_setup, dac_setup=self.dac_setup,
-                       channel_spec=self.channel_spec)
-
 
 
 class PowerSweepRequest:

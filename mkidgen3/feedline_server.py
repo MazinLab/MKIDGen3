@@ -4,7 +4,7 @@ from .status_keeper import StatusKeeper
 from logging import getLogger
 import pynq
 import mkidgen3.drivers.rfdc
-from objects import CaptureRequest, CaptureAbortedException
+from objects import CaptureRequest, CaptureAbortedException, FeedlineSetup
 from typing import List
 import zmq
 import blosc
@@ -17,6 +17,32 @@ COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 CHUNKING_THRESHOLD = 1000
 
 
+class FLSettingsSet:
+    def __init__(self):
+        self._dict = {}
+
+    def effective(self) -> FeedlineSetup:
+        """Return a FLSettings (or ducktype) resulting from settings in the set"""
+        pass
+
+    def pop(self, flsettings: FeedlineSetup) -> bool:
+        """
+        Remove settings from the set
+
+        Args:
+            flsettings: settings to remove, raises KeyError if object isn't in the set
+
+        Returns: True iff the effective settings changed as a result of the pop
+
+        """
+        x = self.effective
+        self._dict.pop(flsettings.id)
+        return self.effective != x
+
+    def add(self, flsettings: FeedlineSetup):
+        self._dict[flsettings.id] = flsettings
+
+
 class FeedlineReadout:
     def __init__(self, name, bitstream, port=8000, clock_source="external_10mhz", if_port='dev/ifboard',
                  ignore_version=False, status_port=None):
@@ -26,12 +52,12 @@ class FeedlineReadout:
         self._ignore_version = ignore_version
         self._clock_source = validate(clock_source=clock_source, error=True)
         self._ol = None
-        self.if_board = IFBoard(if_port, connect=False)
-        self.status_keeper = StatusKeeper(status_port)
+        self._if_board = IFBoard(if_port, connect=False)
+        # self.status_keeper = StatusKeeper(status_port)  #TODO
 
     @property
     def id(self):
-        return f"FRS {self._name} @ {self._port}: {self._bitstream} clk={self._clock_source}"
+        return f"FRS {self._name} @ {self._port}"
 
     def reset(self):
         """
@@ -41,12 +67,11 @@ class FeedlineReadout:
         Returns: None
 
         """
-        self.if_board.power_off(save_settings=False)
-        mkidgen3.drivers.rfdc.start_clocks(external_10mhz=self._clock_source=='external_10mhz')
+        self._if_board.power_off(save_settings=False)
+        mkidgen3.drivers.rfdc.start_clocks(external_10mhz=self._clock_source == 'external_10mhz')
         self._ol = pynq.Overlay(self._bitstream, ignore_version=self._ignore_version, download=True)
-        self.if_board.power_on()
-        self.status_keeper.update(self.id, **self.status())
-        return 'Reset Complete'
+        self._if_board.power_on()
+        # self.status_keeper.update(self.id, **self.status()) #TODO
 
     def status(self):
         """
@@ -55,15 +80,19 @@ class FeedlineReadout:
 
         """
         if self._ol is None:
-            ol_status = {'dac': NoBitStream()}
+            ol_status = FeedlineStatus(bitstream=None)
         else:
-            ol_status = {'dac': self._ol.dac_table.status(),}
+            ol_status = FeedlineStatus(dac=DACStatus.from_core(self._ol.dac_table),
+                                       ddc=DDCStatus.from_core(self._ol.photon_pipe.reschan.ddc),
+                                       )
 
-        status = {'name': self._name, 'id': self._id,
-                  'running': self._running_captures(),
-                  'pending': self._pending_captures()}
-        status.update(ol_status)
-        status.update({'if_board': self.if_board.status()})
+        status = {'name': self._name,
+                  'id': self.id,
+                  'fpga': ol_status,
+                  'if_board': self._if_board.status(),
+                  'running_captures': self._running_captures(),
+                  'pending_captures': self._pending_captures()}
+
         return status
 
     def bequiet(self, stop_dacs=True, poweroff_if=False):
@@ -75,15 +104,13 @@ class FeedlineReadout:
             poweroff_if: Power down the IF board (implies `stop_if`)
 
         Returns: None
-
         """
         if stop_dacs:
             self._ol.dac_table.quiet()
-            self.status_keeper.update(self.id, dacs=self._ol.dac_table.status())
+            # self.status_keeper.update(self.id, dacs=self._ol.dac_table.status())
         if poweroff_if:
-            self.if_board.power_off(save_settings=False)
-            self.status_keeper.update(self.id, if_board=self.if_board.status())
-
+            self._if_board.power_off(save_settings=False)
+            # self.status_keeper.update(self.id, if_board=self.if_board.status())
 
     @staticmethod
     def plram_cap(context, cr, ol):
@@ -102,7 +129,7 @@ class FeedlineReadout:
             if partial:
                 chunks.appned(partial)
             for i, csize in enumerate(chunks):
-                if cr.aborted() or abort.poll(1)!=0:
+                if cr.aborted() or abort.poll(1) != 0:
                     raise CaptureAbortedException
                 data = ol.capture(csize, tap=cr.tap, wait=True)
                 cr.add_data(data, status=f'Captured {i} of {len(chunks)}')
@@ -132,7 +159,7 @@ class FeedlineReadout:
         try:
             buffers = [PhotonBuffer() for _ in range(2)]
             buf = None
-            while not cr.aborted() and abort.poll(1)==0:
+            while not cr.aborted() and abort.poll(1) == 0:
                 to_send = buf
                 buf = buffers.pop(0)
                 buffers.append(buf)
@@ -154,94 +181,140 @@ class FeedlineReadout:
                 b.buffer.freebuffer()
             abort.close()
 
-    def _capture_main(self, context: zmq.Context, CHUNKING_THRESHOLD=1024**2*100):
+    def _capture_main(self, zpipe: zmq.Socket, context: zmq.Context = None, CHUNKING_THRESHOLD=1024 ** 2 * 100):
         """
         Enqueue a list of capture requests for future handling. Invalid requests are dealt with immediately and not
         enqueued.
 
         Args:
+            zpipe: a pipe for receiving capture requests
             capreqs: one or more CaptureRequest objects
 
         Returns: None
 
         """
+        context = context or zmq.Context().instance()
+
         requests = context.socket(zmq.REP)
         requests.connect('inproc://cap_request')
 
-        request_resubmit = context.socket(zmq.REQ)
+        class TapThread:
+            def __init__(self, thread, pipe, request):
+                self.thread = thread
+                self.request = request
+                self.pipe = pipe
 
-        tap_threads = {k:None for k in ('photon','stamp', 'iq', 'phase', 'adc') }
+        tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
         active_settings = None
+        settings_set = FLSettingsSet()  # a set of FeedlineStettings
+        import queue
+        crqueue = queue.Queue()
 
-        try:
-            while True:
-                cr = requests.recv_pyobj()
-                assert isinstance(cr, CaptureRequest)
-                self._service_capture_request(cr)
+        check_queue = False
+        while True:
+            # Check to see if any capture threads have finished
+            complete = [k for k, t in tap_threads.items() if t is not None and not t.thread.is_alive()]
+            # for each finished capture thread remove its settings from the requirements pot and cleanup
 
-        except Exception as e:
-            getLogger(__name__).error(e)
-        finally:
-            requests.close()
+            for k in complete:
+                check_queue |= settings_set.pop(tap_threads[k].request.settings)
+                tap_threads[k] = None
 
-    def _service_caprequest(self, cr):
-        needed_settings = cr.settings
+            running_by_id = {tt.request.id: tt for tt in tap_threads.values() if tt is not None}
 
-        active_taps = tuple(t for t, v in tap_threads.items() if v is not None)
-
-        request_blocked = needed_settings.compatible_with(active_settings) or cr.tap in active_taps
-
-        if request_blocked:
+            # check for any incoming info: CapRequest, ABORT id|all, EXIT
             try:
-                cr.set_status('submitted', 'Request not compatible with running captures. '
-                                           f'Resubmitting to queue at {datetime.utcnow()}', context=context)
-            except Exception:
-                getLogger(__name__).error(f"Unable to update capture status for {cr.id}, dropping request.")
+                cmd, null, data = zpipe.recv(zmq.NOBLOCK)
+                assert null == b''
+            except zmq.EAGAIN:
+                cmd = ''
+                data = ''
+
+            if 'cmd' == 'exit':
+                cmd = 'abort'
+                data = 'all'
+
+            if cmd == 'abort':
+                if data == 'all':
+                    while crqueue:
+                        cr = crqueue.pop()
+                        cr.abort()
+                    for v in running_by_id.values():
+                        v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
+                else:
+                    if id in running_by_id:
+                        running_by_id[id].pipe.send('abort')  # TODO what happens to pipe when thread ends?
+                    elif data in crqueue:
+                        cr = crqueue.pop(data)
+                        cr.abort()
+                    else:
+                        getLogger(__name__).info(f'Capture request {data} is unknown and can not be aborted.')
+
+            if cmd == 'capture':
+                cr = data
+
+            if (not check_queue and data.type not in tap_threads and
+                    settings_set.effective().compatible_with(cr.feedline_setup)):
+                # this can be run and nothing else, so do it
+                pass
+            else:
+                crqueue.push(cr)
+                # cant be run because there might be something more important (we check anyway),
+                # the tap is in use (we check when the tap finishes)
+                # settings arent compatible (we will check when something finishes)
+                # So don't touch check_queue
+                cr = None
+
+            if check_queue and crqueue:
+                cr = crqueue.pop()
+
+            if not cr:
                 continue
 
-            try:
-                request_resubmit.send_pyobj(cr)
-            except Exception:
-                cr.fail('Resubmission failed.', context=context)
-                getLogger(__name__).error(f"Resubmission failed for {cr.id}, dropping request.")
+            assert isinstance(cr, CaptureRequest)
 
-        else:
+            if cr.type in tap_threads:
+                cr.update_status('queued', f'tap location in use by: {tap_threads[cr.type].request.id}')
+                crqueue.push(cr)
+                continue
+            elif settings_set.compatible_with(cr.feedline_setup):
+                cr.update_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
+                crqueue.push(cr)
+                continue
 
-            active_settings = g3.apply_fl_settings(cr.settings)
-            if cr.tap in ('iq', 'phase', 'adc'):
-                target = self.plram_cap
-            elif cr.tap == 'photon':
-                target = self.photon_cap
-            else:
-                target = self.stamp_cap
-            t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(context, cr, self._ol))
-            tap_threads[cr.tap] = t
+            settings_set.add(cr.id, cr.feedline_setup)
+            apply_fl_settings(cr.feedline_setup, self._ol)
+
+            cap_runners = {'engineering': self.plram_cap, 'photon': self.photon_cap, 'stamp': self.stamp_cap}
+            target = cap_runners[cr.type]
+            a, b = zpipe(context)
+            cr.set_status('running', f'Started at UTC {datetime.utcnow()}')
+            t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(context, b, cr, self._ol))
             t.start()
+            tap_threads[cr.type] = TapThread(t, a, cr)
 
-    def main(self, context:zmq.Context = None):
+    def main(self, context: zmq.Context = None):
 
         context = context or zmq.Context.instance()
         socket = context.socket(zmq.REP)
         socket.bind(f"tcp://*:{self._port}")
-
-
 
         while True:
             cmd, args = socket.recv_multipart()
 
             if cmd == 'reset':
                 # TODO abort all captures
-                self.reset()  #This might take a while and fail
+                self.reset()  # This might take a while and fail
             elif cmd == 'status':
-                status = self.status()  #this might take a while and fail
+                status = self.status()  # this might take a while and fail
             elif cmd == 'bequiet':
                 # TODO should we abort all captures
-                #TODO extract bequiet kwargs from args and pass
-                self.bequiet()  #This might take a while and fail
+                # TODO extract bequiet kwargs from args and pass
+                self.bequiet()  # This might take a while and fail
             elif cmd == 'capture':
-                #determine if capture is possible
-                #determine if capture compatible with current actions
-                #fire function to apply necessary pl settings and start thread to deal with capture
+                # determine if capture is possible
+                # determine if capture compatible with current actions
+                # fire function to apply necessary pl settings and start thread to deal with capture
                 cr = args
                 needed_settings = cr.settings
 
@@ -278,15 +351,17 @@ class FeedlineReadout:
                     t.start()
             # TODO sort out how to reply with the result of the command
 
+
 """
 Test proceedure:
 1) Start FRS
 """
 
-
 import argparse
+
+
 def parse_cl():
-    parser = argparse.ArgumentParser(description='Feedline Readout Server',  add_help=True)
+    parser = argparse.ArgumentParser(description='Feedline Readout Server', add_help=True)
     parser.add_argument('-d', '--dir', dest='dir',
                         action='store', required=False, type=str,
                         help='source dir for files', default='./')
@@ -316,8 +391,11 @@ def parse_cl():
                         help='overwrite existing output')
     return parser.parse_args()
 
+
 import binascii
 import os
+
+
 def zpipe(ctx):
     """build inproc pipe for talking to threads
     mimic pipe used in czmq zthread_fork.
@@ -330,15 +408,15 @@ def zpipe(ctx):
     iface = "inproc://%s" % binascii.hexlify(os.urandom(8))
     a.bind(iface)
     b.connect(iface)
-    return a,b
+    return a, b
+
 
 if __name__ == '__main__':
     args = parse_cl()
 
-
     fr = FeedlineReadout(args.fl_id, args.bitstream, port=args.command_port,
-                                   clock_source=args.clock,   if_port=args.if_board,
-                                   ignore_version=args.ignore_fpga_driver_version, status_port=None)
+                         clock_source=args.clock, if_port=args.if_board,
+                         ignore_version=args.ignore_fpga_driver_version, status_port=None)
 
     context = zmq.Context()
     server = context.socket(zmq.XSUB)
@@ -346,5 +424,5 @@ if __name__ == '__main__':
     captures = context.socket(zmq.XPUB)
     captures.bind(f'inproc:\\captures')
 
-    threading.Thread(target = server.main, args=(context,))
+    threading.Thread(target=server.main, args=(context,))
     zmq.proxy(server, captures)
