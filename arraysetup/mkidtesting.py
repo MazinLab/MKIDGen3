@@ -15,8 +15,9 @@ ol = g3.overlay_helpers.configure(bitstream, ignore_version=True, clocks=True, e
 if_board = IFBoard(connect=True)
 if_board.power_off()
 if_board.power_on()
+# SET LO TO GET MKID FREQUENCY
 if_board.set_lo(5960)
-if_board.set_attens((20,20),(20,20))
+if_board.set_attens((31.75,31.75),(20,20))
 a = if_board.status()
 
 tones = np.array([532.435e6])
