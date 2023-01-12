@@ -82,3 +82,30 @@ def plot_sweep(freqs, iq_vals, ax=None, fig=None):
 plot_sweep(lo_sweep_freqs, iq_vals)
 plt.show()
 
+# CENTER LOOP
+def est_loop_center(iq):
+    """
+    Finds the (I,Q) centers of the loops via percentile math
+    iq - np.complex array[n_loops, n_samples]
+    returns centers[iq.shape[0]]
+
+    see mkidgen2.roach2controls.fitLoopCenters for history
+    """
+    ictr = (np.percentile(iq.real, 95) + np.percentile(iq.real, 5)) / 2
+    qctr = (np.percentile(iq.imag, 95) + np.percentile(iq.imag, 5)) / 2
+
+    return ictr + qctr * 1j
+
+ddc_centers = np.zeros(2048, dtype=np.complex64)
+ddc_centers[:tones.size]=est_loop_center(iq_vals/2**15)
+g3.configure_ddc(ddc_tones, phase_offset=None, loop_center=ddc_centers, center_relative=False, quantize=True)
+
+# RESWEEP AND VERIFY LOOP IS CENTERED
+
+iq_vals_centered = np.zeros(lo_sweep_freqs.size, dtype=np.complex64)
+for x in range(len(lo_sweep_freqs)):
+    if_board.set_lo(lo_sweep_freqs[x] * 1e-6)
+    iq_vals_centered[x] = get_iq_point()
+
+plot_sweep(lo_sweep_freqs, iq_vals_centered/2**15)
+
