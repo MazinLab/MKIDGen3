@@ -7,7 +7,8 @@ from pynq.mmio import MMIO
 from mkidgen3.fixedpoint import fp_factory
 from mkidgen3.dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
 import time
-
+import mkidgen3.dsp as dsp
+from logging import getLogger
 def tone_increments(freq, quantize=True, **kwargs):
     """
     Compute the DDS tone increment for each frequency (in Hz),
@@ -129,6 +130,31 @@ class DDC(DefaultIP):
         data = d.to_bytes(32, 'little', signed=False)
         self.write(self.offset_tones + 32 * group_ndx, data)
 
+    def pack_group(self, increments, phases, raw=False):
+        """ Convert the numbers in the group from python data to binary data and load it into the core """
+
+        if len(increments) != 8 or len(phases) != 8:
+            raise ValueError('len(group)!=8')
+
+        tone_fmt = (lambda x: x) if raw else fp_factory(*self.TONE_FORMAT, include_index=True)
+        phase_fmt = (lambda x: x) if raw else fp_factory(*self.PHASE0_FORMAT, include_index=True)
+
+        t_bits = sum(self.TONE_FORMAT[:2])
+        p_bits = sum(self.PHASE0_FORMAT[:2])
+
+        inc = 0
+        for i, v in enumerate(map(tone_fmt, increments)):
+            inc |= v << (t_bits * i)
+
+        pha = 0
+        for i, v in enumerate(map(phase_fmt, phases)):
+            pha |= v << (p_bits * i)
+
+        d = (pha << 88) | inc
+        data = d.to_bytes(32, 'little', signed=False)
+        data = np.frombuffer(data, dtype=np.uint32)
+        return data
+
     @property
     def tones(self):
         return np.hstack([self.read_group(g) for g in range(256)])
@@ -185,3 +211,86 @@ class CenteringDDC(DDC):
         u32d = np.frombuffer(data, dtype=np.uint32)
         mmio = MMIO(self.offset_centers, length=4 * 2048)
         mmio.array[:] = u32d
+
+
+class ThreepartDDC(CenteringDDC):
+    def __init__(self, bram_controller_mmio):
+        #backup: init with bram_controller_mmio = MMIO(offset, length=8 * 2048)
+        self.mmio=bram_controller_mmio
+
+    def configure_ddc(self, freq, phase_offset=None, loop_center=None, center_relative=False, quantize=True):
+        """
+        Configure the DDC to down-convert resonator channels containing the specified frequencies.
+
+        Optionally phase offsets may be specified for each channel. Phase offsets are in [-pi,pi] radians. Values outside
+        are clipped.
+
+        Optionally loop centers may be specified (complex nominally [-1,1) though values will be clipped when converted
+        from floating to fix point).
+
+        Center relative means specify the frequency relative to the bin center.
+
+        Only the first 2048 frequencies/offsets will be used. DDC tones are assigned in the order frequencies are
+        specified. If fewer than 2048 frequencies are specified no assumptions may be made about the DDC settings for the
+        remaining channels, however they may be determined by inspecting the .tones property of resonator_ddc.
+        """
+        data = np.zeros((2, 2048))
+        freq = np.asarray(freq)
+
+        if freq.size > 2048:
+            getLogger(__name__).warning(f'Using first 2048 of {freq.size} provided frequencies')
+
+        if center_relative:
+            freq = dsp.quantize_frequencies(freq) if quantize else freq
+            data[0, :min(freq.size, 2048)] = freq[:2048] / 1e6
+        else:
+            data[0, :min(freq.size, 2048)] = tone_increments(freq[:2048], quantize=quantize)
+
+        if phase_offset is not None:
+            phase_offset = np.asarray(phase_offset)
+            if freq.size != phase_offset.size:
+                raise ValueError('If provided, phase_offsets must match frequencies')
+            phase_offset = (phase_offset / np.pi).clip(-1, 1)
+            data[1, :min(freq.size, 2048)] = phase_offset[:2048]
+
+        centers = np.zeros(2048, dtype=np.complex64)
+        if loop_center is not None:
+            loop_center = np.asarray(loop_center)
+            if freq.size != loop_center.size:
+                raise ValueError('If provided, loop_center must match frequencies')
+            centers[:loop_center[:2048].size] = loop_center[:2048]
+            if (np.abs(centers) > 1).any():
+                getLogger(__name__).warning(f'Loop centers exist outside of the unit circle')
+
+        self._configure(data, centers)
+
+    def _configure(self, tones, centers):
+        """ Centers is an array of 2048 complex loop centers [1,1] """
+        if centers.shape != (2048,):
+            raise ValueError('centers.shape != (2048,)')
+        if np.abs(centers.real).max() > 1 or np.abs(centers.imag).max() > 1:
+            raise ValueError('Centers must be in [-1,1)')
+        if np.abs(centers).max() > 1:
+            logging.getLogger(__name__).warning('Centers contains magnitudes outside of the unit circle')
+
+        if tones.shape != (2, 2048):
+            raise ValueError('tones.shape !=(2,2048)')
+        if tones.min() < -1 or tones.max() >= 1:
+            raise ValueError('Tones must be in [-1,1)')
+
+        center_fmt = fp_factory(*self.CENTER_FORMAT, frombits=False, include_index=True)
+
+        data2 = np.zeros((2048, 2), dtype=np.uint16)
+        data2[:, 0] = [center_fmt(x.real) for x in centers]
+        data2[:, 1] = [center_fmt(x.imag) for x in centers]
+
+        data1 = np.zeros((256, 8), dtype=np.uint32)
+        for i in range(256):
+            data1[i, :] = self.pack_group(*tones[:, i * 8:i * 8 + 8])
+
+        data = np.zeros((256, 2, 8), dtype=np.uint32)
+        data[:, 0, :] = data1
+        data[:, 1, :] = np.frombuffer(data2, dtype=np.uint32).reshape((256, 8))
+        u32d = np.frombuffer(data, dtype=np.uint32)
+        # mmio = MMIO(self.offsoffsetet, length=8 * 2048)
+        self.mmio.array[:] = u32d
