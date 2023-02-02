@@ -82,6 +82,28 @@ class FeedlineHardware:
         self._ol = pynq.Overlay(self._ol.bitfile_name, ignore_version=self._ignore_version, download=True)
         self._if_board.power_on()
 
+    def status(self):
+        """
+
+        Returns: a JSON Serializable status object per the schema fully describing the state of the feedline hardware
+
+        """
+        return 'hardware status'
+
+    def bequiet(self, stop_dacs=True, poweroff_if=False):
+        """
+
+        Args:
+            stop_dacs: Stop the DACs from replaying any values
+            poweroff_if: Power down the IF board (implies `stop_if`)
+
+        Returns: None
+        """
+        if stop_dacs:
+            self._ol.dac_table.quiet()
+        if poweroff_if:
+            self._if_board.power_off(save_settings=False)
+
 
 class FeedlineReadout:
     def __init__(self, name, bitstream, port=8000, clock_source="external_10mhz", if_port='dev/ifboard',
@@ -103,17 +125,9 @@ class FeedlineReadout:
         Returns: Dictionary of status information
 
         """
-        if self._ol is None:
-            ol_status = FeedlineStatus(bitstream=None)
-        else:
-            ol_status = FeedlineStatus(dac=DACStatus.from_core(self._ol.dac_table),
-                                       ddc=DDCStatus.from_core(self._ol.photon_pipe.reschan.ddc),
-                                       )
-
         status = {'name': self._name,
                   'id': self.id,
-                  'fpga': ol_status,
-                  'if_board': self._if_board.status(),
+                  'hardware': self.hardware.status(),
                   'running_captures': self._running_captures(),
                   'pending_captures': self._pending_captures()}
 
@@ -375,7 +389,7 @@ class FeedlineReadout:
                 continue
 
             changed_settings = settings_set.add(cr.id, cr.feedline_setup)
-            g3.apply_fl_settings(changed_settings, self._ol)
+            self.hardware.apply_settings(changed_settings, self._ol)
 
             cap_runners = {'engineering': self.plram_cap, 'photon': self.photon_cap, 'stamp': self.stamp_cap}
             target = cap_runners[cr.type]
@@ -454,7 +468,7 @@ if __name__ == '__main__':
                 socket.send_json(status)
             elif cmd == 'bequiet':
                 cap_pipe.send(['abort', 'all'])
-                fr.bequiet(**json.loads(args))  # This might take a while and fail
+                fr.hardware.bequiet(**json.loads(args))  # This might take a while and fail
                 socket.send_json('OK')
             elif cmd == 'capture':
                 # determine if capture is possible
