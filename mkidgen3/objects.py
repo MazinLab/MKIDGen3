@@ -477,6 +477,7 @@ class CaptureRequest:
         return self._id
 
     def establish(self, context:zmq.Context=None):
+        conetxt = context or zmq.Context.instance()
         self._status_socket = context.socket(zmq.REQ)
         self._status_socket.connect(self._status_dest)
         self._data_socket = context.socket(zmq.PUB)

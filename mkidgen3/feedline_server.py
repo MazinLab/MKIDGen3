@@ -1,3 +1,5 @@
+import json
+
 from .drivers.ifboard import IFBoard
 from .schema import validate
 from .status_keeper import StatusKeeper
@@ -12,10 +14,15 @@ import blosc
 import time
 import threading
 from datetime import datetime
+import argparse
+import binascii
+import os
+
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
 CHUNKING_THRESHOLD = 1000
+
 
 def zpipe(ctx):
     """build inproc pipe for talking to threads
@@ -229,8 +236,9 @@ class FeedlineReadout:
         finally:
             ol.photon_capture.stop()
             del cr
-            for b in buffers:
-                b.buffer.freebuffer()
+            while buffers:
+                b = buffers.pop()
+                del b
             abort.close()
 
     def _capture_main(self, pipe: zmq.Socket, context: zmq.Context = None):
@@ -246,9 +254,6 @@ class FeedlineReadout:
 
         """
         context = context or zmq.Context().instance()
-
-        requests = context.socket(zmq.REP)
-        requests.connect('inproc://cap_request')
 
         class TapThread:
             def __init__(self, thread, pipe, request):
@@ -380,80 +385,11 @@ class FeedlineReadout:
             tap_threads[cr.type] = TapThread(t, a, cr)
 
 
-    def main(self, context: zmq.Context = None):
-        # This is a early alpha main and is mostly garbage see _capture_main
-
-
-        while True:
-            cmd, args = socket.recv_multipart()
-
-            if cmd == 'reset':
-                # TODO abort all captures
-                self.reset()  # This might take a while and fail
-            elif cmd == 'status':
-                status = self.status()  # this might take a while and fail
-            elif cmd == 'bequiet':
-                #  abort all captures
-                # TODO extract bequiet kwargs from args and pass
-                self.bequiet()  # This might take a while and fail
-            elif cmd == 'capture':
-                # determine if capture is possible
-                # determine if capture compatible with current actions
-                # fire function to apply necessary pl settings and start thread to deal with capture
-                cr = args
-                needed_settings = cr.settings
-
-                self.active_capture_taps()
-                active_taps = tuple(t for t, v in tap_threads.items() if v is not None)
-
-                request_blocked = needed_settings.compatible_with(active_settings) or cr.tap in active_taps
-
-                if request_blocked:
-                    try:
-                        cr.set_status('submitted', 'Request not compatible with running captures. '
-                                                   f'Resubmitting to queue at {datetime.utcnow()}', context=context)
-                    except Exception:
-                        getLogger(__name__).error(f"Unable to update capture status for {cr.id}, dropping request.")
-                        continue
-
-                    try:
-                        request_resubmit.send_pyobj(cr)
-                    except Exception:
-                        cr.fail('Resubmission failed.', context=context)
-                        getLogger(__name__).error(f"Resubmission failed for {cr.id}, dropping request.")
-
-                else:
-
-                    active_settings = g3.apply_fl_settings(cr.settings)
-                    if cr.tap in ('iq', 'phase', 'adc'):
-                        target = self.plram_cap
-                    elif cr.tap == 'photon':
-                        target = self.photon_cap
-                    else:
-                        target = self.stamp_cap
-                    t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(context, cr, self._ol))
-                    tap_threads[cr.tap] = t
-                    t.start()
-            # TODO sort out how to reply with the result of the command
-
-
-"""
-Test proceedure:
-1) Start FRS
-"""
-
-import argparse
-
-
 def parse_cl():
     parser = argparse.ArgumentParser(description='Feedline Readout Server', add_help=True)
     parser.add_argument('-p', '--port', dest='port', action='store', required=False, type=int,
                         help='Server port', default='9999')
     return parser.parse_args()
-
-
-import binascii
-import os
 
 
 def zpipe(ctx):
@@ -483,7 +419,7 @@ if __name__ == '__main__':
     from zmq.devices import ProcessDevice
 
     # Set up a proxy for routing all the capture requests
-    pd = ProcessDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    pd = zmq.devices.ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
     pd.bind_in('inproc://cap_data')
     pd.bind_out(f'tcp://*:{capture_port}')
     pd.setsockopt_in(zmq.XPUB_VERBOSE, 'ROUTER')
@@ -495,20 +431,32 @@ if __name__ == '__main__':
     socket = context.socket(zmq.REP)
     socket.bind(f"tcp://*:{command_port}")
 
+    cap_pipe, cap_pipe_thread = zpipe(zmq.Context.instance())
+
+    main = threading.Thread(target=fr._capture_main, args=(cap_pipe_thread, ), kwargs={'context':context})
+    main.daemon = False
+    main.start()
+
     while True:
+            cmd, args = socket.recv_multipart()
 
-    main = threading.Thread(target=fr._capture_main, args=(context,))
-    main.run()
-    main.join()
-    context = zmq.Context()
-    server = context.socket(zmq.XSUB)
-    server.bind(f'tcp:\\*:{args.port}')
-    captures = context.socket(zmq.XPUB)
-    captures.bind(f'inproc:\\captures')
+            if cmd == 'reset':
+                cap_pipe.send(['abort', 'all'])
+                fr.reset()
+                socket.send_json('OK')
 
-    context = context or zmq.Context.instance()
-    socket = context.socket(zmq.REP)
-    socket.bind(f"tcp://*:{self._port}")
-
-    threading.Thread(target=server.main, args=(context,))
-    zmq.proxy(server, captures)
+            elif cmd == 'status':
+                status = fr.status()  # this might take a while and fail
+                socket.send_json(status)
+            elif cmd == 'bequiet':
+                cap_pipe.send(['abort', 'all'])
+                fr.bequiet(**json.loads(args))  # This might take a while and fail
+                socket.send_json('OK')
+            elif cmd == 'capture':
+                # determine if capture is possible
+                # determine if capture compatible with current actions
+                # fire function to apply necessary pl settings and start thread to deal with capture
+                cr = args
+                needed_settings = cr.settings
+                cap_pipe.send_multipart(['capture']+args)
+                socket.send_json(cap_pipe.recv())
