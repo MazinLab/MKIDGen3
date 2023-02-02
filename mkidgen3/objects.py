@@ -163,7 +163,21 @@ class DDCConfig:
         return arrayequal_or_eithernone(((self.tones, other.tones),
                                          (self.centers, other.centers),
                                          (self.offsets, other.offsets)))
+class FeedlineStatus:
+    def __init__(self):
+        self.status='feedline status'
 
+class DACStatus:
+    def __init__(self, waveform: Waveform):
+        self.waveform=waveform
+        self._output_on=False
+
+class DDCStatus:
+    def __init__(self, bin2res_setting, tone_increments, phase_offsets, centers):
+        self.channel_mapping=bin2res_setting
+        self.tone_increments=tone_increments
+        self.phase_offsets=phase_offsets
+        self.centers=centers
 class FeedlineSetup:
     def __init__(self, if_setup=None, dac_setup=None, pp_setup=None, ddc=None,
                  adc_setup=None, channels=None, filters=None, thresholds=None):

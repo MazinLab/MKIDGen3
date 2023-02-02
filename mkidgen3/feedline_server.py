@@ -4,7 +4,8 @@ from .status_keeper import StatusKeeper
 from logging import getLogger
 import pynq
 import mkidgen3.drivers.rfdc
-from objects import CaptureRequest, CaptureAbortedException, FeedlineSetup
+import mkidgen3 as g3
+from objects import CaptureRequest, CaptureAbortedException, FeedlineSetup, FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer
 from typing import List
 import zmq
 import blosc
@@ -208,7 +209,7 @@ class FeedlineReadout:
 
         buffers = []
         try:
-            buffers = [PhotonBuffer() for _ in range(2)]
+            buffers = [FLPhotonBuffer() for _ in range(2)]
             buf = None
             while not cr.aborted() and abort.poll(1) == 0:
                 to_send = buf
@@ -367,7 +368,7 @@ class FeedlineReadout:
                 continue
 
             changed_settings = settings_set.add(cr.id, cr.feedline_setup)
-            apply_fl_settings(changed_settings, self._ol)
+            g3.apply_fl_settings(changed_settings, self._ol)
 
             cap_runners = {'engineering': self.plram_cap, 'photon': self.photon_cap, 'stamp': self.stamp_cap}
             target = cap_runners[cr.type]
