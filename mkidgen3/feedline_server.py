@@ -114,28 +114,61 @@ class FeedlineReadout:
 
         Args:
             stop_dacs: Stop the DACs from replaying any values
-            stop_if: Stop the PLLs on the IF board
             poweroff_if: Power down the IF board (implies `stop_if`)
 
         Returns: None
         """
         if stop_dacs:
             self._ol.dac_table.quiet()
-            # self.status_keeper.update(self.id, dacs=self._ol.dac_table.status())
+            self.status_keeper.update(self.id, dacs=self._ol.dac_table.status())
         if poweroff_if:
             self._if_board.power_off(save_settings=False)
-            # self.status_keeper.update(self.id, if_board=self.if_board.status())
+            self.status_keeper.update(self.id, if_board=self.if_board.status())
 
     @staticmethod
-    def plram_cap(context, cr, ol):
+    def plram_cap(cr, ol, context=None):
+        """
+
+
+        Args:
+            context:
+            cr: A CaptureRequest object
+            ol: A pynq.Overlay with the firmware bitstream loaded, assumed to be thread safe
+
+        Returns: None
+
+        """
+
+        #TODO these are fatal errors and the function should never have been called.
+        # CR should be aborted though
+        failmsg = ''
+        try:
+            assert cr.type == 'engineering', 'Incorrect capture request type'
+            assert ol.capture.ready(), 'Capture Subsystem is busy'
+        except AssertionError as e:
+            failmsg = str(e)
+
+        try:
+            abort = context.socket(zmq.SUB)  #TODO Use of subscribe will probably result in missed abort mesages, REQ/REP?
+            abort.setsockopt(zmq.SUBSCRIBE, id)
+            abort.connect('inproc://cap_abort')
+        except zmq.EFAULT:
+            failmsg = f"Unable to establish abort socket {cr.id}, dropping request."
+
         try:
             cr.establish(context)
-        except Exception:
-            getLogger(__name__).error(f"Unable to establish capture {cr.id}, dropping request.")
+        except zmq.EFAULT:
+            failmsg = f"Unable to establish capture {cr.id}, dropping request."
+
+        if failmsg:
+            getLogger(__name__).error(failmsg)
+            try:
+                cr.fail(failmsg)
+                cr.destablish()
+            except zmq.EFAULT as ez:
+                getLogger(__name__).warning(f'Failed to send abort for {cr} due to {ez}')
             return
-        abort = context.socket(zmq.SUB)
-        abort.setsockopt(zmq.SUBSCRIBE, id)
-        abort.connect('inproc://cap_abort')
+
         try:
             nchunks = cr.size // CHUNKING_THRESHOLD
             partial = cr.size - CHUNKING_THRESHOLD * nchunks
@@ -150,10 +183,13 @@ class FeedlineReadout:
                 data.free_buffer()
             cr.finish()
         except CaptureAbortedException:
-            cr.fail(f'Aborted.')
+            cr.fail(f'Aborted')
         except Exception as e:
             getLogger(__name__).error(f'Terminating capture {id} due to {e}')
-            cr.fail(f'Aborted due to {str(e)}')
+            try:
+                cr.fail(f'Aborted due to {e}')
+            except zmq.EFAULT as ez:
+                getLogger(__name__).warning(f'Failed to send abort message {cr} due to {ez}')
         finally:
             del cr
             abort.close()
@@ -256,6 +292,7 @@ class FeedlineReadout:
             if 'cmd' == 'exit':
                 cmd = 'abort'
                 data = 'all'
+                pipe.send('OK')
 
             if cmd == 'abort':
                 if data == 'all':
@@ -264,13 +301,17 @@ class FeedlineReadout:
                     checked = []
                     to_check = []
                     for v in running_by_id.values():  #stop any running tap threads
-                        v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
+                        try:
+                            v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
+                        except zmq.EFAULT:
+                            getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
+                            raise
                 else:
                     aborted = False
                     if data in running_by_id:
                         aborted = True
                         running_by_id[data].pipe.send('abort')  # TODO what happens to pipe when thread ends?
-                    for cr in filter(lambda x: x.id==data, checked):
+                    for cr in filter(lambda x: x.id == data, checked):
                         aborted = True
                         checked.pop(checked.index(cr))
                         cr.set_status('aborted')
@@ -341,9 +382,6 @@ class FeedlineReadout:
     def main(self, context: zmq.Context = None):
         # This is a early alpha main and is mostly garbage see _capture_main
 
-        context = context or zmq.Context.instance()
-        socket = context.socket(zmq.REP)
-        socket.bind(f"tcp://*:{self._port}")
 
         while True:
             cmd, args = socket.recv_multipart()
@@ -408,33 +446,8 @@ import argparse
 
 def parse_cl():
     parser = argparse.ArgumentParser(description='Feedline Readout Server', add_help=True)
-    parser.add_argument('-d', '--dir', dest='dir',
-                        action='store', required=False, type=str,
-                        help='source dir for files', default='./')
-    parser.add_argument('--cr', dest='do_cosmic', default=False,
-                        action='store_true', required=False,
-                        help='Do cosmic ray rejection')
-    parser.add_argument('--num', dest='num', default='',
-                        type=str, required=False,
-                        help='#,#,... files to do. Default to all')
-    parser.add_argument('-o', dest='outdir', default='./out/',
-                        action='store', required=False, type=str,
-                        help='Out directory')
-    parser.add_argument('--sigclip', dest='sigclip', default=15.0,
-                        action='store', required=False, type=float,
-                        help='CR Sigmaclip (sigma limit for flagging as CR)')
-    parser.add_argument('--sigfrac', dest='sigfrac', default=0.3,
-                        action='store', required=False, type=float,
-                        help='CR Sigmafrac (sigclip fract for neighboring pix)')
-    parser.add_argument('--objlim', dest='objlim', default=1.4,
-                        action='store', required=False, type=float,
-                        help='CR Object Limit (raise if normal data clipped)')
-    parser.add_argument('--criter', dest='criter', default=5,
-                        action='store', required=False, type=int,
-                        help='CR Iteration Limit')
-    parser.add_argument('--overwrite', dest='overwrite', default=False,
-                        action='store_true', required=False,
-                        help='overwrite existing output')
+    parser.add_argument('-p', '--port', dest='port', action='store', required=False, type=int,
+                        help='Server port', default='9999')
     return parser.parse_args()
 
 
@@ -464,11 +477,37 @@ if __name__ == '__main__':
                          clock_source=args.clock, if_port=args.if_board,
                          ignore_version=args.ignore_fpga_driver_version, status_port=None)
 
+    capture_port = args.capture_port
+    command_port = args.port
+    from zmq.devices import ProcessDevice
+
+    # Set up a proxy for routing all the capture requests
+    pd = ProcessDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    pd.bind_in('inproc://cap_data')
+    pd.bind_out(f'tcp://*:{capture_port}')
+    pd.setsockopt_in(zmq.XPUB_VERBOSE, 'ROUTER')
+    pd.setsockopt_out(zmq.IDENTITY, 'DEALER')
+    pd.start()
+
+    # Set up a command port
+    context = zmq.Context.instance()
+    socket = context.socket(zmq.REP)
+    socket.bind(f"tcp://*:{command_port}")
+
+    while True:
+
+    main = threading.Thread(target=fr._capture_main, args=(context,))
+    main.run()
+    main.join()
     context = zmq.Context()
     server = context.socket(zmq.XSUB)
-    server.bind(f'tcp:\\*:{args.cap_port}')
+    server.bind(f'tcp:\\*:{args.port}')
     captures = context.socket(zmq.XPUB)
     captures.bind(f'inproc:\\captures')
+
+    context = context or zmq.Context.instance()
+    socket = context.socket(zmq.REP)
+    socket.bind(f"tcp://*:{self._port}")
 
     threading.Thread(target=server.main, args=(context,))
     zmq.proxy(server, captures)

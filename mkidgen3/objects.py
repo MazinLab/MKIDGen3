@@ -451,6 +451,9 @@ class CaptureRequest:
         self._data_dest = destination
         self._status_dest = status_dest
 
+    def __del__(self):
+        self.destablish()
+
     @property
     def type(self):
         return 'engineering' if self.tap in ('adc', 'iq', 'phase') else self.tap
@@ -478,7 +481,7 @@ class CaptureRequest:
             self._data_socket.close()
         except AttributeError:
             pass
-        self._established = True
+        self._established = False
 
     def fail(self, message, context:zmq.Context=None):
         self.set_status('failed', message, context=context)
@@ -497,11 +500,13 @@ class CaptureRequest:
         self._status = status
         """get appropriate context and send current sztatus message after connecting soocket. if no then simply log"""
         if not self._status_dest:
+            context = context or zmq.Context().instance()
             self._status_dest = context.socket(zmq.REQ)
             self._status_dest.connect(self._status_dest)
         else:
             _status_dest=self._status_dest
         _status_dest.send_multipart([status, message])
+
 
     @property
     def size(self):
