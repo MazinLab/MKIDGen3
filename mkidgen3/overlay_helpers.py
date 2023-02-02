@@ -94,6 +94,8 @@ def configure_ddc(freq, phase_offset=None, loop_center=None, center_relative=Fal
     Optionally loop centers may be specified (complex nominally [-1,1) though values will be clipped when converted
     from floating to fix point).
 
+    Center relative means specify the frequency relative to the bin center.
+
     Only the first 2048 frequencies/offsets will be used. DDC tones are assigned in the order frequencies are
     specified. If fewer than 2048 frequencies are specified no assumptions may be made about the DDC settings for the
     remaining channels, however they may be determined by inspecting the .tones property of resonator_ddc.

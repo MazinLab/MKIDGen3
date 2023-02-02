@@ -6,6 +6,9 @@ import serial
 from typing import Tuple, List
 import numpy as np
 
+MAX_OUT_ATTEN = 31.75  # dB
+MAX_IN_ATTEN = 31.75  # dB
+MAX_ATTN_RESOLUTION = 0.25  # dB
 
 def escape_nline_creturn(string):
     """Escape \n and \r in a string"""
@@ -174,8 +177,8 @@ class IFBoard(SerialDevice):
         A single number sets both attenuation values.
 
         If individual attenuations are specified they are passed directly to the board without alteration.
-        It is intended for low-level debugging use. Generaully if setting individual attens,
-        the majority of the attenuation should be in the second attenuator for input and the first for output.
+        It is intended for low-level debugging use. Generally if setting individual attens,
+        the majority of the attenuation should be in the first attenuator for the DAC and the second for the ADC.
 
         Allowed values are documented in the ifboard arduino codebase or the attenuator chips datasheet.
 
@@ -183,30 +186,28 @@ class IFBoard(SerialDevice):
         """
         current = [self.attens[v] for v in ('dac1', 'dac2', 'adc1', 'adc2')]
 
-        MAX_OUT_ATTEN = 30 # dB
-        MAX_IN_ATTEN = 30 # dB
-        MAX_ATTN_RESOLUTION = 0.25 # dB
-        if not isinstance(output_attens, (tuple, list)):
-            x = min(output_attens, 2 * MAX_OUT_ATTEN)
-
-            if x!=output_attens:
-                getLogger(__name__).warning(f'Max output attenuation exceeded. Clipping each value to {MAX_OUT_ATTEN} dB.')
-
-            output_attens = [max(x - MAX_OUT_ATTEN, 0), min(x, MAX_OUT_ATTEN)]
-
-        if len(output_attens) != 2:
-            raise ValueError('Incorrect number of output attenuations')
 
         if not isinstance(input_attens, (tuple, list)):
             x = min(input_attens, 2 * MAX_IN_ATTEN)
 
-            if x != input_attens:
-                getLogger(__name__).warning(f'Max input attenuation exceeded. Clipping each value to {MAX_IN_ATTEN} dB.')
+            if x!=input_attens:
+                getLogger(__name__).warning(f'Max output attenuation exceeded. Clipping each value to {MAX_IN_ATTEN} dB.')
 
-            input_attens = [min(x, MAX_IN_ATTEN), max(x - MAX_IN_ATTEN, 0)]
+            input_attens = [max(x - MAX_IN_ATTEN, 0), min(x, MAX_IN_ATTEN)]
 
         if len(input_attens) != 2:
             raise ValueError('Incorrect number of input attenuations')
+
+        if not isinstance(output_attens, (tuple, list)):
+            x = min(output_attens, 2 * MAX_OUT_ATTEN)
+
+            if x != output_attens:
+                getLogger(__name__).warning(f'Max input attenuation exceeded. Clipping each value to {MAX_OUT_ATTEN} dB.')
+
+            output_attens = [min(x, MAX_OUT_ATTEN), max(x - MAX_OUT_ATTEN, 0)]
+
+        if len(output_attens) != 2:
+            raise ValueError('Incorrect number of output attenuations')
 
         if (((np.asarray(input_attens) % MAX_ATTN_RESOLUTION).any() != 0) or ((np.asarray(output_attens) % MAX_ATTN_RESOLUTION).any() != 0)).any():
             getLogger(__name__).warning(f'Exact attenuation not achievable. Clipping value to nearest {MAX_ATTN_RESOLUTION} dB. Check status() for exact value.')
