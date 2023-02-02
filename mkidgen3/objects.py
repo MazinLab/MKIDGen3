@@ -3,9 +3,10 @@ import numpy as np
 import zmq
 import blosc
 
-from . import power_sweep_freqs, N_CHANNELS, SYSTEM_BANDWIDTH
+#from . import power_sweep_freqs, N_CHANNELS, SYSTEM_BANDWIDTH
 from .funcs import *
 from .funcs import SYSTEM_BANDWIDTH, compute_lo_steps
+import logging
 
 
 class Waveform:
@@ -249,10 +250,6 @@ class CaptureSink:
     pass
 
 
-x=ADCCaptureSink(id)
-x.join()
-print(x.result)
-
 class ADCCaptureSink(CaptureSink, threading.Thread):
     def __init__(self, id, source, context:zmq.Context=None):
         super().__init__(name=f'ADCCaptureSink_{id}')
@@ -271,9 +268,9 @@ class ADCCaptureSink(CaptureSink, threading.Thread):
         Returns: None
 
         """
-        data_source =
-        cap_id =
-        term_source =
+        data_source = None
+        cap_id =  None
+        term_source = None
         context = zmq.Context.instance()
         term = context.socket(zmq.SUB)
         term.setsockopt(zmq.SUBSCRIBE, self.id)
@@ -319,7 +316,7 @@ class PhotonCaptureSink(CaptureSink):
         _terminate.send(b'')
         _terminate.close()
 
-    def capture(self):
+    def capture(self, hdf, xymap, feedline_source, fl_ids):
         t = threading.Thread(target =self._main, args=(hdf, xymap, feedline_source, fl_ids))
         t.start()
 
@@ -356,6 +353,7 @@ class PhotonCaptureSink(CaptureSink):
         poller.register(data, flags=zmq.POLLIN)
 
         live_image=np.zeros(DETECTOR_SHAPE)
+        live_image_socket=None
         live_image_by_fl = live_image.reshape(n_fl, fl_npix)
         photons_rabuf = np.recarray(MAX_NEW_PHOTONS,
                                        dtype=(('time', 'u32'), ('x','u32'), ('y','u32'),
@@ -370,7 +368,7 @@ class PhotonCaptureSink(CaptureSink):
             fl_id = frame[0]
             time_offset = frame[1]
             d = blosc.decompress(frame[1])
-            frame_duration = # todo time coverage of data
+            frame_duration = None# todo time coverage of data
             #buffer is nchan*nmax+1 32bit: 16bit time(base2) 16bit phase
             #make array of to [nnmax+1, nchan, 2] uint16
             #nmax will always be <<2^12 number valid will be at [0,:,0]
@@ -434,32 +432,12 @@ class StatusListner(threading.Thread):
     def latest(self):
         return self._status_messages[-1]
 
-class CaptureJob: #feedline client end
-    def __init__(self, request:CaptureRequest, server, submit=True):
-        self.request = request
-        self._status_listner = StatusListner(request.id, server, initial_state='CREATED')
-        self._datasaver = CaptureSink(request, server)
-        if submit:
-            self.submit()
-
-    def status(self):
-        """ Return the last known status of the request """
-        return self._status_listner.latest()
-
-    def cancel(self):
-        self.server.send_multipart(['abort', self.request.id])
-
-    def data(self):
-        return self._datasaver.data()
-
-    def submit(self):
-        self.server.send_multipart(['capture', self.request])
 
 
 class CaptureRequest:
     def __init__(self, n, tap, feedline_setup:FeedlineSetup, destination, status_dest):
         self.points = n
-        self.tap = validate(tap)
+        self.tap = tap # maybe add some error handling here
         self.feedline_setup = feedline_setup
         self._id = hash(repr(self))
         self._data_dest = destination
@@ -527,6 +505,26 @@ class CaptureRequest:
     def size(self):
         return self.points*2048
 
+class CaptureJob: #feedline client end
+    def __init__(self, request:CaptureRequest, server, submit=True):
+        self.request = request
+        self._status_listner = StatusListner(request.id, server, initial_state='CREATED')
+        self._datasaver = CaptureSink(request, server)
+        if submit:
+            self.submit()
+
+    def status(self):
+        """ Return the last known status of the request """
+        return self._status_listner.latest()
+
+    def cancel(self):
+        self.server.send_multipart(['abort', self.request.id])
+
+    def data(self):
+        return self._datasaver.data()
+
+    def submit(self):
+        self.server.send_multipart(['capture', self.request])
 
 class PowerSweepRequest:
     def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3, use_cached=True):
@@ -548,7 +546,7 @@ class PowerSweepRequest:
             CaptureRequests to collect power sweep data.
 
         """
-        self.freqs=
+        self.freqs= np.linspace(0,ntones-1,ntones)
         self.points = points
         self.total_attens=np.arange(min_attn,max_attn+attn_step,attn_step)
         self._sweep_bw=SYSTEM_BANDWIDTH/ntones
