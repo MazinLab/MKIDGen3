@@ -1,4 +1,4 @@
-import redis
+# import redis
 
 class StatusKeeper:
     def __init__(self, location):
@@ -9,7 +9,7 @@ class StatusKeeper:
         """
         self._location = location
 
-        self._redis = Redis(location)
+        self._redis = None #Redis(location)
 
     def update(self, namespace, **data):
         pass

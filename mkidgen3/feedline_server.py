@@ -1,8 +1,8 @@
 import json
 
-from .drivers.ifboard import IFBoard
-from .schema import validate
-from .status_keeper import StatusKeeper
+from mkidgen3.drivers.ifboard import IFBoard
+from mkidgen3.schema import validate
+from mkidgen3.status_keeper import StatusKeeper
 from logging import getLogger
 import pynq
 import mkidgen3.drivers.rfdc
@@ -10,7 +10,7 @@ import mkidgen3 as g3
 from objects import CaptureRequest, CaptureAbortedException, FeedlineSetup, FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer
 from typing import List
 import zmq
-import blosc
+import blosc2
 import time
 import threading
 from datetime import datetime
@@ -65,35 +65,37 @@ class FLSettingsSet:
         self._dict[flsettings.id] = flsettings
 
 
+class FeedlineHardware:
+    def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
+                 ignore_version=False, download=True, start_clock=True):
+        self._clock_source = validate(clock_source=clock_source, error=True)
+        self._ol = pynq.Overlay(bitstream, download=download, ignore_version=ignore_version)
+        self._if_board = IFBoard(if_port, connect=False)
+        self._ignore_version = ignore_version
+        if start_clock:
+            import mkidgen3.drivers.rfdc
+            mkidgen3.drivers.rfdc.start_clocks(external_10mhz=clock_source=='external_10mhz')
+
+    def reset(self):
+        self._if_board.power_off(save_settings=False)
+        mkidgen3.drivers.rfdc.start_clocks(external_10mhz=self._clock_source == 'external_10mhz')
+        self._ol = pynq.Overlay(self._ol.bitfile_name, ignore_version=self._ignore_version, download=True)
+        self._if_board.power_on()
+
+
 class FeedlineReadout:
     def __init__(self, name, bitstream, port=8000, clock_source="external_10mhz", if_port='dev/ifboard',
                  ignore_version=False, status_port=None):
         self._name = name
-        self._bitstream = bitstream
         self._port = port
-        self._ignore_version = ignore_version
-        self._clock_source = validate(clock_source=clock_source, error=True)
-        self._ol = None
-        self._if_board = IFBoard(if_port, connect=False)
+        self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
+                                         ignore_version=ignore_version, download=True, start_clock=True)
+
         # self.status_keeper = StatusKeeper(status_port)  #TODO
 
     @property
     def id(self):
         return f"FRS {self._name} @ {self._port}"
-
-    def reset(self):
-        """
-        Reset the system via powering off the IF board, (re)starting the clocks, and (re)downloading the
-        bitstreeam.
-
-        Returns: None
-
-        """
-        self._if_board.power_off(save_settings=False)
-        mkidgen3.drivers.rfdc.start_clocks(external_10mhz=self._clock_source == 'external_10mhz')
-        self._ol = pynq.Overlay(self._bitstream, ignore_version=self._ignore_version, download=True)
-        self._if_board.power_on()
-        # self.status_keeper.update(self.id, **self.status()) #TODO
 
     def status(self):
         """
@@ -388,12 +390,15 @@ class FeedlineReadout:
 def parse_cl():
     parser = argparse.ArgumentParser(description='Feedline Readout Server', add_help=True)
     parser.add_argument('-p', '--port', dest='port', action='store', required=False, type=int,
-                        help='Server port', default='9999')
+                        help='Server port', default='8888')
+    parser.add_argument('--cap_port', dest='cap_port', action='store', required=False, type=int,
+                        help='Capture Data Port', default='8889')
     return parser.parse_args()
 
 
 def zpipe(ctx):
-    """build inproc pipe for talking to threads
+    """
+    build an inproc pipe for talking to threads
     mimic pipe used in czmq zthread_fork.
     Returns a pair of PAIRs connected via inproc
     """
@@ -423,7 +428,6 @@ if __name__ == '__main__':
     pd.bind_in('inproc://cap_data')
     pd.bind_out(f'tcp://*:{capture_port}')
     pd.setsockopt_in(zmq.XPUB_VERBOSE, 'ROUTER')
-    pd.setsockopt_out(zmq.IDENTITY, 'DEALER')
     pd.start()
 
     # Set up a command port
@@ -442,7 +446,7 @@ if __name__ == '__main__':
 
             if cmd == 'reset':
                 cap_pipe.send(['abort', 'all'])
-                fr.reset()
+                fr.hardware.reset()
                 socket.send_json('OK')
 
             elif cmd == 'status':

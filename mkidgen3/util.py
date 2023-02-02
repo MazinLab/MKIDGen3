@@ -2,9 +2,7 @@ import pkg_resources
 import os
 import yaml
 import logging.config
-import requests
 import numpy as np
-
 
 
 def buf2complex(b, free=True, unsigned=False, floating=True):
@@ -32,6 +30,7 @@ def buf2complex(b, free=True, unsigned=False, floating=True):
 
 def set_anritsu(f):
     """NB make sure Anritsu server is running"""
+    import requests
     r = requests.get(f'http://skynet.physics.ucsb.edu:51111/loset/{f}')
     return r.json()
 

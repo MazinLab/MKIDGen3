@@ -1,9 +1,12 @@
 from pynq import DefaultHierarchy
-import xrfclk, xrfdc
 from logging import getLogger
 import re
 import pkg_resources
 
+try:
+    import xrfclk, xrfdc
+except ImportError:
+    getLogger(__name__).warning('xrfclk/xrfdc unavaiable, functionality is limited')
 
 def status():
     import mkidgen3
@@ -139,14 +142,14 @@ class RFDCHierarchy(DefaultHierarchy):
     def set_qmc(self, adc=None, dac=None, gain=0.0, offset=0, phase=0.0):
         """
         Sets the quadrature error modulation circuit for the specified adc/dac.
-        
+
         adc: tuple describing (adc tile, adc block) allowed values: 0,1,2,3
         dac: tuple describing (dac tile, dac block) allowed values: 0,1,2,3
         gain: number between 0 and 2 describing data converter gain.
         offset: xxxxx
         phase: xxxxxx
-        
-        Example Usage: set_qmc(adc=(0,1), gain=1.5) 
+
+        Example Usage: set_qmc(adc=(0,1), gain=1.5)
         """
 
         settings = {'EnableGain': 1 if gain else 0, 'EnablePhase': 1 if phase else 0, 'EventSource': 0, 'GainCorrectionFactor': gain,'OffsetCorrectionFactor': offset, 'PhaseCorrectionFactor': phase}
@@ -155,7 +158,7 @@ class RFDCHierarchy(DefaultHierarchy):
             self.rfdc.adc_tiles[adc[0]].blocks[adc[1]].QMCSettings = settings
             self.rfdc.adc_tiles[adc[0]].blocks[adc[1]].UpdateEvent(xrfdc.EVENT_QMC)
             print(f"Setting ADC Tile {adc[0]}, Block {adc[1]}")
-        
+
         if dac is not None:
             self.rfdc.dac_tiles[dac[0]].blocks[dac[1]].QMCSettings = settings
             self.rfdc.dac_tiles[dac[0]].blocks[dac[1]].UpdateEvent(xrfdc.EVENT_QMC)

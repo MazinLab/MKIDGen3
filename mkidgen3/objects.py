@@ -1,11 +1,11 @@
 import threading
 import numpy as np
 import zmq
-import blosc
+import blosc2
 
 #from . import power_sweep_freqs, N_CHANNELS, SYSTEM_BANDWIDTH
-from .funcs import *
-from .funcs import SYSTEM_BANDWIDTH, compute_lo_steps
+from mkidgen3.funcs import *
+from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 import logging
 
 
