@@ -66,13 +66,14 @@ class FLSettingsSet:
 
 
 class FeedlineHardware:
+
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
-                 ignore_version=False, download=True, start_clock=True):
+                 ignore_version=False, download=True, program_clock=True):
         self._clock_source = validate(clock_source=clock_source, error=True)
         self._ol = pynq.Overlay(bitstream, download=download, ignore_version=ignore_version)
         self._if_board = IFBoard(if_port, connect=False)
         self._ignore_version = ignore_version
-        if start_clock:
+        if program_clock:
             import mkidgen3.drivers.rfdc
             mkidgen3.drivers.rfdc.start_clocks(external_10mhz=clock_source=='external_10mhz')
 
@@ -103,6 +104,33 @@ class FeedlineHardware:
             self._ol.dac_table.quiet()
         if poweroff_if:
             self._if_board.power_off(save_settings=False)
+
+
+    def apply_fl_settings(self, fl_setup: FeedlineSetup):
+        validate(fl_setup)
+        # IF board
+        if fl_setup.if_setup is not None:
+            self._if_board.connect()
+            if fl_setup.if_setup.power:
+                self._if_board.power_on()
+            self._if_board.set_lo(fl_setup.if_setup.lo)
+            self._if_board.set_attens(fl_setup.if_setup.dac_attn, fl_setup.if_setup.adc_attn)
+        # DAC
+        if fl_setup.dac_setup is not None:
+            g3.replay(fl_setup.dac_setup.waveform_spec['iq'])
+        # Photon Pipe
+        if fl_setup.pp_setup is not None:
+            # Bin2Res
+            if fl_setup.pp_setup._chan_config is not None:
+                self._ol.photon_pipe.reschan.bin_to_res.bins = fl_setup.pp_setup._chan_config.bins
+            # DDC
+            if fl_setup.ddc_setup is not None:
+
+
+
+
+
+
 
 
 class FeedlineReadout:

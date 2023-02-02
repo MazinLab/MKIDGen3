@@ -132,13 +132,15 @@ class DACOutputSpec:
 
 
 class IFSetup:
-    def __init__(self, lo, adc_attn, dac_attn):
+    def __init__(self, lo, adc_attn, dac_attn, power=True):
+        self.power = power
         self.lo = lo
         self.adc_attn = adc_attn
         self.dac_attn = dac_attn
 
     def __hash__(self):
         return hash(f'{self.lo}{self.adc_attn}{self.dac_attn}')
+
 
 
 class TriggerSettings:
@@ -149,6 +151,10 @@ class TriggerSettings:
 
 def arrayequal_or_eithernone(items):
     return all([a is None or b is None or (a==b).all() for a, b in items])
+
+class ChannelConfig:
+    def __init__(self, bins):
+        self._bins = bins
 
 class DDCConfig:
     def __init__(self, tones, centers, offsets):
@@ -164,6 +170,18 @@ class DDCConfig:
         return arrayequal_or_eithernone(((self.tones, other.tones),
                                          (self.centers, other.centers),
                                          (self.offsets, other.offsets)))
+
+class PhotonPipeSetup:
+    def __init__(self, chan: ChannelConfig = None, ddc: DDCConfig = None, trig: TriggerSettings = None):
+        self._chan_config = chan
+        self._ddc_config = ddc
+        self._trig_config = trig
+
+    @property
+    def chan_config(self):
+        return self._chan_config
+
+
 class FeedlineStatus:
     def __init__(self):
         self.status='feedline status'
@@ -180,7 +198,7 @@ class DDCStatus:
         self.phase_offsets=phase_offsets
         self.centers=centers
 class FeedlineSetup:
-    def __init__(self, if_setup=None, dac_setup=None, pp_setup=None, ddc=None,
+    def __init__(self, if_setup: IFSetup = None, dac_setup: DACOutputSpec = None, pp_setup: PhotonPipeSetup = None, ddc: DDCConfig = None,
                  adc_setup=None, channels=None, filters=None, thresholds=None):
         self.if_setup = if_setup
         self.dac_setup = dac_setup
@@ -189,7 +207,7 @@ class FeedlineSetup:
         self.filters = filters
         self.thresholds = thresholds
         self.channels = channels
-        self.ddc = ddc
+        self.ddc_setup = ddc
 
     def __eq__(self, other):
         for k,v in self.__dict__.items():
