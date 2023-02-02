@@ -1,5 +1,7 @@
 from logging import getLogger
 import numpy as np
+
+import mkidgen3.clocking
 import mkidgen3.dsp as dsp
 from .drivers.ddc import tone_increments
 from . import util
@@ -182,7 +184,7 @@ def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=Fals
 
     if clocks:
         import mkidgen3.drivers.rfdc
-        mkidgen3.drivers.rfdc.start_clocks(external_10mhz=external_10mhz)
+        mkidgen3.clocking.start_clocks(external_10mhz=external_10mhz)
 
     global _gen3_overlay
     ol = _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)

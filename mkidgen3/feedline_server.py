@@ -1,5 +1,7 @@
 import json
+import logging
 
+import mkidgen3.clocking
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.schema import validate
 from mkidgen3.status_keeper import StatusKeeper
@@ -64,22 +66,32 @@ class FLSettingsSet:
     def add(self, flsettings: FeedlineSetup):
         self._dict[flsettings.id] = flsettings
 
+class DummyOverlay:
+    def __init__(self, bitstream):
+        pass
 
 class FeedlineHardware:
-
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
-                 ignore_version=False, download=True, program_clock=True):
+                 ignore_version=False, download=False, program_clock=True):
         self._clock_source = validate(clock_source=clock_source, error=True)
-        self._ol = pynq.Overlay(bitstream, download=download, ignore_version=ignore_version)
+        try:
+            self._ol = pynq.Overlay(bitstream, download=download, ignore_version=ignore_version)
+        except RuntimeError as e:
+            if 'No Devices Found' in str(e):
+                getLogger(__name__).warning('No PL device found, is BOARD set? This is expected on a laptop')
+                self._ol = DummyOverlay(bitstream)
+            else:
+                raise
+
         self._if_board = IFBoard(if_port, connect=False)
         self._ignore_version = ignore_version
         if program_clock:
             import mkidgen3.drivers.rfdc
-            mkidgen3.drivers.rfdc.start_clocks(external_10mhz=clock_source == 'external_10mhz')
+            mkidgen3.clocking.start_clocks(external_10mhz=clock_source == 'external_10mhz')
 
     def reset(self):
         self._if_board.power_off(save_settings=False)
-        mkidgen3.drivers.rfdc.start_clocks(external_10mhz=self._clock_source == 'external_10mhz')
+        mkidgen3.clocking.start_clocks(external_10mhz=self._clock_source == 'external_10mhz')
         self._ol = pynq.Overlay(self._ol.bitfile_name, ignore_version=self._ignore_version, download=True)
         self._if_board.power_on()
 
@@ -268,7 +280,7 @@ class FeedlineReadout:
 
         Args:
             zpipe: a pipe for receiving capture requests
-            conext: zmq.context
+            conext: zmq.Context
 
         Returns: None
 
@@ -403,10 +415,16 @@ def parse_cl():
     parser = argparse.ArgumentParser(description='Feedline Readout Server', add_help=True)
     parser.add_argument('-p', '--port', dest='port', action='store', required=False, type=int,
                         help='Server port', default='8888')
-    parser.add_argument('--cap_port', dest='cap_port', action='store', required=False, type=int,
+    parser.add_argument('--cap_port', dest='capture_port', action='store', required=False, type=int,
                         help='Capture Data Port', default='8889')
     parser.add_argument('--clock', dest='clock', action='store', required=False, type=str,
                         help='Clock Source', default='external_10mhz')
+    parser.add_argument('-b', '--bitstream', dest='bitstream', action='store', required=False, type=str,
+                        help='bitstream file', default='')
+    parser.add_argument('--if', dest='if_board', action='store', required=False, type=str,
+                        help='IF Board device', default='/dev/if_board')
+    parser.add_argument('--iv', dest='ignore_fpga_driver_version', action='store_true', required=False,
+                        help='Ignore FPGA driver version checks', default=False)
     return parser.parse_args()
 
 
@@ -427,6 +445,8 @@ def zpipe(ctx):
 
 
 if __name__ == '__main__':
+    logging.basicConfig()
+
     args = parse_cl()
 
     fr = FeedlineReadout(args.bitstream, clock_source=args.clock, if_port=args.if_board,

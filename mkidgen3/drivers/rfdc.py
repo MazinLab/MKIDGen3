@@ -1,12 +1,8 @@
 from pynq import DefaultHierarchy
 from logging import getLogger
-import re
-import pkg_resources
 
-try:
-    import xrfclk, xrfdc
-except ImportError:
-    getLogger(__name__).warning('xrfclk/xrfdc unavaiable, functionality is limited')
+from mkidgen3.clocking import start_clocks
+
 
 def status():
     import mkidgen3
@@ -33,31 +29,6 @@ def reset():
     import mkidgen3
     rfdc = mkidgen3._gen3_overlay.usp_rf_data_converter_0
     rfdc.write(0x0004, 0x00000001)
-
-
-def parse_ticspro(file):
-    with open(file, 'r') as f:
-        lines = [l.rstrip("\n") for l in f]
-
-        registers = []
-        for i in lines:
-            m = re.search('[\t]*(0x[0-9A-F]*)', i)
-            registers.append(int(m.group(1), 16), )
-    return registers
-
-
-def patch_xrfclk_lmk():
-    # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
-    tpro_file = pkg_resources.resource_filename('mkidgen3','config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt')
-    xrfclk.xrfclk._Config['lmk04208']['122.88_viaext10M'] = parse_ticspro(tpro_file)
-
-
-def start_clocks(external_10mhz=False):
-    if external_10mhz:
-        patch_xrfclk_lmk()
-        xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M')
-    else:
-        xrfclk.set_ref_clks()
 
 
 class RFDCHierarchy(DefaultHierarchy):
@@ -129,6 +100,8 @@ class RFDCHierarchy(DefaultHierarchy):
             for k,v in settings.items():
                 settings[k] = qmc_settings.get(k,v)
 
+        import xrfdc
+
         self.rfdc.dac_tiles[0].blocks[0].QMCSettings = settings
         self.rfdc.dac_tiles[0].blocks[0].UpdateEvent(xrfdc.EVENT_QMC)
         self.rfdc.dac_tiles[0].blocks[1].QMCSettings = settings
@@ -153,6 +126,8 @@ class RFDCHierarchy(DefaultHierarchy):
         """
 
         settings = {'EnableGain': 1 if gain else 0, 'EnablePhase': 1 if phase else 0, 'EventSource': 0, 'GainCorrectionFactor': gain,'OffsetCorrectionFactor': offset, 'PhaseCorrectionFactor': phase}
+
+        import xrfdc
 
         if adc is not None:
             self.rfdc.adc_tiles[adc[0]].blocks[adc[1]].QMCSettings = settings
