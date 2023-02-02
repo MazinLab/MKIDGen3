@@ -146,6 +146,9 @@ class TriggerSettings:
         self.thresholds = None
 
 
+def arrayequal_or_eithernone(items):
+    return all([a is None or b is None or (a==b).all() for a, b in items])
+
 class DDCConfig:
     def __init__(self, tones, centers, offsets):
         self.tones=tones
@@ -155,6 +158,11 @@ class DDCConfig:
     def __hash__(self):
         return hash(f'{self.tones}{self.centers}{self.offsets}')
 
+    def compatible_with(self, other):
+        """ return true iff others settings are compatibe with this ones settings"""
+        return arrayequal_or_eithernone(((self.tones, other.tones),
+                                         (self.centers, other.centers),
+                                         (self.offsets, other.offsets)))
 
 class FeedlineSetup:
     def __init__(self, if_setup=None, dac_setup=None, pp_setup=None, ddc=None,
@@ -223,14 +231,74 @@ class CapDest:
 class CaptureAbortedException(Exception):
     pass
 
-class ADCCaptureSink:
+class CaptureSink:
     pass
 
-class PhotonCaptureSink:
+
+x=ADCCaptureSink(id)
+x.join()
+print(x.result)
+
+class ADCCaptureSink(CaptureSink, threading.Thread):
+    def __init__(self, id, source, context:zmq.Context=None):
+        super().__init__(name=f'ADCCaptureSink_{id}')
+        self.daemon = True
+        self.result=None
+        self.start()
+
+    def run(self):
+        """
+
+        Args:
+            xymap: [nfeedline, npixel, 2] array
+            feedline_source: zmq.PUB socket with photonbufers published by feedline
+            term_source: a zmq socket of undecided type for detecting shutdown requests
+
+        Returns: None
+
+        """
+        data_source =
+        cap_id =
+        term_source =
+        context = zmq.Context.instance()
+        term = context.socket(zmq.SUB)
+        term.setsockopt(zmq.SUBSCRIBE, self.id)
+        term.connect(term_source)
+
+        data = context.socket(zmq.SUB)
+        data.setsockopt(zmq.SUBSCRIBE, cap_id)
+        data.connect(data_source)
+
+        poller = zmq.Poller()
+        poller.register(term, flags=zmq.POLLIN)
+        poller.register(data, flags=zmq.POLLIN)
+
+        recieved = []
+        while True:
+            avail = poller.poll()
+            if term in avail:
+                break
+            frame = data.recv_multipart(copy=False)
+            id = frame[0]
+            if not frame[1]:
+                break
+            d = blosc.decompress(frame[1])
+            # raw adc data is i0q0 i1q1 int16
+
+            #TODO save the data or do something with it
+            recieved.append(d)
+
+        term.close()
+        data.close()
+
+        self.result = np.array(recieved)
+
+class PhotonCaptureSink(CaptureSink):
     def __init__(self, source, context:zmq.Context=None):
         pass
 
     def terminate(self, context:zmq.Context=None):
+        """terminate saving data"""
         context = context or zmq.Context.instance()
         _terminate = context.socket(zmq.PUB)
         _terminate.connect('inproc://PhotonCaptureSink.terminator.inproc')
@@ -288,6 +356,7 @@ class PhotonCaptureSink:
             fl_id = frame[0]
             time_offset = frame[1]
             d = blosc.decompress(frame[1])
+            frame_duration = # todo time coverage of data
             #buffer is nchan*nmax+1 32bit: 16bit time(base2) 16bit phase
             #make array of to [nnmax+1, nchan, 2] uint16
             #nmax will always be <<2^12 number valid will be at [0,:,0]
@@ -298,17 +367,17 @@ class PhotonCaptureSink:
             #if we wanted to save binary data then we could save this, the x,y list, and the time offset
             #mean pixel count rate in this packet is simply [0,:,0]/dt
             fl_ndx = fl_id_to_index[fl_id]
-            live_image_by_fl[fl_ndx, :] += d[0,:,0]
+            live_image_by_fl[fl_ndx, :] += d[0,:,0]/frame_duration
 
-            # if live_image_ready:
-            #     live_image_socket.send_multipart([f'liveim', blosc.compress(live_image)])
+            # if live_image_ready
+            live_image_socket.send_multipart([f'liveim', blosc.compress(live_image)])
 
             cphot = np.cumsum(d[0,:,0], dtype=int)
             for i in range(fl_npix):
                 sl_out = slice(cphot[i], cphot[i] + d[0,i,0])
                 sl_in = slice(1, d[0,i,0])
                 photons_rabuf['time'][sl_out] = d[sl_in,:, 0]
-                photons_rabuf['time'][sl_out]|=time_offset
+                photons_rabuf['time'][sl_out] |= time_offset
                 photons_rabuf['phase'][sl_out] = d[sl_in, :, 1]
                 photons_rabuf['x'][sl_out] = xymap[fl_ndx, i, 0]
                 photons_rabuf['y'][sl_out] = xymap[fl_ndx, i, 1]
@@ -318,14 +387,43 @@ class PhotonCaptureSink:
         data.close()
         hdf.close()
 
-def CaptureSink(request, server):
-    return ADCCaptureSink(request.destination)
+def CaptureSinkFactory(request, server):
+    if request.tap=='adc':
+        return ADCCaptureSink(request.destination)
+    elif request.tap=='photon':
+        return PhotonCaptureSink(request.destination)
+    elif request.tap=='postage':
+        return ADCCaptureSink(request.destination)
+    elif request.tap=='phase':
+        return ADCCaptureSink(request.destination)
+    elif request.tap=='iq':
+        return ADCCaptureSink(request.destination)
 
+class StatusListner(threading.Thread):
+    def __init__(self, id, server, initial_state='Created'):
+        super().__init__(name=f'StautsListner_{id}')
+        self.daemon=True
+        self.shutdown = False
+        self.server = server
+        self._status_messages = [initial_state]
+        self.run()
 
-class CaptureJob:
+    def run(self, context=None):
+        context = context or zmq.Context().instance()
+        status_sock = context.socket(zmq.SUB)
+        status_sock.setsockopt(zmq.SUBSCRIBE, id)
+        status_sock.connect('inproc://cap_status_xsub????')  #TODO
+        while not self.shutdown:
+            if status_sock.poll(1) != 0:
+                self._status_messages.append(status_sock.recv_multipart())
+
+    def latest(self):
+        return self._status_messages[-1]
+
+class CaptureJob: #feedline client end
     def __init__(self, request:CaptureRequest, server, submit=True):
         self.request = request
-        self._status_listner = StatusListner(request.id, server, initial='CREATED')
+        self._status_listner = StatusListner(request.id, server, initial_state='CREATED')
         self._datasaver = CaptureSink(request, server)
         if submit:
             self.submit()
@@ -335,7 +433,7 @@ class CaptureJob:
         return self._status_listner.latest()
 
     def cancel(self):
-        self.server.send_multipart(['cancel', self.request.id])
+        self.server.send_multipart(['abort', self.request.id])
 
     def data(self):
         return self._datasaver.data()
@@ -343,13 +441,15 @@ class CaptureJob:
     def submit(self):
         self.server.send_multipart(['capture', self.request])
 
+
 class CaptureRequest:
-    def __init__(self, n, tap, feedline_setup:FeedlineSetup, destination):
+    def __init__(self, n, tap, feedline_setup:FeedlineSetup, destination, status_dest):
         self.points = n
         self.tap = validate(tap)
         self.feedline_setup = feedline_setup
         self._id = hash(repr(self))
         self._data_dest = destination
+        self._status_dest = status_dest
 
     @property
     def type(self):
@@ -359,32 +459,26 @@ class CaptureRequest:
     def id(self):
         return self._id
 
-    def abort(self, context:zmq.Context=None):
-        if self._abort_socket is None:
-            self._abort_socket = context.socket(zmq.REQ)
-            self._abort_socket.setsockopt(zmq.SUBSCRIBE, self._id)
-            self._abort_socket.connect(self._abort_source)
-        else:
-            self._abort_socket = zmq.Socket
-            if self._abort_socket.type==zmq.REP:
-                raise RuntimeError('Abort may only be called by the requester.')
-        return self._abort_socket.send(b'')
-
-    def aborted(self, context:zmq.Context=None):
-        if self._abort_socket is None:
-            self._abort_socket = context.socket(zmq.REP)
-            self._abort_socket.connect(self._abort_source)
-        return self._abort_socket.poll(1)!=0
-
     def establish(self, context:zmq.Context=None):
         self._status_socket = context.socket(zmq.REQ)
         self._status_socket.connect(self._status_dest)
         self._data_socket = context.socket(zmq.PUB)
         self._data_socket.connect(self._data_dest)
-        self._abort_socket = context.socket(zmq.REP)
-        self._abort_socket.connect(self._abort_source)
+        # self._abort_socket = context.socket(zmq.REP)
+        # self._abort_socket.connect(self._abort_source)
         self._established = True
         self.set_status('established')
+
+    def destablish(self):
+        try:
+            self._status_socket.close()  #TODO do we need to wait to make sure any previous sends get sent
+        except AttributeError:
+            pass
+        try:
+            self._data_socket.close()
+        except AttributeError:
+            pass
+        self._established = True
 
     def fail(self, message, context:zmq.Context=None):
         self.set_status('failed', message, context=context)
@@ -395,17 +489,16 @@ class CaptureRequest:
     def add_data(self, data, status=''):
         if not self._established:
             raise RuntimeError('Establish must be called before add_data')
+        #TODO ensure we are being smart about pointers and buffer acces vs copys
         self._data_dest.send_multipart([self.id, blosc.compress(data)])
         self.set_status('capturing', message=status)
 
     def set_status(self, status, message='', context:zmq.Context=None):
         self._status = status
-        if message:
-            self._status_messages.append(message)
         """get appropriate context and send current sztatus message after connecting soocket. if no then simply log"""
-        if not self._established:
-            _status_dest = context.socket(zmq.REQ)
-            _status_dest.connect(self._status_dest)
+        if not self._status_dest:
+            self._status_dest = context.socket(zmq.REQ)
+            self._status_dest.connect(self._status_dest)
         else:
             _status_dest=self._status_dest
         _status_dest.send_multipart([status, message])
