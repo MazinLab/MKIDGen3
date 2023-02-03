@@ -9,7 +9,7 @@ from logging import getLogger
 import pynq
 import mkidgen3.drivers.rfdc
 import mkidgen3 as g3
-from objects import CaptureRequest, CaptureAbortedException, FeedlineSetup, FeedlineStatus, DACStatus, DDCStatus, \
+from objects import CaptureRequest, CaptureAbortedException, FeedlineConfig, FeedlineStatus, DACStatus, DDCStatus, \
     FLPhotonBuffer
 from typing import List
 import zmq
@@ -45,11 +45,11 @@ class FLSettingsSet:
     def __init__(self):
         self._dict = {}
 
-    def effective(self) -> FeedlineSetup:
+    def effective(self) -> FeedlineConfig:
         """Return a FLSettings (or ducktype) resulting from settings in the set"""
         pass
 
-    def pop(self, flsettings: FeedlineSetup) -> bool:
+    def pop(self, flsettings: FeedlineConfig) -> bool:
         """
         Remove settings from the set
 
@@ -63,7 +63,7 @@ class FLSettingsSet:
         self._dict.pop(flsettings.id)
         return self.effective != x
 
-    def add(self, flsettings: FeedlineSetup):
+    def add(self, flsettings: FeedlineConfig):
         self._dict[flsettings.id] = flsettings
 
 class DummyOverlay:
@@ -118,7 +118,7 @@ class FeedlineHardware:
         if poweroff_if:
             self._if_board.power_off(save_settings=False)
 
-    def apply_fl_settings(self, fl_setup: FeedlineSetup):
+    def apply_fl_settings(self, fl_setup: FeedlineConfig):
         # IF board
         if fl_setup.if_setup is not None:
             self._if_board.power_on()
@@ -145,7 +145,7 @@ class FeedlineReadout:
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
                  ignore_version=False):
         self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
-                                         ignore_version=ignore_version, download=True, start_clock=True)
+                                         ignore_version=ignore_version, download=True, program_clock=True)
 
         # self.status_keeper = StatusKeeper(status_port)  #TODO
 
@@ -295,6 +295,7 @@ class FeedlineReadout:
 
         to_check = []
         checked = []
+        getLogger(__name__).info('Main thread starting')
         while True:
             # Check to see if any capture threads have finished
             complete = [k for k, t in tap_threads.items() if t is not None and not t.thread.is_alive()]
@@ -311,23 +312,22 @@ class FeedlineReadout:
             running_by_id = {tt.request.id: tt for tt in tap_threads.values() if tt is not None}
 
             # check for any incoming info: CapRequest, ABORT id|all, EXIT
+            cmd, data = '', ''
             try:
                 cmd, null, data = pipe.recv(zmq.NOBLOCK)
                 assert null == b''
-            except zmq.EAGAIN:
-                cmd = ''
-                data = ''
-
-            if cmd not in ('exit', 'abort', 'capture'):
-                pipe.send(f'ERROR: Invalid command "{cmd}"')
-                cmd = ''
-                data = ''
+            except zmq.ZMQError as e:
+                if e.errno != zmq.EAGAIN:
+                    raise e # real error
+            else:
+                if cmd not in ('exit', 'abort', 'capture'):
+                    getLogger(__name__).error(f'Recieved Invalid command "{cmd}"')
+                    cmd, data = '', ''
 
             if 'cmd' == 'exit':
                 cmd = 'abort'
                 data = 'all'
-
-            if cmd == 'abort':
+            elif cmd == 'abort':
                 if data == 'all':
                     for cr in checked + to_check:
                         cr.set_status('aborted')  # signal that captures will never happen
@@ -336,7 +336,7 @@ class FeedlineReadout:
                     for v in running_by_id.values():  # stop any running tap threads
                         try:
                             v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
-                        except zmq.EFAULT:
+                        except zmq.ZMQError:
                             getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
                             raise
                 else:
@@ -441,7 +441,7 @@ def zpipe(ctx):
 
 
 if __name__ == '__main__':
-    logging.basicConfig()
+    logging.basicConfig(level=logging.DEBUG)
 
     args = parse_cl()
 
@@ -450,19 +450,21 @@ if __name__ == '__main__':
 
     capture_port = args.capture_port
     command_port = args.port
-    from zmq.devices import ProcessDevice
+    from zmq.devices import ThreadDevice
 
     # Set up a proxy for routing all the capture requests
-    pd = zmq.devices.ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    pd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
     pd.bind_in('inproc://cap_data')
     pd.bind_out(f'tcp://*:{capture_port}')
-    pd.setsockopt_in(zmq.XPUB_VERBOSE, 'ROUTER')
     pd.start()
+    getLogger(__name__).info('ThreadDevice started')
 
     # Set up a command port
     context = zmq.Context.instance()
     socket = context.socket(zmq.REP)
     socket.bind(f"tcp://*:{command_port}")
+
+    getLogger(__name__).info('command_port bound')
 
     cap_pipe, cap_pipe_thread = zpipe(zmq.Context.instance())
 
@@ -472,12 +474,15 @@ if __name__ == '__main__':
 
     while True:
         cmd, args = socket.recv_multipart()
-
+        getLogger(__name__).debug(f'Recieved {cmd} with args {args}')
         if cmd == 'reset':
-            cap_pipe.send(['abort', 'all'])
+            cap_pipe.send('exit')
+            main.join()
             fr.hardware.reset()
+            main = threading.Thread(target=fr.main, args=(cap_pipe_thread,), kwargs={'context': context})
+            main.daemon = False
+            main.start()
             socket.send_json('OK')
-
         elif cmd == 'status':
             status = fr.status()  # this might take a while and fail
             status['id'] = f'FRS {args.fl_id} @ {args.port}/{args.cap_port}'
@@ -494,3 +499,5 @@ if __name__ == '__main__':
             needed_settings = cr.settings
             cap_pipe.send_multipart(['capture'] + args)
             socket.send_json(cap_pipe.recv())
+
+    main.join()
