@@ -9,11 +9,6 @@ from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 import logging
 
 
-
-def arrayequal_or_eithernone(items):
-    return all([a is None or b is None or (a == b).all() for a, b in items])
-
-
 class Waveform:
     def __init__(self, frequencies, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
                  iq_ratios=None,
@@ -113,41 +108,51 @@ class Waveform:
         return
 
 
-class _FLConfigMixin:
-    def __hash__(self):
-        return hash(repr(self))
-
+class FLConfigMixin:
     def __eq__(self, other):
-        """Configs are equal if their hashes match, all their values match to the bit
-        any values that are themselves _FLConfigMixin will be checked recursively
-        """
-        # if things are not of the same type and neither is None its not a match
-        if type(self) is not type(other) and type(None) not in (type(self), type(other)):
+        """ Feedline configs are equivalent if all of their settings are equivalent"""
+        if not isinstance(other, (type(self), int)):
             return False
+        v_hash = hash(self)
+        o_hash = other if isinstance(other, int) else hash(other)
+        return v_hash == o_hash
 
+    def __hash__(self):
+        def hasher(v):
+            try:
+                return hash(v)
+            except TypeError:
+                return hash(v.tobytes())
 
-
-        #for each attribute compare with the other
-        for k in self.__dict__.keys():
-            #Possibilities
-            # 1) it's a _FLConfigMixin None or a hash, == if
-            #   -hashes match
-            #   -either is None
-            # 2) its some other object that should be compared == if
-            #   - bitsame
-
-            getattr(self, k) == getattr(other, k)
-
-            if isinstance(getattr(self, k),_FLConfigMixin) or isinstance(getattr(other, k),_FLConfigMixin):
-
-        return all(getattr(self, k)==getattr(other,k, None) for k in self.__dict__.keys())
+        hash_data = ((k, hasher(getattr(self, k))), for k in self._settings)
+        return hash(sorted(hash_data, key=lambda x: x[0]))
 
     def settings_dict(self):
-        """This abstract method shall return a dictionary of the arguments used by the subsystems configure() call"""
-        raise RuntimeError('Must be implemented by config')
+        return {k: getattr(self, k) for k in self._settings}
 
 
-class DACConfig(_FLConfigMixin):
+class FLMetaConfigMixin:
+    def __eq__(self, other):
+        """ Feedline configs are equivalent if all of their settings are equivalent"""
+        for k, v in self.__dict__.items():
+            other_v = getattr(other, k)
+            assert isinstance(v, (FLMetaConfigMixin, type(None), int))
+            assert isinstance(other_v, (FLMetaConfigMixin, type(None), int))
+            #if either is None we match
+            if v is None or other_v is None:
+                continue
+
+            # Compute hash if necessary
+            v_hash = hash(v) if isinstance(v, FLMetaConfigMixin) else v
+            o_hash = hash(other_v) if isinstance(other_v, FLMetaConfigMixin) else other_v
+            if v_hash!=o_hash:
+                return False
+        return True
+
+    def __hash__(self):
+        return hash(sorted((k, hash(v) for k,v in self.__dict__.items()), key=lambda x:x[0]))
+
+class DACConfig(FLConfigMixin):
     def __init__(self, ntones, name: str, n_uniform_tones=None, waveform_spec: [np.array, dict, Waveform] = None,
                  qmc_settings=None):
         self.spec_type = name
@@ -166,131 +171,61 @@ class DACConfig(_FLConfigMixin):
             raise ValueError('doing it wrong')
 
         self.qmc_settings = qmc_settings
+        self._settings = ('quant_vals', 'qmc_settings')
 
-    def __hash__(self):
-        return hash(f'{self.waveform.quant_vals}{self.qmc_settings}')
+    @property
+    def quant_vals(self):
+        return self._waveform.quant_vals
 
     @property
     def waveform(self):
         return self._waveform.values
 
 
-class IFConfig(_FLConfigMixin):
-    def __init__(self, lo, adc_attn, dac_attn, power=True):
-        self.power = power
+
+
+class IFConfig(FLConfigMixin):
+    def __init__(self, lo, adc_attn, dac_attn):
         self.lo = lo
         self.adc_attn = adc_attn
         self.dac_attn = dac_attn
+        self._settings = ('power','lo','adc_attn','dac_attn')
 
 
-class TriggerConfig(_FLConfigMixin):
-    def __init__(self):
-        self.holdoffs = None
-        self.thresholds = None
+class TriggerConfig(FLConfigMixin):
+    def __init__(self, holdoffs:np.ndarray, thresholds:np.ndarray):
+        self.holdoffs = holdoffs
+        self.thresholds = thresholds
+        self._settings = ('holdoffs', 'thresholds')
 
-
-class ChannelConfig(_FLConfigMixin):
+class ChannelConfig(FLConfigMixin):
     def __init__(self, frequencies):
         self.frequencies = frequencies
+        self._settings = ('frequencies', )
 
-    def __eq__(self, other):
-        """ Feedline configs are equivalent if all of their settings are equivalent"""
-        if not isinstance(other, (DDCConfig, int)):
-            return False
-        v_hash = hash(self)
-        o_hash = other if isinstance(other, int) else hash(other)
-        return v_hash == o_hash
 
-    def __hash__(self):
-        hash_data = (('frequencies',hash(self.frequencies.tobytes())),
-                    )
-        return hash(sorted(hash_data, key=lambda x: x[0]))
-
-    def settings_dict(self):
-        return {'frequencies': self.frequencies}
-
-class DDCConfig(_FLConfigMixin):
+class DDCConfig(FLConfigMixin):
     def __init__(self, tones, loop_center, phase_offset):
         self.tones = tones
         self.loop_center = loop_center
         self.phase_offset = phase_offset
         self.center_relative = False
         self.quantize = True
+        self._settings = ('tones','loop_center','phase_offset','center_relative','quantize')
 
-    def __eq__(self, other):
-        """ Feedline configs are equivalent if all of their settings are equivalent"""
-        if not isinstance(other, (DDCConfig, int)):
-            return False
-        v_hash = hash(self)
-        o_hash = other if isinstance(other, int) else hash(other)
-        return v_hash == o_hash
 
-    def __hash__(self):
-        hash_data = (('tones',hash(self.tones.tobytes())),
-                     ('loop_center',hash(self.loop_center.tobytes())),
-                     ('phase_offset',hash(self.phase_offset.tobytes())),
-                     ('center_relative',self.center_relative),
-                     ('quantize',self.quantize))
-        return hash(sorted(hash_data, key=lambda x: x[0]))
-
-    def settings_dict(self):
-        return {'tones': self.tones,
-                'loop_center': self.loop_center,
-                'phase_offset': self.phase_offset,
-                'center_relative ': self.center_relative,
-                'quantize ': self.quantize}
-
-    def __hash__(self):
-        return hash(f'{self.tones}{self.loop_center}{self.phase_offset}')
-
-    def compatible_with(self, other):
-        """ return true iff others settings are compatibe with this ones settings"""
-        return arrayequal_or_eithernone(((self.tones, other.tones),
-                                         (self.loop_center, other.loop_center),
-                                         (self.phase_offset, other.phase_offset)))
-
-class FilterConfig:
+class FilterConfig(FLConfigMixin):
     def __init__(self):
         self.coefficients = np.zeros(2048, 30)
-        assert self.coefficients is not None
-
-    def __eq__(self, other):
-        """ Feedline configs are equivalent if all of their settings are equivalent"""
-        if not isinstance(other, (FilterConfig, int)):
-            return False
-        v_hash = hash(self)
-        o_hash = other if isinstance(other, int) else hash(other)
-        return v_hash==o_hash
-
-    def __hash__(self):
-        return hash(self.coefficients.tobytes())
+        self._settings = ('coefficients',)
 
 
-class PhotonPipeConfig(_FLConfigMixin):
+class PhotonPipeConfig(FLMetaConfigMixin):
     def __init__(self, chan: ChannelConfig = None, ddc: DDCConfig = None, trig: TriggerConfig = None):
         self.chan_config = chan
         self.ddc_config = ddc
         self.trig_config = trig
 
-    def __eq__(self, other):
-        """ Feedline configs are equivalent if all of their settings are equivalent"""
-        for k, v in self.__dict__.items():
-            other_v = getattr(other, k)
-            assert isinstance(v, (_FLConfigMixin, type(None), int))
-            assert isinstance(other_v, (_FLConfigMixin, type(None), int))
-            #if either is None we match
-            if v is None or other_v is None:
-                continue
-
-            # Compute hash if necessary
-            v_hash = hash(v) if isinstance(v, _FLConfigMixin) else v
-            o_hash = hash(other_v) if isinstance(other_v, _FLConfigMixin) else other_v
-            if v_hash!=o_hash:
-                return False
-        return True
-
-    def __hash__(self):
-        return hash(sorted((k, hash(v) for k,v in self.__dict__.items()), key=lambda x:x[0]))
 
     @property
     def chan_config(self):
