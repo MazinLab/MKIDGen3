@@ -70,6 +70,7 @@ class DummyOverlay:
     def __init__(self, bitstream):
         pass
 
+
 class FeedlineHardware:
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
                  ignore_version=False, download=False, program_clock=True):
@@ -117,30 +118,25 @@ class FeedlineHardware:
         if poweroff_if:
             self._if_board.power_off(save_settings=False)
 
-
     def apply_fl_settings(self, fl_setup: FeedlineSetup):
-        validate(fl_setup)
         # IF board
         if fl_setup.if_setup is not None:
-            self._if_board.connect()
-            if fl_setup.if_setup.power:
-                self._if_board.power_on()
+            self._if_board.power_on()
             self._if_board.set_lo(fl_setup.if_setup.lo)
             self._if_board.set_attens(fl_setup.if_setup.dac_attn, fl_setup.if_setup.adc_attn)
+
         # DAC
         if fl_setup.dac_setup is not None:
             g3.replay(fl_setup.dac_setup.waveform_spec['iq'])
+
         # Photon Pipe
-        if fl_setup.pp_setup is not None:
+        if fl_setup.pp_setup != self.active.pp_setup:
             # Bin2Res
-            if fl_setup.pp_setup._chan_config is not None:
-                self._ol.photon_pipe.reschan.bin_to_res.bins = fl_setup.pp_setup._chan_config.bins
+            if fl_setup.pp_setup.chan_config is not None:
+                self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.pp_setup.chan_config.settings_dict)
             # DDC
             if fl_setup.ddc_setup is not None:
-
-
-
-
+                self._ol.photon_pipe.reschan.ddc.configure(**fl_setup.settings_dict)
 
 
 

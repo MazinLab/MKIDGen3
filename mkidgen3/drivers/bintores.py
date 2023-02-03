@@ -1,4 +1,5 @@
 from pynq import DefaultIP
+from mkidgen3.dsp import opfb_bin_number
 
 
 class BinToResIP(DefaultIP):
@@ -69,3 +70,6 @@ class BinToResIP(DefaultIP):
             raise ValueError('Bin values must be in [0,4095]')
         for i in range(256):
             self._write_group(i, bins[i * 8:i * 8 + 8])
+
+    def configure(self, frequencies=None):
+        self.bins = opfb_bin_number(frequencies, ssr_raw_order=True)

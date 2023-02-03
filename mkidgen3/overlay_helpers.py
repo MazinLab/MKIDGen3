@@ -86,58 +86,6 @@ def set_channels(freq):
     _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = bins
 
 
-def configure_ddc(freq, phase_offset=None, loop_center=None, center_relative=False, quantize=True):
-    """
-    Configure the DDC to down-convert resonator channels containing the specified frequencies.
-
-    Optionally phase offsets may be specified for each channel. Phase offsets are in [-pi,pi] radians. Values outside
-    are clipped.
-
-    Optionally loop centers may be specified (complex nominally [-1,1) though values will be clipped when converted
-    from floating to fix point).
-
-    Center relative means specify the frequency relative to the bin center.
-
-    Only the first 2048 frequencies/offsets will be used. DDC tones are assigned in the order frequencies are
-    specified. If fewer than 2048 frequencies are specified no assumptions may be made about the DDC settings for the
-    remaining channels, however they may be determined by inspecting the .tones property of resonator_ddc.
-    """
-    data = np.zeros((2, 2048))
-    freq = np.asarray(freq)
-
-    if freq.size > 2048:
-        getLogger(__name__).warning(f'Using first 2048 of {freq.size} provided frequencies')
-
-    if center_relative:
-        freq = dsp.quantize_frequencies(freq) if quantize else freq
-        data[0, :min(freq.size, 2048)] = freq[:2048]/1e6
-    else:
-        data[0, :min(freq.size, 2048)] = tone_increments(freq[:2048], quantize=quantize)
-
-    if phase_offset is not None:
-        phase_offset = np.asarray(phase_offset)
-        if freq.size != phase_offset.size:
-            raise ValueError('If provided, phase_offsets must match frequencies')
-        phase_offset = (phase_offset/np.pi).clip(-1, 1)
-        data[1, :min(freq.size, 2048)] = phase_offset[:2048]
-
-    if loop_center is not None:
-        loop_center = np.asarray(loop_center)
-        if freq.size != loop_center.size:
-            raise ValueError('If provided, loop_center must match frequencies')
-        centers = np.zeros(2048, dtype=np.complex64)
-        centers[:loop_center[:2048].size] = loop_center[:2048]
-        if (np.abs(centers) > 1).any():
-            getLogger(__name__).warning(f'Loop centers exist outside of the unit circle')
-
-    getLogger(__name__).debug('Writing DDC tones...')  # The core expects normalized increments
-    _gen3_overlay.photon_pipe.reschan.resonator_ddc.tones = data
-    getLogger(__name__).debug('DDC tones written.')
-
-    if loop_center is not None:
-        _gen3_overlay.photon_pipe.reschan.resonator_ddc.centers = centers
-
-
 def iq_find_phase(n_points=1024):
     """A helper function to capture data just after bin2res and after reschan. NEEDS WORK"""
     x = _gen3_overlay.capture.capture_iq(n_points, 'all', tap_location='iq')
