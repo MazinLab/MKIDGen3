@@ -1,4 +1,6 @@
 import threading
+import time
+
 import numpy as np
 import zmq
 import blosc2
@@ -7,6 +9,25 @@ import blosc2
 from mkidgen3.funcs import *
 from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 import logging
+import binascii
+import os
+from logging import getLogger
+
+
+def zpipe(ctx):
+    """
+    build an inproc pipe for talking to threads
+    mimic pipe used in czmq zthread_fork.
+    Returns a pair of PAIRs connected via inproc
+    """
+    a = ctx.socket(zmq.PAIR)
+    b = ctx.socket(zmq.PAIR)
+    a.linger = b.linger = 0
+    a.hwm = b.hwm = 1
+    iface = "inproc://%s" % binascii.hexlify(os.urandom(8))
+    a.bind(iface)
+    b.connect(iface)
+    return a, b
 
 
 class Waveform:
@@ -138,19 +159,19 @@ class FLMetaConfigMixin:
             other_v = getattr(other, k)
             assert isinstance(v, (FLMetaConfigMixin, type(None), int))
             assert isinstance(other_v, (FLMetaConfigMixin, type(None), int))
-            #if either is None we match
+            # if either is None we match
             if v is None or other_v is None:
                 continue
 
             # Compute hash if necessary
             v_hash = hash(v) if isinstance(v, FLMetaConfigMixin) else v
             o_hash = hash(other_v) if isinstance(other_v, FLMetaConfigMixin) else other_v
-            if v_hash!=o_hash:
+            if v_hash != o_hash:
                 return False
         return True
 
     def __hash__(self):
-        return hash(sorted(((k, hash(v)) for k,v in self.__dict__.items()), key=lambda x: x[0]))
+        return hash(tuple(sorted(((k, hash(v)) for k, v in self.__dict__.items()), key=lambda x: x[0])))
 
 
 class DACConfig(FLConfigMixin):
@@ -183,26 +204,25 @@ class DACConfig(FLConfigMixin):
         return self._waveform.values
 
 
-
-
 class IFConfig(FLConfigMixin):
     def __init__(self, lo, adc_attn, dac_attn):
         self.lo = lo
         self.adc_attn = adc_attn
         self.dac_attn = dac_attn
-        self._settings = ('power','lo','adc_attn','dac_attn')
+        self._settings = ('power', 'lo', 'adc_attn', 'dac_attn')
 
 
 class TriggerConfig(FLConfigMixin):
-    def __init__(self, holdoffs:np.ndarray, thresholds:np.ndarray):
+    def __init__(self, holdoffs: np.ndarray, thresholds: np.ndarray):
         self.holdoffs = holdoffs
         self.thresholds = thresholds
         self._settings = ('holdoffs', 'thresholds')
 
+
 class ChannelConfig(FLConfigMixin):
     def __init__(self, frequencies):
         self.frequencies = frequencies
-        self._settings = ('frequencies', )
+        self._settings = ('frequencies',)
 
 
 class DDCConfig(FLConfigMixin):
@@ -212,7 +232,7 @@ class DDCConfig(FLConfigMixin):
         self.phase_offset = phase_offset
         self.center_relative = False
         self.quantize = True
-        self._settings = ('tones','loop_center','phase_offset','center_relative','quantize')
+        self._settings = ('tones', 'loop_center', 'phase_offset', 'center_relative', 'quantize')
 
 
 class FilterConfig(FLConfigMixin):
@@ -294,17 +314,21 @@ class CaptureAbortedException(Exception):
 
 
 class CaptureSink:
-    def __init__(self, request, server):
-       pass
+    # def __init__(self, request, server):
+    #     pass
 
     def data(self):
         return None
 
+
 class ADCCaptureSink(CaptureSink, threading.Thread):
-    def __init__(self, id, source, context: zmq.Context = None):
-        super().__init__(name=f'ADCCaptureSink_{id}')
+    def __init__(self, id, source, term, context: zmq.Context = None):
+        super(ADCCaptureSink, self).__init__(name=f'ADCCaptureSink_{id}')
         self.daemon = True
+        self.cap_id = id
+        self.data_source = source
         self.result = None
+        self.term = term
         self.start()
 
     def run(self):
@@ -318,42 +342,39 @@ class ADCCaptureSink(CaptureSink, threading.Thread):
         Returns: None
 
         """
-        data_source = None
-        cap_id = None
-        term_source = None
-        context = zmq.Context.instance()
-        term = context.socket(zmq.SUB)
-        term.setsockopt(zmq.SUBSCRIBE, self.id)
-        term.connect(term_source)
+        # term_source = None
+        # context = zmq.Context.instance()
+        # term = context.socket(zmq.SUB)
+        # term.setsockopt(zmq.SUBSCRIBE, self.id)
+        # term.connect(term_source)
 
+        context = zmq.Context.instance()
         data = context.socket(zmq.SUB)
-        data.setsockopt(zmq.SUBSCRIBE, cap_id)
-        data.connect(data_source)
+        data.setsockopt(zmq.SUBSCRIBE, self.cap_id)
+        data.connect(self.data_source)
 
         poller = zmq.Poller()
-        poller.register(term, flags=zmq.POLLIN)
+        poller.register(self.term, flags=zmq.POLLIN)
         poller.register(data, flags=zmq.POLLIN)
 
         recieved = []
         while True:
-            avail = poller.poll()
-            if term in avail:
+            avail = dict(poller.poll())
+            if self.term in avail:
                 break
             frame = data.recv_multipart(copy=False)
             id = frame[0]
             if not frame[1]:
                 break
-            d = blosc.decompress(frame[1])
+            d = blosc2.decompress(frame[1])
             # raw adc data is i0q0 i1q1 int16
 
             # TODO save the data or do something with it
             recieved.append(d)
 
-        term.close()
+        self.term.close()
         data.close()
-
         self.result = np.array(recieved)
-
 
 
 class PhotonCaptureSink(CaptureSink):
@@ -419,7 +440,7 @@ class PhotonCaptureSink(CaptureSink):
             frame = data.recv_multipart(copy=False)
             fl_id = frame[0]
             time_offset = frame[1]
-            d = blosc.decompress(frame[1])
+            d = blosc2.decompress(frame[1])
             frame_duration = None  # todo time coverage of data
             # buffer is nchan*nmax+1 32bit: 16bit time(base2) 16bit phase
             # make array of to [nnmax+1, nchan, 2] uint16
@@ -434,7 +455,7 @@ class PhotonCaptureSink(CaptureSink):
             live_image_by_fl[fl_ndx, :] += d[0, :, 0] / frame_duration
 
             # if live_image_ready
-            live_image_socket.send_multipart([f'liveim', blosc.compress(live_image)])
+            live_image_socket.send_multipart([f'liveim', blosc2.compress(live_image)])
 
             cphot = np.cumsum(d[0, :, 0], dtype=int)
             for i in range(fl_npix):
@@ -452,17 +473,25 @@ class PhotonCaptureSink(CaptureSink):
         hdf.close()
 
 
-def CaptureSinkFactory(request, server) -> CaptureSink:
+class PostageCaptureSink(CaptureSink):
+    def __init__(self, source, context: zmq.Context = None):
+        pass
+
+
+def CaptureSinkFactory(request, server) -> ((zmq.Socket, zmq.Socket), CaptureSink):
+    a, pipe = zpipe(zmq.Context.instance())
     if request.tap == 'adc':
-        return ADCCaptureSink(request.destination)
+        saver = ADCCaptureSink(request.id, server, pipe)
     elif request.tap == 'photon':
-        return PhotonCaptureSink(request.destination)
+        saver = PhotonCaptureSink(request.id, server, pipe)
     elif request.tap == 'postage':
-        return ADCCaptureSink(request.destination)
+        saver = PostageCaptureSink(request.id, server, pipe)
     elif request.tap == 'phase':
-        return ADCCaptureSink(request.destination)
+        saver = ADCCaptureSink(request.id, server, pipe)
     elif request.tap == 'iq':
-        return ADCCaptureSink(request.destination)
+        saver = ADCCaptureSink(request.id, server, pipe)
+
+    return (a, pipe), saver
 
 
 class StatusListner(threading.Thread):
@@ -471,30 +500,52 @@ class StatusListner(threading.Thread):
         self.daemon = True
         self.shutdown = False
         self.source = source
+        self.id = id
         self._status_messages = [initial_state]
-        self.run()
+        self.start()
 
-    def run(self, context=None):
-        context = context or zmq.Context().instance()
-        status_sock = context.socket(zmq.SUB)
-        status_sock.setsockopt(zmq.SUBSCRIBE, id)
-        status_sock.connect(self.source)
-        while not self.shutdown:
-            if status_sock.poll(1) != 0:
-                self._status_messages.append(status_sock.recv_multipart())
+    def run(self):
+        with zmq.Context().instance() as ctx:
+            with ctx.socket(zmq.SUB) as sock:
+                sock.linger = 0
+                sock.setsockopt(zmq.SUBSCRIBE, self.id)
+                sock.connect(self.source)
+                getLogger(__name__).debug(f'Listening for status updates to {self.id}')
+                while not self.shutdown:
+                    try:
+                        id, _, update = sock.recv_multipart()
+                        assert id == self.id
+                    except zmq.ZMQError as e:
+                        if e.errno == zmq.EAGAIN:
+                            time.sleep(.1)  # play nice
+                        elif e.errno == zmq.ETERM:
+                            break
+                    else:
+                        update = update.decode()
+                        self._status_messages.append(update)
+                        getLogger(__name__).debug(f'Status update for {self.id}: {update}')
+                        if (update.startswith('finished') or
+                                update.startswith('aborted') or
+                                update.startswith('failed')):
+                            break
+                sock.close()
 
     def latest(self):
         return self._status_messages[-1]
 
 
 class CaptureRequest:
-    def __init__(self, n, tap, feedline_config: FeedlineConfig, destination, status_dest):
+    def __init__(self, n, tap, feedline_config: FeedlineConfig, feedline_server):
         self.points = n
+        self._last_status = None
         self.tap = tap  # maybe add some error handling here
         self.feedline_config = feedline_config
-        self._id = hash(repr(self))
-        self._data_dest = destination
-        self._status_dest = status_dest
+        self._feedline_server = feedline_server
+        self._status_socket = None
+        self._data_socket = None
+
+    def __hash__(self):
+        return hash((hash(self.feedline_config), self.tap, self.points, self._feedline_server))
 
     def __del__(self):
         self.destablish()
@@ -505,14 +556,15 @@ class CaptureRequest:
 
     @property
     def id(self):
-        return self._id
+        return str(hash(self)).encode()
 
-    def establish(self, context: zmq.Context = None):
-        conetxt = context or zmq.Context.instance()
+    def establish(self, data_server='inproc://cap_data.xsub', status_server='inproc://cap_status.xsub',
+                  context: zmq.Context = None):
+        context = context or zmq.Context.instance()
         self._status_socket = context.socket(zmq.PUB)
-        self._status_socket.connect(self._status_dest)
+        self._status_socket.connect(status_server)
         self._data_socket = context.socket(zmq.PUB)
-        self._data_socket.connect(self._data_dest)
+        self._data_socket.connect(data_server)
         self._established = True
         self.set_status('established')
 
@@ -529,26 +581,36 @@ class CaptureRequest:
 
     def fail(self, message, context: zmq.Context = None):
         self.set_status('failed', message, context=context)
+        self.destablish()
 
     def finish(self):
-        self.set_status('complete')
+        self.set_status('finished')
+        self.destablish()
+
+    def abort(self, message, context: zmq.Context = None):
+        self.set_status('aborted', message, context=context)
+        self.destablish()
 
     def add_data(self, data, status=''):
         if not self._established:
             raise RuntimeError('Establish must be called before add_data')
         # TODO ensure we are being smart about pointers and buffer acces vs copys
-        self._data_dest.send_multipart([self.id, blosc2.compress(data)])
+        self._data_socket.send_multipart([self.id, blosc2.compress(data)])
         self.set_status('capturing', message=status)
 
-    def set_status(self, status, message='', context: zmq.Context = None):
-        self._status = status
-        """get appropriate context and send current sztatus message after connecting soocket. if no then simply log"""
-        if not self._status_dest:
-            context = context or zmq.Context().instance()
-            self._status_dest = context.socket(zmq.REQ)
-            self._status_dest.connect(self._status_dest)
+    def set_status(self, status, message='', context: zmq.Context = None,
+                   status_server='inproc://capture_status'):
+        """
+        get appropriate context and send current status message after connecting socket.
 
-        self._status_dest.send_multipart([id, status, message])
+        status_server is ignored once a status destination connection is established
+        """
+        self._last_status = status
+        if not self._status_socket:
+            context = context or zmq.Context().instance()
+            self._status_socket = context.socket(zmq.REQ)
+            self._status_socket.connect(status_server)
+        self._status_socket.send_multipart([id, status, message])
 
     @property
     def size(self):
@@ -556,11 +618,12 @@ class CaptureRequest:
 
 
 class CaptureJob:  # feedline client end
-    def __init__(self, request: CaptureRequest, server, status, submit=True):
+    def __init__(self, request: CaptureRequest, feedline_server: str, data_server: str, status_server: str,
+                 submit=True):
         self.request = request
-        self._status_listner = StatusListner(request.id, status, initial_state='CREATED')
-        self.server = server
-        self._datasaver = CaptureSinkFactory(request, server)
+        self._status_listner = StatusListner(request.id, status_server, initial_state='CREATED')
+        self.feedline_server = feedline_server
+        self._savepipes, self._datasaver = CaptureSinkFactory(request, data_server)
         if submit:
             self.submit()
 
@@ -569,9 +632,10 @@ class CaptureJob:  # feedline client end
         return self._status_listner.latest()
 
     def cancel(self):
+        self._savepipes[0].send(b'')
         with zmq.Context().instance() as ctx:
             with ctx.socket(zmq.PUSH) as s:
-                s.connect(self.server)
+                s.connect(self.feedline_server)
                 s.send_multipart(['abort', self.request.id])
 
     def data(self):
@@ -580,8 +644,15 @@ class CaptureJob:  # feedline client end
     def submit(self):
         with zmq.Context().instance() as ctx:
             with ctx.socket(zmq.PUSH) as s:
-                s.connect(self.server)
+                s.connect(self.feedline_server)
                 s.send_multipart(['capture', self.request])
+
+    def __del__(self):
+        self._savepipes[0].send(b'')
+        if self._datasaver is not None:
+            self._datasaver.join()
+        self._savepipes[0].close()
+        self._savepipes[1].close()
 
 
 class PowerSweepRequest:

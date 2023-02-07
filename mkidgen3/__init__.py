@@ -9,3 +9,6 @@ try:
     from .overlay_helpers import *
 except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')
+except OSError as e:
+    if 'libxrt_core' in str(e):
+        getLogger(__name__).info('pynq not available, functionality will be limited.')

@@ -1,21 +1,28 @@
-from mkidgen3.objects import *
+import zmq
+ctx = zmq.Context.instance()
+ctx.linger = 0
+
+from mkidgen3.objects import CaptureRequest, CaptureJob, FeedlineConfig
 
 # cap command default 8888
 # cap data 8889
 # cap status 9000
 
-capture_port
+feedline_server = 'tcp://localhost:8888'
+status_server = 'tcp://localhost:8890'
+capture_data_server = 'tcp://localhost:8889'
+
 
 #start a listner for status
-pd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
-pd.bind_in(f'tcp://localhost:9000')
-pd.bind_out('inproc://cap_status')
-# pd.setsockopt_in(zmq.SUBSCRIBE, b"B")
-pd.start()
+# pd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+# pd.bind_in(f'tcp://localhost:9000')
+# pd.bind_out('inproc://cap_status')
+# # pd.setsockopt_in(zmq.SUBSCRIBE, b"B")
+# pd.start()
 
 #start a listner for data
 
-s=''
-
-cr = CaptureRequest(1337, 'adc', FeedlineConfig(), 'localhost:8888', 'localhost:9000')
-cj = CaptureJob(cr, 'localhost:8889', 'inproc://cap_status', submit=False)
+fc = FeedlineConfig()
+cr = CaptureRequest(1337, 'iq', fc, feedline_server)
+cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
+# cj.submit()

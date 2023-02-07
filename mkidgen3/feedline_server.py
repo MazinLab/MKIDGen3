@@ -9,7 +9,8 @@ from logging import getLogger
 import pynq
 import mkidgen3.drivers.rfdc
 import mkidgen3 as g3
-from objects import CaptureRequest, CaptureAbortedException, FeedlineConfig, FeedlineStatus, DACStatus, DDCStatus, \
+from mkidgen3.objects import CaptureRequest, CaptureAbortedException, FeedlineConfig, FeedlineStatus, DACStatus, \
+    DDCStatus, \
     FLPhotonBuffer
 from typing import List
 import zmq
@@ -63,8 +64,9 @@ class FLSettingsSet:
         self._dict.pop(flsettings.id)
         return self.effective != x
 
-    def add(self, flsettings: FeedlineConfig):
-        self._dict[flsettings.id] = flsettings
+    def add(self, id, flsettings: FeedlineConfig) -> FeedlineConfig:
+        self._dict[id] = flsettings
+        return FeedlineConfig()
 
 class DummyOverlay:
     def __init__(self, bitstream):
@@ -118,7 +120,7 @@ class FeedlineHardware:
         if poweroff_if:
             self._if_board.power_off(save_settings=False)
 
-    def apply_fl_settings(self, fl_setup: FeedlineConfig):
+    def apply_settings(self, fl_setup: FeedlineConfig):
         # IF board
         if fl_setup.if_setup is not None:
             self._if_board.power_on()
@@ -162,7 +164,7 @@ class FeedlineReadout:
         return status
 
     @staticmethod
-    def plram_cap(cr, ol: pynq.Overlay, context=None):
+    def plram_cap(pipe, cr, ol: pynq.Overlay, context=None):
         """
 
         Args:
@@ -173,9 +175,6 @@ class FeedlineReadout:
         Returns: None
 
         """
-
-        # TODO these are fatal errors and the function should never have been called.
-        # CR should be aborted though
         failmsg = ''
         try:
             assert cr.type == 'engineering', 'Incorrect capture request type'
@@ -183,26 +182,26 @@ class FeedlineReadout:
         except AssertionError as e:
             failmsg = str(e)
 
-        try:
-            abort = context.socket(
-                zmq.SUB)  # TODO Use of subscribe will probably result in missed abort mesages, REQ/REP?
-            abort.setsockopt(zmq.SUBSCRIBE, id)
-            abort.connect('inproc://cap_abort')
-        except zmq.EFAULT:
-            failmsg = f"Unable to establish abort socket {cr.id}, dropping request."
+        # try:
+        #     abort = context.socket(
+        #         zmq.SUB)  # TODO Use of subscribe will probably result in missed abort messages, REQ/REP?
+        #     abort.setsockopt(zmq.SUBSCRIBE, id)
+        #     abort.connect('inproc://cap_abort')
+        # except zmq.EFAULT:
+        #     failmsg = f"Unable to establish abort socket {cr.id}, dropping request."
 
         try:
             cr.establish(context)
-        except zmq.EFAULT:
-            failmsg = f"Unable to establish capture {cr.id}, dropping request."
+        except zmq.ZMQError as e:
+            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
 
         if failmsg:
             getLogger(__name__).error(failmsg)
             try:
                 cr.fail(failmsg)
                 cr.destablish()
-            except zmq.EFAULT as ez:
-                getLogger(__name__).warning(f'Failed to send abort for {cr} due to {ez}')
+            except zmq.ZMQError as ez:
+                getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
             return
 
         try:
@@ -212,14 +211,18 @@ class FeedlineReadout:
             if partial:
                 chunks.appned(partial)
             for i, csize in enumerate(chunks):
-                if abort.poll(1) != 0:
-                    raise CaptureAbortedException
+                try:
+                    abort = pipe.recv()
+                    raise CaptureAbortedException(abort)
+                except zmq.ZMQError as e:
+                    if e.errno != zmq.EAGAIN:
+                        raise
                 data = ol.capture(csize, tap=cr.tap, wait=True)
                 cr.add_data(data, status=f'Captured {i} of {len(chunks)}')
                 data.free_buffer()
             cr.finish()
-        except CaptureAbortedException:
-            cr.fail(f'Aborted')
+        except CaptureAbortedException as e:
+            cr.abort(e)
         except Exception as e:
             getLogger(__name__).error(f'Terminating capture {id} due to {e}')
             try:
@@ -228,10 +231,9 @@ class FeedlineReadout:
                 getLogger(__name__).warning(f'Failed to send abort message {cr} due to {ez}')
         finally:
             del cr
-            abort.close()
 
     @staticmethod
-    def photon_cap(context, cr, ol):
+    def photon_cap(pipe, context, cr, ol):
         try:
             cr.establish(context)
         except Exception:
@@ -269,6 +271,10 @@ class FeedlineReadout:
                 del b
             abort.close()
 
+    @staticmethod
+    def stamp_cap(pipe, context, cr, ol):
+        pass
+
     def main(self, pipe: zmq.Socket, context: zmq.Context = None):
         """
         Enqueue a list of capture requests for future handling. Invalid requests are dealt with immediately and not
@@ -283,14 +289,19 @@ class FeedlineReadout:
         """
         context = context or zmq.Context().instance()
 
+
         class TapThread:
-            def __init__(self, thread, pipe, request):
+            def __init__(self, thread, pipe, other_pipe, request):
                 self.thread = thread
                 self.request = request
                 self.pipe = pipe
+                self.other_pipe = other_pipe
+
+            def __del__(self):
+                del self.pipe[0]
+                del self.pipe[1]
 
         tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
-        active_settings = None
         settings_set = FLSettingsSet()  # a set of FeedlineStettings
 
         to_check = []
@@ -307,6 +318,7 @@ class FeedlineReadout:
 
             for k in complete:
                 settings_set.pop(tap_threads[k].request.settings)
+                del tap_threads[k]
                 tap_threads[k] = None
 
             running_by_id = {tt.request.id: tt for tt in tap_threads.values() if tt is not None}
@@ -314,47 +326,59 @@ class FeedlineReadout:
             # check for any incoming info: CapRequest, ABORT id|all, EXIT
             cmd, data = '', ''
             try:
-                cmd, null, data = pipe.recv(zmq.NOBLOCK)
-                assert null == b''
+                cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
             except zmq.ZMQError as e:
-                if e.errno != zmq.EAGAIN:
-                    raise e # real error
+                if e.errno == zmq.ETERM:
+                    for cr in checked + to_check:
+                        cr.abort('Keyboard interrupt')  # signal that captures will never happen
+                    for v in running_by_id.values():
+                        v.pipe.send('abort')
+                    break
+                elif e.errno != zmq.EAGAIN:
+                    raise e  # real error
             else:
                 if cmd not in ('exit', 'abort', 'capture'):
-                    getLogger(__name__).error(f'Recieved Invalid command "{cmd}"')
+                    getLogger(__name__).error(f'Received invalid command "{cmd}"')
                     cmd, data = '', ''
 
-            if 'cmd' == 'exit':
-                cmd = 'abort'
-                data = 'all'
-            elif cmd == 'abort':
-                if data == 'all':
-                    for cr in checked + to_check:
-                        cr.set_status('aborted')  # signal that captures will never happen
-                    checked = []
-                    to_check = []
-                    for v in running_by_id.values():  # stop any running tap threads
-                        try:
-                            v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
-                        except zmq.ZMQError:
-                            getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
-                            raise
-                else:
-                    aborted = False
-                    if data in running_by_id:
-                        aborted = True
-                        running_by_id[data].pipe.send('abort')  # TODO what happens to pipe when thread ends?
-                    for cr in filter(lambda x: x.id == data, checked):
-                        aborted = True
-                        checked.pop(checked.index(cr))
-                        cr.set_status('aborted')
-                    for cr in filter(lambda x: x.id == data, to_check):
-                        aborted = True
-                        to_check.pop(to_check.index(cr))
-                        cr.set_status('aborted')
+            def abort_all():
+                for cr in checked + to_check:
+                    cr.abort('Abort all')  # signal that captures will never happen
+                for v in running_by_id.values():  # stop any running tap threads
+                    try:
+                        v.pipe[0].send('abort')  # TODO what happens to pipe when thread ends?
+                    except zmq.ZMQError:
+                        getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
+                        raise
 
-                    if not aborted:
-                        getLogger(__name__).info(f'Capture request {data} is unknown and can not be aborted.')
+            def abort_by_id(id):
+                aborted = False
+                if id in running_by_id:
+                    aborted = True
+                    running_by_id[id].pipe[0].send('abort')  # TODO what happens to pipe when thread ends?
+                for cr in filter(lambda x: x.id == id, checked):
+                    aborted = True
+                    checked.pop(checked.index(cr))
+                    cr.abort('Abort by id')
+                for cr in filter(lambda x: x.id == id, to_check):
+                    aborted = True
+                    to_check.pop(to_check.index(cr))
+                    cr.abort('Abort by id')
+
+                if not aborted:
+                    getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
+
+            if cmd == 'exit':
+                abort_all()
+                break
+
+            if cmd == 'abort':
+                if data == 'all':
+                    abort_all()
+                    checked, to_check = [], []
+                else:
+                    abort_by_id(data)
+
 
             cr = None  # CR is the capture request that will be ckicked off this iteration of the loop
             if cmd == 'capture':
@@ -366,8 +390,9 @@ class FeedlineReadout:
                     try:
                         data.set_status('queued', f'Queued')
                         q.append(data)
-                    except zmq.EFAULT:
-                        getLogger(__name__).error(f'Unable to update status. Aborted request {data.id}')
+                    except zmq.ZMQError as e:
+                        getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
+                                                  f' {data.id}')
 
                 # cant be run because there might be something more important (we check anyway),
                 # the tap is in use (we check when the tap finishes)
@@ -386,25 +411,38 @@ class FeedlineReadout:
                     cr.set_status('queued', f'tap location in use by: {tap_threads[cr.type].request.id}')
                     checked.append(cr)
                     continue
-                elif not settings_set.effective().compatible_with(cr.feedline_setup):
+                elif not settings_set.effective().compatible_with(cr.feedline_config):
                     cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
                     checked.append(cr)
                     continue
-            except zmq.EFAULT:
-                getLogger(__name__).error(f'Unable to update status. Aborted request {cr.id}')
+            except zmq.ZMQError as e:
+                getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr.id}.')
                 continue
 
-            changed_settings = settings_set.add(cr.id, cr.feedline_setup)
-            self.hardware.apply_settings(changed_settings)
+            try:
+                self.hardware.apply_settings(settings_set.add(cr.id, cr.feedline_config))
+            except Exception as e:
+                getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
+                for cr in checked + to_check:
+                    cr.abort('Hardware settings failure')  # signal that captures will never happen
+                for v in running_by_id.values():  # stop any running tap threads
+                    try:
+                        v.pipe[0].send('abort')  # TODO what happens to pipe when thread ends?
+                    except zmq.ZMQError:
+                        getLogger(__name__).critical(f'Error sending abort to worker thread {v}.')
+                break
 
             cap_runners = {'engineering': self.plram_cap, 'photon': self.photon_cap, 'stamp': self.stamp_cap}
             target = cap_runners[cr.type]
             a, b = zpipe(context)
             cr.set_status('running', f'Started at UTC {datetime.utcnow()}')
             cr.destablish()
-            t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(context, b, cr, self._ol))
+            t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, context, cr, self.hardware._ol))
             t.start()
-            tap_threads[cr.type] = TapThread(t, a, cr)
+            tap_threads[cr.type] = TapThread(t, a, b, cr)
+
+        getLogger(__name__).info('Capture thread exiting')
+        # context.term()
 
 
 def parse_cl():
@@ -413,6 +451,8 @@ def parse_cl():
                         help='Server port', default='8888')
     parser.add_argument('--cap_port', dest='capture_port', action='store', required=False, type=int,
                         help='Capture Data Port', default='8889')
+    parser.add_argument('--sta_port', dest='status_port', action='store', required=False, type=int,
+                        help='Capture Status Port', default='8890')
     parser.add_argument('--clock', dest='clock', action='store', required=False, type=str,
                         help='Clock Source', default='external_10mhz')
     parser.add_argument('-b', '--bitstream', dest='bitstream', action='store', required=False, type=str,
@@ -444,23 +484,40 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
 
     args = parse_cl()
+    context = zmq.Context.instance()
+    context.linger = 0
+
 
     fr = FeedlineReadout(args.bitstream, clock_source=args.clock, if_port=args.if_board,
                          ignore_version=args.ignore_fpga_driver_version)
 
     capture_port = args.capture_port
+    status_port = args.status_port
     command_port = args.port
     from zmq.devices import ThreadDevice
 
     # Set up a proxy for routing all the capture requests
-    pd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
-    pd.bind_in('inproc://cap_data')
-    pd.bind_out(f'tcp://*:{capture_port}')
-    pd.start()
-    getLogger(__name__).info('ThreadDevice started')
+    dtd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    dtd.setsockopt_in(zmq.LINGER, 0)
+    dtd.setsockopt_out(zmq.LINGER, 0)
+    dtd.bind_in('inproc://cap_data.xsub')
+    dtd.bind_out(f'tcp://*:{capture_port}')
+    dtd.daemon = True
+    dtd.start()
+
+    getLogger(__name__).info('Data ThreadDevice started')
+
+    std = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.PUB)
+    std.bind_in('inproc://cap_status.xsub')
+    std.bind_out(f'tcp://*:{status_port}')
+    std.setsockopt_in(zmq.LINGER, 0)
+    std.setsockopt_out(zmq.LINGER, 0)
+    dtd.daemon = True
+    std.start()
+    getLogger(__name__).info('Status ThreadDevice started')
 
     # Set up a command port
-    context = zmq.Context.instance()
+
     socket = context.socket(zmq.REP)
     socket.bind(f"tcp://*:{command_port}")
 
@@ -473,10 +530,25 @@ if __name__ == '__main__':
     main.start()
 
     while True:
-        cmd, args = socket.recv_multipart()
+        try:
+            cmd, arg = socket.recv_pyobj()
+        except zmq.ZMQError as e:
+            getLogger(__name__).error(f'Caught {e}, aborting and shutting down')
+            cap_pipe.send_pyobj(('exit', None))
+            break
+        except KeyboardInterrupt:
+            getLogger(__name__).error(f'Keyboard Interrupt aborting and shutting down')
+            cap_pipe.send_pyobj(('exit', None))
+            break
+        else:
+            if not main.is_alive():
+                getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
+                                             f'never complete. Exiting.')
+                socket.send_json('ERROR')
+                break
         getLogger(__name__).debug(f'Recieved {cmd} with args {args}')
         if cmd == 'reset':
-            cap_pipe.send('exit')
+            cap_pipe.send_pyobj(('exit', None))
             main.join()
             fr.hardware.reset()
             main = threading.Thread(target=fr.main, args=(cap_pipe_thread,), kwargs={'context': context})
@@ -484,20 +556,25 @@ if __name__ == '__main__':
             main.start()
             socket.send_json('OK')
         elif cmd == 'status':
-            status = fr.status()  # this might take a while and fail
+            try:
+                status = fr.status()  # this might take a while and fail
+            except Exception as e:
+                status = {'hardware': str(e)}
             status['id'] = f'FRS {args.fl_id} @ {args.port}/{args.cap_port}'
             socket.send_json(status)
         elif cmd == 'bequiet':
-            cap_pipe.send(['abort', 'all'])
-            fr.hardware.bequiet(**json.loads(args))  # This might take a while and fail
-            socket.send_json('OK')
+            cap_pipe.send_pyobj(('abort', 'all'))
+            try:
+                fr.hardware.bequiet(**json.loads(args))  # This might take a while and fail
+                socket.send_json('OK')
+            except Exception as e:
+                socket.send_json(f'ERROR: {e}')
         elif cmd == 'capture':
-            # determine if capture is possible
-            # determine if capture compatible with current actions
-            # fire function to apply necessary pl settings and start thread to deal with capture
-            cr = args
-            needed_settings = cr.settings
-            cap_pipe.send_multipart(['capture'] + args)
-            socket.send_json(cap_pipe.recv())
+            cap_pipe.send_pyobj(('capture', arg))
+            socket.send_json('OK')
 
     main.join()
+    socket.close()
+    cap_pipe.close()
+    cap_pipe_thread.close()
+    context.term()
