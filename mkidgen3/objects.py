@@ -151,7 +151,7 @@ class FLConfigMixin:
     def __str__(self):
         name = self.__class__.split('.')[-1]
         return (f"{name}: {hash(self)}\n"
-                "  {self.settings_dict()}")
+                f"  {self.settings_dict()}")
 
     def settings_dict(self):
         return {k: getattr(self, k) for k in self._settings}
@@ -382,6 +382,7 @@ class ADCCaptureSink(CaptureSink, threading.Thread):
                         id, data = data.recv_multipart(copy=False)
                         if not data:
                             break
+                        getLogger(__name__).debug('')
                         d = blosc2.decompress(data)
                         # raw adc data is i0q0 i1q1 int16
 
@@ -569,6 +570,9 @@ class CaptureRequest:
 
     def __del__(self):
         self.destablish()
+
+    def __str__(self):
+        return f'CapReq {str(hash(self))}'
 
     @property
     def type(self):

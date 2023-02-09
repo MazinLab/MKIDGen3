@@ -79,8 +79,22 @@ class FeedlineConfigSet:
 
 
 class DummyOverlay:
-    def __init__(self, bitstream):
-        pass
+    class DummyBuffer(np.ndarray):
+        def freebuffer(self):
+            pass
+
+    class DummyCap:
+        @staticmethod
+        def capture(csize, *args, **kwargs):
+            n = csize*2
+            return np.random.uniform(low=-10000, high=10000, size=n).astype(np.int16).view(DummyOverlay.DummyBuffer)
+
+        @staticmethod
+        def ready():
+            return True
+
+    def __init__(self, bitstream, *args, **kwargs):
+        self.capture = DummyOverlay.DummyCap()
 
 
 class FeedlineHardware:
@@ -225,7 +239,7 @@ class FeedlineReadout:
         #     failmsg = f"Unable to establish abort socket {cr.id}, dropping request."
 
         try:
-            cr.establish(context)
+            cr.establish(context=context)
         except zmq.ZMQError as e:
             failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
 
@@ -243,23 +257,23 @@ class FeedlineReadout:
             partial = cr.size - CHUNKING_THRESHOLD * nchunks
             chunks = [CHUNKING_THRESHOLD] * nchunks
             if partial:
-                chunks.appned(partial)
+                chunks.append(partial)
             for i, csize in enumerate(chunks):
                 try:
-                    abort = pipe.recv()
+                    abort = pipe.recv(zmq.NOBLOCK)
                     raise CaptureAbortedException(abort)
                 except zmq.ZMQError as e:
                     if e.errno != zmq.EAGAIN:
                         raise
-                # data = ol.capture(csize, tap=cr.tap, wait=True)
-                data = np.random.uniform(-10000,10000, size=csize*2).astype(np.int16)
+                data = ol.capture.capture(csize, tap=cr.tap, wait=True)
+                # data = np.random.uniform(-10000,10000, size=csize*2).astype(np.int16)
                 cr.add_data(data, status=f'Captured {i} of {len(chunks)}')
-                # data.free_buffer()
+                data.free_buffer()
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e)
         except Exception as e:
-            getLogger(__name__).error(f'Terminating capture {id} due to {e}')
+            getLogger(__name__).error(f'Terminating {cr} due to {e}')
             try:
                 cr.fail(f'Aborted due to {e}')
             except zmq.EFAULT as ez:
@@ -324,17 +338,16 @@ class FeedlineReadout:
         """
         context = context or zmq.Context().instance()
 
-
         class TapThread:
             def __init__(self, thread, pipe, other_pipe, request):
                 self.thread = thread
                 self.request = request
                 self.pipe = pipe
-                self.other_pipe = other_pipe
+                self._other_pipe = other_pipe
 
             def __del__(self):
-                del self.pipe[0]
-                del self.pipe[1]
+                self.pipe.close()
+                self._other_pipe.close()
 
         tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
 
@@ -380,7 +393,7 @@ class FeedlineReadout:
                     cr.abort('Abort all')  # signal that captures will never happen
                 for v in running_by_id.values():  # stop any running tap threads
                     try:
-                        v.pipe[0].send('abort')  # TODO what happens to pipe when thread ends?
+                        v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
                     except zmq.ZMQError:
                         getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
                         raise
@@ -389,7 +402,7 @@ class FeedlineReadout:
                 aborted = False
                 if id in running_by_id:
                     aborted = True
-                    running_by_id[id].pipe[0].send('abort')  # TODO what happens to pipe when thread ends?
+                    running_by_id[id].pipe.send('abort')  # TODO what happens to pipe when thread ends?
                 for cr in filter(lambda x: x.id == id, checked):
                     aborted = True
                     checked.pop(checked.index(cr))
@@ -449,7 +462,7 @@ class FeedlineReadout:
                     checked.append(cr)
                     continue
             except zmq.ZMQError as e:
-                getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr.id}.')
+                getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
                 continue
 
             try:
@@ -470,7 +483,8 @@ class FeedlineReadout:
             a, b = zpipe(context)
             cr.set_status('running', f'Started at UTC {datetime.utcnow()}')
             cr.destablish()
-            t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, context, cr, self.hardware._ol))
+            t = threading.Thread(target=target, name=f"CapThread: {cr.id}",
+                                 args=(b, cr, self.hardware._ol), kwargs=dict(context=context))
             t.start()
             tap_threads[cr.type] = TapThread(t, a, b, cr)
 
@@ -559,7 +573,8 @@ if __name__ == '__main__':
 
     cap_pipe, cap_pipe_thread = zpipe(zmq.Context.instance())
 
-    main = threading.Thread(target=fr.main, args=(cap_pipe_thread,), kwargs={'context': context})
+    main = threading.Thread(name='CaptureHandler', target=fr.main, args=(cap_pipe_thread,),
+                            kwargs={'context': context})
     main.daemon = False
     main.start()
 
@@ -585,7 +600,8 @@ if __name__ == '__main__':
             cap_pipe.send_pyobj(('exit', None))
             main.join()
             fr.hardware.reset()
-            main = threading.Thread(target=fr.main, args=(cap_pipe_thread,), kwargs={'context': context})
+            main = threading.Thread(name='CaptureHandler', target=fr.main, args=(cap_pipe_thread,),
+                                    kwargs={'context': context})
             main.daemon = False
             main.start()
             socket.send_json('OK')
