@@ -21,6 +21,7 @@ from datetime import datetime
 import argparse
 import binascii
 import os
+import numpy as np
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
@@ -42,31 +43,40 @@ def zpipe(ctx):
     return a, b
 
 
-class FLSettingsSet:
+class FeedlineConfigSet:
     def __init__(self):
         self._dict = {}
 
     def effective(self) -> FeedlineConfig:
         """Return a FLSettings (or ducktype) resulting from settings in the set"""
-        pass
+        return FeedlineConfig()
 
-    def pop(self, flsettings: FeedlineConfig) -> bool:
+    def pop(self, id) -> bool:
         """
         Remove settings from the set
 
         Args:
-            flsettings: settings to remove, raises KeyError if object isn't in the set
+            id: settings id to remove, raises KeyError if object isn't in the set
 
         Returns: True iff the effective settings changed as a result of the pop
-
         """
         x = self.effective
-        self._dict.pop(flsettings.id)
+        self._dict.pop(id)
         return self.effective != x
 
-    def add(self, id, flsettings: FeedlineConfig) -> FeedlineConfig:
-        self._dict[id] = flsettings
+    def add(self, id, config: FeedlineConfig) -> FeedlineConfig:
+        """
+
+        Args:
+            id: an id for the settings (for later removal from the set)
+            config: a feedline config at any level of specificity
+
+        Returns: A feedline config with the settings that need updating populated and the rest None
+
+        """
+        self._dict[id] = config
         return FeedlineConfig()
+
 
 class DummyOverlay:
     def __init__(self, bitstream):
@@ -76,6 +86,8 @@ class DummyOverlay:
 class FeedlineHardware:
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
                  ignore_version=False, download=False, program_clock=True):
+
+        self._config_pot = FeedlineConfigSet()  # a set of FeedlineStettings
         self._clock_source = validate(clock_source=clock_source, error=True)
         try:
             self._ol = pynq.Overlay(bitstream, download=download, ignore_version=ignore_version)
@@ -120,27 +132,49 @@ class FeedlineHardware:
         if poweroff_if:
             self._if_board.power_off(save_settings=False)
 
-    def apply_settings(self, fl_setup: FeedlineConfig):
+    def config_compatible_with(self, config: FeedlineConfig):
+        return self._config_pot.effective()==config
+
+    def derequire_config(self, id):
+        try:
+            self._config_pot.pop(id)
+        except KeyError:
+            pass
+
+    def apply_config(self, id, config: FeedlineConfig):
+        """Takes and applies a config to the hardware, updates and tracks the effective set of settings"""
         # IF board
+        fl_setup = self._config_pot.add(id, config)
+
+        # IF Board
         if fl_setup.if_setup is not None:
-            self._if_board.power_on()
-            self._if_board.set_lo(fl_setup.if_setup.lo)
-            self._if_board.set_attens(fl_setup.if_setup.dac_attn, fl_setup.if_setup.adc_attn)
+            getLogger(__name__).debug(f'Configure IF Board with {fl_setup.if_setup.settings_dict()}')
+            self._if_board.configure(**fl_setup.dac_setup.settings_dict())
 
         # DAC
         if fl_setup.dac_setup is not None:
-            g3.replay(fl_setup.dac_setup.waveform_spec['iq'])
+            getLogger(__name__).debug(f'Configure DAC with {fl_setup.dac_setup.settings_dict()}')
+            self._ol.dac_replay.configure(**fl_setup.dac_setup.settings_dict())
+
+        # ADC
+        if fl_setup.adc_setup is not None:
+            getLogger(__name__).debug(f'Configure ADC with {fl_setup.adc_setup.settings_dict()}')
+            # self._ol.dac_replay.configure(**fl_setup.dac_setup.settings_dict())
 
         # Photon Pipe
-        if fl_setup.pp_setup != self.active.pp_setup:
-            # Bin2Res
+        if fl_setup.pp_setup is not None:
+            # Channel assignments
             if fl_setup.pp_setup.chan_config is not None:
-                self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.pp_setup.chan_config.settings_dict)
+                self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.pp_setup.chan_config.settings_dict())
             # DDC
-            if fl_setup.ddc_setup is not None:
-                self._ol.photon_pipe.reschan.ddc.configure(**fl_setup.settings_dict)
-
-
+            if fl_setup.pp_setup.ddc_config is not None:
+                self._ol.photon_pipe.reschan.ddc.configure(**fl_setup.pp_setup.ddc_config.settings_dict())
+            # Matched Filters
+            if fl_setup.pp_setup.filter_config is not None:
+                self._ol.photon_pipe.phasematch.configure(**fl_setup.pp_setup.filter_config.settings_dict())
+            # Matched Filters
+            if fl_setup.pp_setup.trig_config is not None:
+                self._ol.photon_pipe.phasematch.configure(**fl_setup.pp_setup.trig_config.settings_dict())
 
 
 class FeedlineReadout:
@@ -217,9 +251,10 @@ class FeedlineReadout:
                 except zmq.ZMQError as e:
                     if e.errno != zmq.EAGAIN:
                         raise
-                data = ol.capture(csize, tap=cr.tap, wait=True)
+                # data = ol.capture(csize, tap=cr.tap, wait=True)
+                data = np.random.uniform(-10000,10000, size=csize*2).astype(np.int16)
                 cr.add_data(data, status=f'Captured {i} of {len(chunks)}')
-                data.free_buffer()
+                # data.free_buffer()
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e)
@@ -302,7 +337,6 @@ class FeedlineReadout:
                 del self.pipe[1]
 
         tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
-        settings_set = FLSettingsSet()  # a set of FeedlineStettings
 
         to_check = []
         checked = []
@@ -317,7 +351,7 @@ class FeedlineReadout:
                 checked = []
 
             for k in complete:
-                settings_set.pop(tap_threads[k].request.settings)
+                self.hardware.derequire_config(tap_threads[k].request.id)
                 del tap_threads[k]
                 tap_threads[k] = None
 
@@ -379,11 +413,10 @@ class FeedlineReadout:
                 else:
                     abort_by_id(data)
 
-
             cr = None  # CR is the capture request that will be ckicked off this iteration of the loop
             if cmd == 'capture':
-                if (not to_check and data.type not in tap_threads and
-                        settings_set.effective().compatible_with(data.feedline_setup)):
+                if (not to_check and tap_threads[data.type] is None and
+                        self.hardware.config_compatible_with(data.feedline_config)):
                     cr = data  # this can be run and nothing else, so it will be done below
                 else:
                     q = to_check if to_check else checked
@@ -407,11 +440,11 @@ class FeedlineReadout:
             assert isinstance(cr, CaptureRequest)
 
             try:
-                if cr.type in tap_threads:
+                if tap_threads[cr.type] is not None:
                     cr.set_status('queued', f'tap location in use by: {tap_threads[cr.type].request.id}')
                     checked.append(cr)
                     continue
-                elif not settings_set.effective().compatible_with(cr.feedline_config):
+                elif not self.hardware.config_compatible_with(cr.feedline_config):
                     cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
                     checked.append(cr)
                     continue
@@ -420,7 +453,7 @@ class FeedlineReadout:
                 continue
 
             try:
-                self.hardware.apply_settings(settings_set.add(cr.id, cr.feedline_config))
+                self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
                 getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
                 for cr in checked + to_check:
@@ -496,32 +529,33 @@ if __name__ == '__main__':
     command_port = args.port
     from zmq.devices import ThreadDevice
 
+    cap_addr = f'tcp://*:{capture_port}'
+    stat_addr = f'tcp://*:{status_port}'
+    cmd_addr = f"tcp://*:{command_port}"
     # Set up a proxy for routing all the capture requests
     dtd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
     dtd.setsockopt_in(zmq.LINGER, 0)
     dtd.setsockopt_out(zmq.LINGER, 0)
     dtd.bind_in('inproc://cap_data.xsub')
-    dtd.bind_out(f'tcp://*:{capture_port}')
+    dtd.bind_out(cap_addr)
     dtd.daemon = True
     dtd.start()
-
-    getLogger(__name__).info('Data ThreadDevice started')
+    getLogger(__name__).info(f'Publishing capture data to {cap_addr}')
 
     std = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.PUB)
     std.bind_in('inproc://cap_status.xsub')
-    std.bind_out(f'tcp://*:{status_port}')
+    std.bind_out(stat_addr)
     std.setsockopt_in(zmq.LINGER, 0)
     std.setsockopt_out(zmq.LINGER, 0)
     dtd.daemon = True
     std.start()
-    getLogger(__name__).info('Status ThreadDevice started')
+    getLogger(__name__).info(f'Publishing capture status information to {stat_addr}')
 
     # Set up a command port
 
     socket = context.socket(zmq.REP)
-    socket.bind(f"tcp://*:{command_port}")
-
-    getLogger(__name__).info('command_port bound')
+    socket.bind(cmd_addr)
+    getLogger(__name__).info(f'Accepting commands on {cmd_addr}')
 
     cap_pipe, cap_pipe_thread = zpipe(zmq.Context.instance())
 
@@ -546,7 +580,7 @@ if __name__ == '__main__':
                                              f'never complete. Exiting.')
                 socket.send_json('ERROR')
                 break
-        getLogger(__name__).debug(f'Recieved {cmd} with args {args}')
+        getLogger(__name__).debug(f'Recieved command "{cmd}" with args {arg}')
         if cmd == 'reset':
             cap_pipe.send_pyobj(('exit', None))
             main.join()
@@ -565,7 +599,7 @@ if __name__ == '__main__':
         elif cmd == 'bequiet':
             cap_pipe.send_pyobj(('abort', 'all'))
             try:
-                fr.hardware.bequiet(**json.loads(args))  # This might take a while and fail
+                fr.hardware.bequiet(**json.loads(arg))  # This might take a while and fail
                 socket.send_json('OK')
             except Exception as e:
                 socket.send_json(f'ERROR: {e}')

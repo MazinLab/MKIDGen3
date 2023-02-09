@@ -148,6 +148,11 @@ class FLConfigMixin:
         hash_data = ((k, hasher(getattr(self, k))) for k in self._settings)
         return hash(sorted(hash_data, key=lambda x: x[0]))
 
+    def __str__(self):
+        name = self.__class__.split('.')[-1]
+        return (f"{name}: {hash(self)}\n"
+                "  {self.settings_dict()}")
+
     def settings_dict(self):
         return {k: getattr(self, k) for k in self._settings}
 
@@ -209,7 +214,7 @@ class IFConfig(FLConfigMixin):
         self.lo = lo
         self.adc_attn = adc_attn
         self.dac_attn = dac_attn
-        self._settings = ('power', 'lo', 'adc_attn', 'dac_attn')
+        self._settings = ('lo', 'adc_attn', 'dac_attn')
 
 
 class TriggerConfig(FLConfigMixin):
@@ -242,10 +247,20 @@ class FilterConfig(FLConfigMixin):
 
 
 class PhotonPipeConfig(FLMetaConfigMixin):
-    def __init__(self, chan: ChannelConfig = None, ddc: DDCConfig = None, trig: TriggerConfig = None):
+    def __init__(self, chan: ChannelConfig = None, ddc: DDCConfig = None, filter: FilterConfig = None,
+                 trig: TriggerConfig = None):
         self.chan_config = chan
         self.ddc_config = ddc
         self.trig_config = trig
+        self.filter_config = filter
+
+    def __str__(self):
+        return (f"PhotonPipe {hash(self)}:\n"
+                f"  Chan: {self.chan_config}\n"
+                f"  DDC: {self.ddc_config}\n"
+                f"  Filt: {self.filter_config}\n"
+                f"  Trig: {self.trig_config}")
+
 
 
     @property
@@ -322,14 +337,15 @@ class CaptureSink:
 
 
 class ADCCaptureSink(CaptureSink, threading.Thread):
-    def __init__(self, id, source, term, context: zmq.Context = None):
+    def __init__(self, id, source, term, context: zmq.Context = None, start=True):
         super(ADCCaptureSink, self).__init__(name=f'ADCCaptureSink_{id}')
         self.daemon = True
         self.cap_id = id
         self.data_source = source
         self.result = None
         self.term = term
-        self.start()
+        if start:
+            self.start()
 
     def run(self):
         """
@@ -348,33 +364,36 @@ class ADCCaptureSink(CaptureSink, threading.Thread):
         # term.setsockopt(zmq.SUBSCRIBE, self.id)
         # term.connect(term_source)
 
-        context = zmq.Context.instance()
-        data = context.socket(zmq.SUB)
-        data.setsockopt(zmq.SUBSCRIBE, self.cap_id)
-        data.connect(self.data_source)
+        try:
+            with zmq.Context.instance() as ctx:
+                with ctx.socket(zmq.SUB) as data:
+                    data.setsockopt(zmq.SUBSCRIBE, self.cap_id)
+                    data.connect(self.data_source)
 
-        poller = zmq.Poller()
-        poller.register(self.term, flags=zmq.POLLIN)
-        poller.register(data, flags=zmq.POLLIN)
+                    poller = zmq.Poller()
+                    poller.register(self.term, flags=zmq.POLLIN)
+                    poller.register(data, flags=zmq.POLLIN)
 
-        recieved = []
-        while True:
-            avail = dict(poller.poll())
-            if self.term in avail:
-                break
-            frame = data.recv_multipart(copy=False)
-            id = frame[0]
-            if not frame[1]:
-                break
-            d = blosc2.decompress(frame[1])
-            # raw adc data is i0q0 i1q1 int16
+                    recieved = []
+                    while True:
+                        avail = dict(poller.poll())
+                        if self.term in avail:
+                            break
+                        id, data = data.recv_multipart(copy=False)
+                        if not data:
+                            break
+                        d = blosc2.decompress(data)
+                        # raw adc data is i0q0 i1q1 int16
 
-            # TODO save the data or do something with it
-            recieved.append(d)
+                        # TODO save the data or do something with it
+                        recieved.append(d)
 
-        self.term.close()
-        data.close()
-        self.result = np.array(recieved)
+                    # self.term.close()
+                    self.result = np.array(recieved)
+        except zmq.ZMQError as e:
+            getLogger(__name__).warning(f'Shutting down {self} due to {e}')
+        # finally:
+            # self.term.close()
 
 
 class PhotonCaptureSink(CaptureSink):
@@ -478,31 +497,32 @@ class PostageCaptureSink(CaptureSink):
         pass
 
 
-def CaptureSinkFactory(request, server) -> ((zmq.Socket, zmq.Socket), CaptureSink):
+def CaptureSinkFactory(request, server, start=True) -> ((zmq.Socket, zmq.Socket), CaptureSink):
     a, pipe = zpipe(zmq.Context.instance())
     if request.tap == 'adc':
-        saver = ADCCaptureSink(request.id, server, pipe)
+        saver = ADCCaptureSink(request.id, server, pipe, start=start)
     elif request.tap == 'photon':
         saver = PhotonCaptureSink(request.id, server, pipe)
     elif request.tap == 'postage':
         saver = PostageCaptureSink(request.id, server, pipe)
     elif request.tap == 'phase':
-        saver = ADCCaptureSink(request.id, server, pipe)
+        saver = ADCCaptureSink(request.id, server, pipe, start=start)
     elif request.tap == 'iq':
-        saver = ADCCaptureSink(request.id, server, pipe)
+        saver = ADCCaptureSink(request.id, server, pipe, start=start)
 
     return (a, pipe), saver
 
 
 class StatusListner(threading.Thread):
-    def __init__(self, id, source, initial_state='Created'):
+    def __init__(self, id, source, initial_state='Created', start=True):
         super().__init__(name=f'StautsListner_{id}')
         self.daemon = True
         self.shutdown = False
         self.source = source
         self.id = id
         self._status_messages = [initial_state]
-        self.start()
+        if start:
+            self.start()
 
     def run(self):
         with zmq.Context().instance() as ctx:
@@ -608,9 +628,9 @@ class CaptureRequest:
         self._last_status = status
         if not self._status_socket:
             context = context or zmq.Context().instance()
-            self._status_socket = context.socket(zmq.REQ)
+            self._status_socket = context.socket(zmq.PUB)
             self._status_socket.connect(status_server)
-        self._status_socket.send_multipart([id, status, message])
+        self._status_socket.send_multipart([self.id, f'{status}:{message}'.encode()])
 
     @property
     def size(self):
@@ -621,9 +641,9 @@ class CaptureJob:  # feedline client end
     def __init__(self, request: CaptureRequest, feedline_server: str, data_server: str, status_server: str,
                  submit=True):
         self.request = request
-        self._status_listner = StatusListner(request.id, status_server, initial_state='CREATED')
+        self._status_listner = StatusListner(request.id, status_server, initial_state='CREATED', start=False)
         self.feedline_server = feedline_server
-        self._savepipes, self._datasaver = CaptureSinkFactory(request, data_server)
+        self._savepipes, self._datasaver = CaptureSinkFactory(request, data_server, start=False)
         if submit:
             self.submit()
 
@@ -633,19 +653,27 @@ class CaptureJob:  # feedline client end
 
     def cancel(self):
         self._savepipes[0].send(b'')
-        with zmq.Context().instance() as ctx:
-            with ctx.socket(zmq.PUSH) as s:
-                s.connect(self.feedline_server)
-                s.send_multipart(['abort', self.request.id])
+        ctx = zmq.Context().instance()
+        with ctx.socket(zmq.REQ) as s:
+            s.connect(self.feedline_server)
+            s.send_pyobj(('abort', self.request.id))
+            return s.recv_json()
 
     def data(self):
         return self._datasaver.data()
 
     def submit(self):
-        with zmq.Context().instance() as ctx:
-            with ctx.socket(zmq.PUSH) as s:
-                s.connect(self.feedline_server)
-                s.send_multipart(['capture', self.request])
+        self._status_listner.start()
+        self._datasaver.start()
+        self._submit()
+
+    def _submit(self):
+        ctx = zmq.Context().instance()
+        # with zmq.Context().instance() as ctx:
+        with ctx.socket(zmq.REQ) as s:
+            s.connect(self.feedline_server)
+            s.send_pyobj(('capture', self.request))
+            return s.recv_json()
 
     def __del__(self):
         self._savepipes[0].send(b'')

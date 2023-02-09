@@ -1,7 +1,8 @@
 import zmq
 ctx = zmq.Context.instance()
 ctx.linger = 0
-
+import logging
+logging.basicConfig()
 from mkidgen3.objects import CaptureRequest, CaptureJob, FeedlineConfig
 
 # cap command default 8888
@@ -25,4 +26,4 @@ capture_data_server = 'tcp://localhost:8889'
 fc = FeedlineConfig()
 cr = CaptureRequest(1337, 'iq', fc, feedline_server)
 cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
-# cj.submit()
+cj.submit()
