@@ -25,7 +25,7 @@ import numpy as np
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
-CHUNKING_THRESHOLD = 1000
+CHUNKING_THRESHOLD = 1024**2
 
 
 def zpipe(ctx):
@@ -80,7 +80,7 @@ class FeedlineConfigSet:
 
 class DummyOverlay:
     class DummyBuffer(np.ndarray):
-        def freebuffer(self):
+        def free_buffer(self):
             pass
 
     class DummyCap:
@@ -267,7 +267,7 @@ class FeedlineReadout:
                         raise
                 data = ol.capture.capture(csize, tap=cr.tap, wait=True)
                 # data = np.random.uniform(-10000,10000, size=csize*2).astype(np.int16)
-                cr.add_data(data, status=f'Captured {i} of {len(chunks)}')
+                cr.add_data(data, status=f'{i+1}/{len(chunks)}')
                 data.free_buffer()
             cr.finish()
         except CaptureAbortedException as e:
@@ -276,9 +276,13 @@ class FeedlineReadout:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
             try:
                 cr.fail(f'Aborted due to {e}')
-            except zmq.EFAULT as ez:
+            except zmq.ZMQError as ez:
+                # if ez.errno == zmq.EFAULT:
                 getLogger(__name__).warning(f'Failed to send abort message {cr} due to {ez}')
+                # else:
+                #     getLogger(__name__).warning(f'Failed to send abort message {cr} due to {ez}')
         finally:
+            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
 
     @staticmethod
@@ -556,11 +560,11 @@ if __name__ == '__main__':
     dtd.start()
     getLogger(__name__).info(f'Publishing capture data to {cap_addr}')
 
-    std = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.PUB)
-    std.bind_in('inproc://cap_status.xsub')
-    std.bind_out(stat_addr)
+    std = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
     std.setsockopt_in(zmq.LINGER, 0)
     std.setsockopt_out(zmq.LINGER, 0)
+    std.bind_in('inproc://cap_stat.xsub')
+    std.bind_out(stat_addr)
     dtd.daemon = True
     std.start()
     getLogger(__name__).info(f'Publishing capture status information to {stat_addr}')

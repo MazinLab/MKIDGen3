@@ -12,6 +12,7 @@ import logging
 import binascii
 import os
 from logging import getLogger
+from hashlib import md5
 
 
 def zpipe(ctx):
@@ -140,13 +141,16 @@ class FLConfigMixin:
 
     def __hash__(self):
         def hasher(v):
+            import hashlib
             try:
-                return hash(v)
+                if v is None:
+                    v = '___python_None'
+                return md5(str(v).encode()).hexdigest()
             except TypeError:
-                return hash(v.tobytes())
+                return md5(v.tobytes()).hexdigest()
 
         hash_data = ((k, hasher(getattr(self, k))) for k in self._settings)
-        return hash(sorted(hash_data, key=lambda x: x[0]))
+        return int(hasher(sorted(hash_data, key=lambda x: x[0])),16)
 
     def __str__(self):
         name = self.__class__.split('.')[-1]
@@ -176,7 +180,12 @@ class FLMetaConfigMixin:
         return True
 
     def __hash__(self):
-        return hash(tuple(sorted(((k, hash(v)) for k, v in self.__dict__.items()), key=lambda x: x[0])))
+        def hasher(v):
+            if v is None:
+                v = '___python_None'
+            return md5(str(v).encode()).hexdigest()
+
+        return int(hasher(tuple(sorted(((k, hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
 
 class DACConfig(FLConfigMixin):
@@ -268,6 +277,7 @@ class PhotonPipeConfig(FLMetaConfigMixin):
         return self._chan_config
 
 
+
 class FeedlineStatus:
     def __init__(self):
         self.status = 'feedline status'
@@ -315,7 +325,7 @@ class CapDest:
         if self._status_dest:
             self._status = context.socket(zmq.REQ)
             self._status.connect(self._dest)
-        if self._dest.startswith('file'):
+        if self._dest.startswith('file://'):
             raise NotImplementedError
             f = os.path.open(self._dest, 'ab')
             f.close()
@@ -366,35 +376,45 @@ class ADCCaptureSink(CaptureSink, threading.Thread):
 
         try:
             with zmq.Context.instance() as ctx:
-                with ctx.socket(zmq.SUB) as data:
-                    data.setsockopt(zmq.SUBSCRIBE, self.cap_id)
-                    data.connect(self.data_source)
+                with ctx.socket(zmq.SUB) as data_sock:
+                    data_sock.setsockopt(zmq.SUBSCRIBE, self.cap_id)
+                    data_sock.connect(self.data_source)
 
                     poller = zmq.Poller()
                     poller.register(self.term, flags=zmq.POLLIN)
-                    poller.register(data, flags=zmq.POLLIN)
+                    poller.register(data_sock, flags=zmq.POLLIN)
 
                     recieved = []
+                    getLogger(__name__).debug(f'Listening for data for {self.cap_id}')
                     while True:
                         avail = dict(poller.poll())
                         if self.term in avail:
+                            getLogger(__name__).debug(f'Received shutdown order, terminating data acq. of {self}')
                             break
-                        id, data = data.recv_multipart(copy=False)
+                        id, data = data_sock.recv_multipart(copy=False)
                         if not data:
+                            getLogger(__name__).debug(f'Received null, capture data fully received')
                             break
-                        getLogger(__name__).debug('')
+                        getLogger(__name__).debug(f'Received data snippet for {self}')
                         d = blosc2.decompress(data)
                         # raw adc data is i0q0 i1q1 int16
+                        # raw iq data is i0_0q0_0 ... i2047_0q2047_0 i0_1q0_1 ... i, then q, then channel, then sample
+                        # raw phase data is p0_0 ... p2047_0 p0_1 ...  channel then sample sample
+                        # for the latter two the driver supports the capture of channel subsets which introduces an
+                        # the possibility that it isn't 0-2047 but 0- <2047 and that channel != resonator channel
 
                         # TODO save the data or do something with it
                         recieved.append(d)
 
                     # self.term.close()
-                    self.result = np.array(recieved)
+                    self.result = np.frombuffer(b''.join(recieved), dtype=np.int16)
+                    getLogger(__name__).debug(f'Capture data for {self.cap_id} processed into {self.result.size} '
+                                              f'{self.result.dtype}:'
+                                              f' {self.result}')
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
         # finally:
-            # self.term.close()
+        # self.term.close()
 
 
 class PhotonCaptureSink(CaptureSink):
@@ -526,7 +546,9 @@ class StatusListner(threading.Thread):
             self.start()
 
     def run(self):
-        with zmq.Context().instance() as ctx:
+        try:
+            ctx = zmq.Context().instance()
+            # with zmq.Context().instance() as ctx:
             with ctx.socket(zmq.SUB) as sock:
                 sock.linger = 0
                 sock.setsockopt(zmq.SUBSCRIBE, self.id)
@@ -534,13 +556,15 @@ class StatusListner(threading.Thread):
                 getLogger(__name__).debug(f'Listening for status updates to {self.id}')
                 while not self.shutdown:
                     try:
-                        id, _, update = sock.recv_multipart()
+                        id, update = sock.recv_multipart()
                         assert id == self.id
                     except zmq.ZMQError as e:
                         if e.errno == zmq.EAGAIN:
                             time.sleep(.1)  # play nice
                         elif e.errno == zmq.ETERM:
                             break
+                        else:
+                            raise e
                     else:
                         update = update.decode()
                         self._status_messages.append(update)
@@ -549,7 +573,10 @@ class StatusListner(threading.Thread):
                                 update.startswith('aborted') or
                                 update.startswith('failed')):
                             break
-                sock.close()
+        except zmq.ZMQError as e:
+            getLogger(__name__).critical(f"{self} died due to {e}")
+        finally:
+            sock.close()
 
     def latest(self):
         return self._status_messages[-1]
@@ -566,7 +593,8 @@ class CaptureRequest:
         self._data_socket = None
 
     def __hash__(self):
-        return hash((hash(self.feedline_config), self.tap, self.points, self._feedline_server))
+        return int(md5(str((hash(self.feedline_config), self.tap,
+                            self.points, self._feedline_server)).encode()).hexdigest(), 16)
 
     def __del__(self):
         self.destablish()
@@ -582,7 +610,7 @@ class CaptureRequest:
     def id(self):
         return str(hash(self)).encode()
 
-    def establish(self, data_server='inproc://cap_data.xsub', status_server='inproc://cap_status.xsub',
+    def establish(self, data_server='inproc://cap_data.xsub', status_server='inproc://cap_stat.xsub',
                   context: zmq.Context = None):
         context = context or zmq.Context.instance()
         self._status_socket = context.socket(zmq.PUB)
@@ -604,14 +632,17 @@ class CaptureRequest:
         self._established = False
 
     def fail(self, message, context: zmq.Context = None):
+        self._data_socket.send_multipart([self.id, b''])
         self.set_status('failed', message, context=context)
         self.destablish()
 
     def finish(self):
+        self._data_socket.send_multipart([self.id, b''])
         self.set_status('finished')
         self.destablish()
 
     def abort(self, message, context: zmq.Context = None):
+        self._data_socket.send_multipart([self.id, b''])
         self.set_status('aborted', message, context=context)
         self.destablish()
 
@@ -634,11 +665,22 @@ class CaptureRequest:
             context = context or zmq.Context().instance()
             self._status_socket = context.socket(zmq.PUB)
             self._status_socket.connect(status_server)
-        self._status_socket.send_multipart([self.id, f'{status}:{message}'.encode()])
+        update = f'{status}:{message}'
+        getLogger(__name__).debug(f'Published status update {self.id}: "{update}"')
+        self._status_socket.send_multipart([self.id, update.encode()])
 
     @property
     def size(self):
-        return self.points * 2048
+        return self.points * self.nchan * self.dwid
+
+    @property
+    def nchan(self):
+        return 2048
+
+    @property
+    def dwid(self):
+        """Data size of sample in bytes"""
+        return 4 if self.tap in ('adc', 'iq') else 2
 
 
 class CaptureJob:  # feedline client end
@@ -669,6 +711,7 @@ class CaptureJob:  # feedline client end
     def submit(self):
         self._status_listner.start()
         self._datasaver.start()
+        time.sleep(.2)
         self._submit()
 
     def _submit(self):

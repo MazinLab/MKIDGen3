@@ -10,9 +10,8 @@ from mkidgen3.objects import CaptureRequest, CaptureJob, FeedlineConfig
 # cap status 9000
 
 feedline_server = 'tcp://localhost:8888'
-status_server = 'tcp://localhost:8890'
 capture_data_server = 'tcp://localhost:8889'
-
+status_server = 'tcp://localhost:8890'
 
 #start a listner for status
 # pd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
