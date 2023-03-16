@@ -4,14 +4,12 @@ import logging
 import mkidgen3.clocking
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.schema import validate
-from mkidgen3.status_keeper import StatusKeeper
 from logging import getLogger
 import pynq
 import mkidgen3.drivers.rfdc
 import mkidgen3 as g3
-from mkidgen3.objects import CaptureRequest, CaptureAbortedException, FeedlineConfig, FeedlineStatus, DACStatus, \
-    DDCStatus, \
-    FLPhotonBuffer
+from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig
+from mkidgen3.feedline_objects import FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer
 from typing import List
 import zmq
 import blosc2
@@ -22,34 +20,26 @@ import argparse
 import binascii
 import os
 import numpy as np
+from feedline_objects import zpipe
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
 CHUNKING_THRESHOLD = 1024**2
 
 
-def zpipe(ctx):
-    """build inproc pipe for talking to threads
-    mimic pipe used in czmq zthread_fork.
-    Returns a pair of PAIRs connected via inproc
-    """
-    a = ctx.socket(zmq.PAIR)
-    b = ctx.socket(zmq.PAIR)
-    a.linger = b.linger = 0
-    a.hwm = b.hwm = 1
-    iface = "inproc://%s" % binascii.hexlify(os.urandom(8))
-    a.bind(iface)
-    b.connect(iface)
-    return a, b
-
-
 class FeedlineConfigSet:
+    # TODO
     def __init__(self):
         self._dict = {}
+        self._settings = {}
 
     def effective(self) -> FeedlineConfig:
-        """Return a FLSettings (or ducktype) resulting from settings in the set"""
-        return FeedlineConfig()
+        """Return a feedline configuration resulting from settings in the set"""
+        setting_dict = {}
+        #TODO
+        for settings in self._dict.values():
+            setting_dict.update({k: v for k, v in settings.settings_dict if v is not None})
+        return FeedlineConfig(from_dict=setting_dict)
 
     def pop(self, id) -> bool:
         """
@@ -60,6 +50,7 @@ class FeedlineConfigSet:
 
         Returns: True iff the effective settings changed as a result of the pop
         """
+        #TODO
         x = self.effective
         self._dict.pop(id)
         return self.effective != x
@@ -75,6 +66,9 @@ class FeedlineConfigSet:
 
         """
         self._dict[id] = config
+        for k in config:
+            if config[k] is not None
+            self._settings[k].add(id)
         return FeedlineConfig()
 
 
@@ -406,13 +400,17 @@ class FeedlineReadout:
                 aborted = False
                 if id in running_by_id:
                     aborted = True
+                    getLogger(__name__).debug(f'Found request {id} being serviced in {running_by_id[id]}. Aborting '
+                                              f'servicer.')
                     running_by_id[id].pipe.send('abort')  # TODO what happens to pipe when thread ends?
                 for cr in filter(lambda x: x.id == id, checked):
                     aborted = True
+                    getLogger(__name__).debug(f'Found request {id} in list of checked pending CR. Aborted')
                     checked.pop(checked.index(cr))
                     cr.abort('Abort by id')
                 for cr in filter(lambda x: x.id == id, to_check):
                     aborted = True
+                    getLogger(__name__).debug(f'Found request {id} in list of pending CR to be checked. Aborted')
                     to_check.pop(to_check.index(cr))
                     cr.abort('Abort by id')
 

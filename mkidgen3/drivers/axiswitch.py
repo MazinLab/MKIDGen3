@@ -1,4 +1,4 @@
-from pynq import allocate, DefaultIP
+from pynq import DefaultIP
 
 
 class AxisSwitch(DefaultIP):

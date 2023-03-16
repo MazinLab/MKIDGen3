@@ -5,8 +5,8 @@ import zmq
 import time
 
 import mkidgen3.overlay_helpers
-from mkidgen3.objects import *
-from mkidgen3.objects import CaptureRequest
+from mkidgen3.feedline_objects import *
+from mkidgen3.feedline_objects import CaptureRequest
 
 
 def do(socket, ol):

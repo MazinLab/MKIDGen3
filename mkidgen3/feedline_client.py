@@ -3,8 +3,7 @@ ctx = zmq.Context.instance()
 ctx.linger = 0
 import logging
 logging.basicConfig(level=logging.DEBUG)
-from mkidgen3.feedline_objects import CaptureRequest, FeedlineConfig
-from mkidgen3.feedline_client_objects import CaptureJob, PowerSweepJob
+from mkidgen3.feedline_objects import CaptureRequest, CaptureJob, FeedlineConfig
 
 # cap command default 8888
 # cap data 8889
@@ -27,9 +26,3 @@ fc = FeedlineConfig()
 cr = CaptureRequest(1337, 'iq', fc, feedline_server)
 cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
 cj.submit()
-
-
-ps = PowerSweepJob()
-jobs = ps.generate_jobs(submit=True)
-for j in jobs:
-    j.data()   # Will block until data is ready

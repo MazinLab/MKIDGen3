@@ -75,19 +75,6 @@ def fp_factory(int, frac, signed, frombits=False, include_index=False):
 #
 #     return data
 
-
-def fparray2numpy(a, complex='auto'):
-    if complex is 'auto':
-        complex = a.shape[-1]==2 and a.ndim>1
-
-    if complex:
-        out = np.zeros(a.size // 2, dtype=np.complex128)
-    else:
-        out = np.zeros(a.size)
-
-        packet.real = [float(fp(x)) for x in ibits]
-        packet.imag = [float(fp(x)) for x in qbits]
-
 def fparray(a, fpgen=None):
     """
     Convert a numpy array to a numpy object array of FpBinary numbers.
