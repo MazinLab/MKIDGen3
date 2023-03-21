@@ -35,15 +35,19 @@ class FeedlineConfigManager:
 
     def learn(self, config: FeedlineConfig):
         """Commit configuration info to memory for later use, hashed configurations are not learnable"""
-        self._cache.update({h: v for h, v in config.iter(hashed=False) if h not in self._cache})
+        if config.hashed:
+            return
+        self._cache.update({hash(v): v for k, v in config.iter(hashed=False)})# if hash(v) not in self._cache})
 
     def unlearned_hashes(self, config: FeedlineConfig):
         """
-        Return a set of any config hashes in the config that have not been learned.
+        Return a set of any hashed config hashes in the config that have not been learned.
 
         The presence of unlearned hashes will prevent a config from being added to the manager.
         """
-        return set(v for h, v in config.iter(unhashed=False) if k not in self._cache)
+        if config.hashed:
+            return hash(config) in self._cache
+        return set(hash(v) for k, v in config.iter(unhashed=False) if hash(v) not in self._cache)
 
     def effective(self) -> FeedlineConfig:
         """

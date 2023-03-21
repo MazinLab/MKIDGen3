@@ -139,8 +139,12 @@ class FLConfigMixin:
         o_hash = other if isinstance(other, int) else hash(other)
         return v_hash == o_hash
 
+    @property
+    def hashed(self):
+        return self._hashed is not None
+
     def __hash__(self):
-        if self._hashed:
+        if self.hashed:
             return self._hashed
 
         def hasher(v):
@@ -217,7 +221,7 @@ class FLMetaConfigMixin:
 
     @property
     def hashed(self):
-        return self._hashed !=None
+        return self._hashed != None
 
     @property
     def hashed_form(self):
@@ -396,15 +400,18 @@ class FeedlineConfig(FLMetaConfigMixin):
         """an iterator of config_key: value pairs"""
         for k, v in self:
             if isinstance(v, FLMetaConfigMixin):
-                for a, b in v:
-                    if hashed and b._hashed:
-                        yield f'{k}.{a}', b
-                    if unhashed and not b._hashed:
-                        yield f'{k}.{a}', b
+                if v.hashed:
+                    yield k, v
+                else:
+                    for a, b in v:
+                        if hashed and b.hashed:
+                            yield f'{k}.{a}', b
+                        if unhashed and not b.hashed:
+                            yield f'{k}.{a}', b
             else:
-                if hashed and b._hashed:
+                if hashed and b.hashed:
                     yield k, b
-                if unhashed and not b._hashed:
+                if unhashed and not b.hashed:
                     yield k, b
 
 
