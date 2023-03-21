@@ -32,7 +32,7 @@ def zpipe(ctx):
 
 
 class Waveform:
-    def __init__(self, frequencies, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
+    def __init__(self, frequencies=None, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
                  iq_ratios=None,
                  phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
         """
@@ -155,7 +155,7 @@ class FLConfigMixin:
         return int(hasher(sorted(hash_data, key=lambda x: x[0])), 16)
 
     def __str__(self):
-        name = self.__class__.split('.')[-1]
+        name = self.__class__.__name__
         if self._hashed:
             return f"{name}: {hash(self)} (hashed)"
         else:
@@ -199,10 +199,10 @@ class FLMetaConfigMixin:
         return int(hasher(tuple(sorted(((k, hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
     def __iter__(self):
-        for v in dir(self):
+        for v in vars(self):
             if v.startswith('__'):
                 continue
-            x = getattr(self, v)
+            # x = getattr(self, v)
             # if isinstance(x, FLMetaConfigMixin):
             #     for a, b in x:
             #         yield f'{v}.{a}', b
@@ -223,32 +223,40 @@ class FLMetaConfigMixin:
 
     @property
     def hashed_form(self):
-        for k, v in self:
-            type(self)(**{k: v.hashed_form for k, v in self})
+        def hasher(x):
+            v if v is None else v.hashed_form
+
+        return type(self)(**{k: hasher(v) for k, v in self})
 
 
 class DACConfig(FLConfigMixin):
     _settings = ('quant_vals', 'qmc_settings')
 
-    def __init__(self, ntones, name: str, n_uniform_tones=None, waveform_spec: [np.array, dict, Waveform] = None,
+    def __init__(self, n_uniform_tones=None, waveform_spec: [np.ndarray, dict, Waveform] = None,
                  qmc_settings=None, _hashed=''):
         self._hashed = _hashed
         if self._hashed:
             return
 
-        self.spec_type = name
-        freqs = power_sweep_freqs(ntones, bandwidth=SYSTEM_BANDWIDTH)
+        self._waveform = None
+        # self.spec_type =
+
         wf_spec = dict(n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
                        iq_ratios=None, phase_offsets=None, seed=2)
-        if isinstance(waveform_spec, (np.array, list)):
-            wf_spec['freqs'] = np.asarray(waveform_spec)
+        if n_uniform_tones is not None:
+            wf_spec['frequencies'] = power_sweep_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
 
-        if isinstance(waveform_spec, (dict, np.array, list)):
+        if isinstance(waveform_spec, (np.ndarray, list)):
+            wf_spec['frequencies'] = np.asarray(waveform_spec)
+        elif isinstance(waveform_spec, dict):
             wf_spec.update(waveform_spec)
-            self._waveform = Waveform(**wf_spec)
         elif isinstance(waveform_spec, Waveform):
             self._waveform = waveform_spec
-        else:
+
+        if not isinstance(waveform_spec,Waveform):
+            self._waveform = Waveform(**wf_spec)
+
+        if self._waveform is None:
             raise ValueError('doing it wrong')
 
         self.qmc_settings = qmc_settings
@@ -266,7 +274,7 @@ class DACConfig(FLConfigMixin):
 class IFConfig(FLConfigMixin):
     _settings = ('lo', 'adc_attn', 'dac_attn')
 
-    def __init__(self, lo, adc_attn, dac_attn, _hashed=''):
+    def __init__(self, lo=None, adc_attn=None, dac_attn=None, _hashed=''):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -279,7 +287,7 @@ class IFConfig(FLConfigMixin):
 class TriggerConfig(FLConfigMixin):
     _settings = ('holdoffs', 'thresholds')
 
-    def __init__(self, holdoffs: np.ndarray, thresholds: np.ndarray, _hashed=''):
+    def __init__(self, holdoffs: np.ndarray=None, thresholds: np.ndarray=None, _hashed=''):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -291,7 +299,7 @@ class TriggerConfig(FLConfigMixin):
 class ChannelConfig(FLConfigMixin):
     _settings = ('frequencies',)
 
-    def __init__(self, frequencies, _hashed=''):
+    def __init__(self, frequencies=None, _hashed=''):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -302,7 +310,7 @@ class ChannelConfig(FLConfigMixin):
 class DDCConfig(FLConfigMixin):
     _settings = ('tones', 'loop_center', 'phase_offset', 'center_relative', 'quantize')
 
-    def __init__(self, tones, loop_center, phase_offset, _hashed=''):
+    def __init__(self, tones=None, loop_center=None, phase_offset=None, _hashed=''):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -317,7 +325,7 @@ class DDCConfig(FLConfigMixin):
 class FilterConfig(FLConfigMixin):
     _settings = ('coefficients',)
 
-    def __init__(self, coefficients, _hashed=''):
+    def __init__(self, coefficients=None, _hashed=''):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -326,12 +334,12 @@ class FilterConfig(FLConfigMixin):
 
 
 class PhotonPipeConfig(FLMetaConfigMixin):
-    def __init__(self, chan: ChannelConfig = None, ddc: DDCConfig = None, filter: FilterConfig = None,
-                 trig: TriggerConfig = None):
-        self.chan_config = chan
-        self.ddc_config = ddc
-        self.trig_config = trig
-        self.filter_config = filter
+    def __init__(self, chan_config: ChannelConfig = None, ddc_config: DDCConfig = None,
+                 filter_config: FilterConfig = None, trig_config: TriggerConfig = None):
+        self.chan_config = chan_config
+        self.ddc_config = ddc_config
+        self.trig_config = trig_config
+        self.filter_config = filter_config
 
     def __str__(self):
         return (f"PhotonPipe {hash(self)}:\n"
