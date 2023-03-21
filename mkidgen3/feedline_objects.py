@@ -191,6 +191,9 @@ class FLMetaConfigMixin:
         return True
 
     def __hash__(self):
+        if self._hashed:
+            return self._hashed
+
         def hasher(v):
             if v is None:
                 v = '___python_None'
@@ -199,8 +202,11 @@ class FLMetaConfigMixin:
         return int(hasher(tuple(sorted(((k, hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
     def __iter__(self):
+        if self.hashed:
+            raise StopIteration
+
         for v in vars(self):
-            if v.startswith('__'):
+            if v.startswith('_'):
                 continue
             # x = getattr(self, v)
             # if isinstance(x, FLMetaConfigMixin):
@@ -209,24 +215,17 @@ class FLMetaConfigMixin:
             # else:
             yield v, getattr(self, v)
 
-    def __eq__(self, other):
-        """ Compatibility of hashed configs is more restrictive than unhashed as the comparison can not
-        handle the compatibility of 'None' """
-        for k, v in self:
-            if v is None or getattr(other, k) is None:
-                continue
-            elif v == getattr(other, k):
-                continue
-            else:
-                return False
-        return True
+    @property
+    def hashed(self):
+        return self._hashed !=None
 
     @property
     def hashed_form(self):
-        def hasher(x):
-            v if v is None else v.hashed_form
-
-        return type(self)(**{k: hasher(v) for k, v in self})
+        return type(self)(_hashed=hash(self))
+        # def hasher(x):
+        #     v if v is None else v.hashed_form
+        #
+        # return type(self)(**{k: hasher(v) for k, v in self})
 
 
 class DACConfig(FLConfigMixin):
@@ -335,18 +334,26 @@ class FilterConfig(FLConfigMixin):
 
 class PhotonPipeConfig(FLMetaConfigMixin):
     def __init__(self, chan_config: ChannelConfig = None, ddc_config: DDCConfig = None,
-                 filter_config: FilterConfig = None, trig_config: TriggerConfig = None):
+                 filter_config: FilterConfig = None, trig_config: TriggerConfig = None,
+                 _hashed=None):
+        self._hashed = _hashed
+        if self._hashed:
+            return
+
         self.chan_config = chan_config
         self.ddc_config = ddc_config
         self.trig_config = trig_config
         self.filter_config = filter_config
 
     def __str__(self):
-        return (f"PhotonPipe {hash(self)}:\n"
-                f"  Chan: {self.chan_config}\n"
-                f"  DDC: {self.ddc_config}\n"
-                f"  Filt: {self.filter_config}\n"
-                f"  Trig: {self.trig_config}")
+        if self.hashed:
+            return f"{self.__class__.__name__}: {hash(self)} (hashed)"
+        else:
+            return (f"PhotonPipe {hash(self)}:\n"
+                    f"  Chan: {self.chan_config}\n"
+                    f"  DDC: {self.ddc_config}\n"
+                    f"  Filt: {self.filter_config}\n"
+                    f"  Trig: {self.trig_config}")
 
 
 class FeedlineConfig(FLMetaConfigMixin):
@@ -357,7 +364,11 @@ class FeedlineConfig(FLMetaConfigMixin):
         return FeedlineConfig(**cfg_dict)  #TODO
 
     def __init__(self, if_setup: IFConfig = None, dac_setup: DACConfig = None, pp_setup: PhotonPipeConfig = None,
-                 adc_setup=None):
+                 adc_setup=None, _hashed=None):
+        self._hashed = _hashed
+        if self._hashed:
+            return
+
         self.if_setup = if_setup
         self.dac_setup = dac_setup
         self.pp_setup = pp_setup
@@ -366,12 +377,15 @@ class FeedlineConfig(FLMetaConfigMixin):
         # settings for iq and phase
 
     def __str__(self):
-        pp = str(self.pp_setup).replace('\n  ', '\n    ')
-        return (f"FeedlineConfig {hash(self)}:\n"
-                f"  IF: {self.if_setup}\n"
-                f"  DAC: {self.dac_setup}\n"
-                f"  ADC: {self.adc_setup}\n"
-                f"  PP: {pp}")
+        if self.hashed:
+            return f"{self.__class__.__name__}: {hash(self)} (hashed)"
+        else:
+            pp = str(self.pp_setup).replace('\n  ', '\n    ')
+            return (f"FeedlineConfig {hash(self)}:\n"
+                    f"  IF: {self.if_setup}\n"
+                    f"  DAC: {self.dac_setup}\n"
+                    f"  ADC: {self.adc_setup}\n"
+                    f"  PP: {pp}")
 
     def compatible_with(self, other):
         """ Compatibility of hashed configs is more restrictive than unhashed as the comparison can not
