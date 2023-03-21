@@ -131,6 +131,8 @@ class Waveform:
 
 
 class FLConfigMixin:
+    _settings = tuple()
+
     def __eq__(self, other):
         """ Feedline configs are equivalent if all of their settings are equivalent"""
         if not isinstance(other, (type(self), int)):
@@ -170,10 +172,21 @@ class FLConfigMixin:
     def hashed_form(self):
         return type(self)(_hashed=hash(self))
 
-    def settings_dict(self):
-        if self._hashed:
-            raise ValueError('Hashed configs do not support settings retrieval')
-        return {k: getattr(self, k) for k in self._settings}
+    def settings_dict(self, hashed=False, unhasher_cache=None):
+        """Will not include settings that are None"""
+        if self._hashed and not hashed:
+            try:
+                x = unhasher_cache[self._hashed]
+            except KeyError:
+                raise ValueError('Hashed configs do not support unhashed settings '
+                                 'retrieval without an entry the unhasher_cache')
+        else:
+            x = self
+        if hashed:
+            d = {'_hashed': self._hashed}
+        else:
+            d = {k: getattr(x, k) for k in self._settings if getattr(x, k) is not None}
+        return d
 
 
 class FLMetaConfigMixin:
@@ -195,9 +208,6 @@ class FLMetaConfigMixin:
         return True
 
     def __hash__(self):
-        if self._hashed:
-            return self._hashed
-
         def hasher(v):
             if v is None:
                 v = '___python_None'
@@ -206,30 +216,27 @@ class FLMetaConfigMixin:
         return int(hasher(tuple(sorted(((k, hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
     def __iter__(self):
-        if self.hashed:
-            raise StopIteration
-
         for v in vars(self):
             if v.startswith('_'):
                 continue
-            # x = getattr(self, v)
-            # if isinstance(x, FLMetaConfigMixin):
-            #     for a, b in x:
-            #         yield f'{v}.{a}', b
-            # else:
             yield v, getattr(self, v)
 
     @property
-    def hashed(self):
-        return self._hashed != None
-
-    @property
     def hashed_form(self):
-        return type(self)(_hashed=hash(self))
-        # def hasher(x):
-        #     v if v is None else v.hashed_form
-        #
-        # return type(self)(**{k: hasher(v) for k, v in self})
+        d = {k: v.settings_dict(hashed=True) for k, v in self}
+        type(self)(**d)
+
+    def settings_dict(self, hashed=False):
+        return {k: v.settings_dict(hashed=hashed) for k, v in self}
+
+
+class ADCconfig(FLConfigMixin):
+    _settings = tuple()
+
+    def __init__(self, _hashed=''):
+        self._hashed = _hashed
+        if self._hashed:
+            return
 
 
 class DACConfig(FLConfigMixin):
@@ -344,10 +351,10 @@ class PhotonPipeConfig(FLMetaConfigMixin):
         if self._hashed:
             return
 
-        self.chan_config = chan_config
-        self.ddc_config = ddc_config
-        self.trig_config = trig_config
-        self.filter_config = filter_config
+        self.chan_config = ChannelConfig(**chan_config) if isinstance(chan_config, dict) else chan_config
+        self.ddc_config = DDCConfig(**ddc_config) if isinstance(ddc_config, dict) else ddc_config
+        self.trig_config = TriggerConfig(**trig_config) if isinstance(trig_config, dict) else trig_config
+        self.filter_config = FilterConfig(**filter_config) if isinstance(filter_config, dict) else filter_config
 
     def __str__(self):
         if self.hashed:
@@ -363,20 +370,19 @@ class PhotonPipeConfig(FLMetaConfigMixin):
 class FeedlineConfig(FLMetaConfigMixin):
     """All attributes must be _FLConfigMixin"""
 
-    @staticmethod
-    def from_dict(cfg_dict):
-        return FeedlineConfig(**cfg_dict)  #TODO
-
-    def __init__(self, if_setup: IFConfig = None, dac_setup: DACConfig = None, pp_setup: PhotonPipeConfig = None,
-                 adc_setup=None, _hashed=None):
+    def __init__(self, if_config: IFConfig = None, dac_config: DACConfig = None, pp_config: PhotonPipeConfig = None,
+                 adc_config: ADCconfig = None, _hashed=None):
         self._hashed = _hashed
         if self._hashed:
             return
-
-        self.if_setup = if_setup
-        self.dac_setup = dac_setup
-        self.pp_setup = pp_setup
-        self.adc_setup = adc_setup
+        IFConfig(**if_config) if isinstance(if_config, dict) else if_config
+        DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
+        PhotonPipeConfig(**pp_config) if isinstance(pp_config, dict) else pp_config
+        ADCconfig(**adc_config) if isinstance(adc_config, dict) else adc_config
+        self.if_config = IFConfig(**if_config) if isinstance(if_config, dict) else if_config
+        self.dac_config = DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
+        self.pp_config = PhotonPipeConfig(**pp_config) if isinstance(pp_config, dict) else pp_config
+        self.adc_config = ADCconfig(**adc_config) if isinstance(adc_config, dict) else adc_config
         #TODO to support captures of less than all groups we need to add a self.capture_setup which has group
         # settings for iq and phase
 
@@ -384,11 +390,11 @@ class FeedlineConfig(FLMetaConfigMixin):
         if self.hashed:
             return f"{self.__class__.__name__}: {hash(self)} (hashed)"
         else:
-            pp = str(self.pp_setup).replace('\n  ', '\n    ')
+            pp = str(self.pp_config).replace('\n  ', '\n    ')
             return (f"FeedlineConfig {hash(self)}:\n"
-                    f"  IF: {self.if_setup}\n"
-                    f"  DAC: {self.dac_setup}\n"
-                    f"  ADC: {self.adc_setup}\n"
+                    f"  IF: {self.if_config}\n"
+                    f"  DAC: {self.dac_config}\n"
+                    f"  ADC: {self.adc_config}\n"
                     f"  PP: {pp}")
 
     def compatible_with(self, other):
@@ -400,19 +406,13 @@ class FeedlineConfig(FLMetaConfigMixin):
         """an iterator of config_key: value pairs"""
         for k, v in self:
             if isinstance(v, FLMetaConfigMixin):
-                if v.hashed:
-                    yield k, v
-                else:
-                    for a, b in v:
-                        if hashed and b.hashed:
-                            yield f'{k}.{a}', b
-                        if unhashed and not b.hashed:
-                            yield f'{k}.{a}', b
+                for a, b in v.iter(hashed=hashed, unhashed=unhashed):
+                    yield f'{k}.{a}', b
             else:
-                if hashed and b.hashed:
-                    yield k, b
-                if unhashed and not b.hashed:
-                    yield k, b
+                if hashed and v.hashed:
+                    yield k, v
+                if unhashed and not v.hashed:
+                    yield k, v
 
 
 class FeedlineStatus:

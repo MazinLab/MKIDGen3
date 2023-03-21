@@ -54,11 +54,20 @@ class FeedlineConfigManager:
         Return a feedline configuration resulting from settings in the set,
         the config will not contain any hashed settings.
         """
-        setting_dict = {}
+        from collections import defaultdict
+        from mkidgen3.feedline_objects import FLMetaConfigMixin
+        setting_dict = defaultdict(dict)
+
         for config in self._config.values():
-            setting_dict.update({k: self._cache[v] for k, v in config.iter(hashed_only=True)})
-            setting_dict.update({k: v for k, v in config.iter(unhashed_only=True)})
-        return FeedlineConfig.from_dict(setting_dict)
+            for k, v in config:
+                if isinstance(v, FLMetaConfigMixin):
+                    for k2, v2 in v:
+                        if k2 not in setting_dict[k]:
+                            setting_dict[k][k2] = {}
+                        setting_dict[k][k2].update(v2.settings_dict(unhasher_cache=self._cache))
+                else:
+                    setting_dict[k].update(v.settings_dict(unhasher_cache=self._cache))
+        return FeedlineConfig(**setting_dict)
 
     def pop(self, id) -> bool:
         """
