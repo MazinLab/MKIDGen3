@@ -251,7 +251,7 @@ class DDCConfig(FLConfigMixin):
 
 class FilterConfig(FLConfigMixin):
     def __init__(self):
-        self.coefficients = np.zeros(2048, 30)
+        self.coefficients = np.zeros((2048, 30), dtype=np.int16)
         self._settings = ('coefficients',)
 
 
