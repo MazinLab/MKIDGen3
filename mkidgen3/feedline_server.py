@@ -27,36 +27,55 @@ COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 CHUNKING_THRESHOLD = 1024**2
 
 
-class FeedlineConfigSet:
-    # TODO
+class FeedlineConfigManager:
     def __init__(self):
-        self._dict = {}
+        self._config = {}
         self._settings = {}
+        self._cache = {}
+
+    def learn(self, config: FeedlineConfig):
+        """Commit configuration info to memory for later use, hashed configurations are not learnable"""
+        self._cache.update({h: v for h, v in config.iter(hashed=False) if h not in self._cache})
+
+    def unlearned_hashes(self, config: FeedlineConfig):
+        """
+        Return a set of any config hashes in the config that have not been learned.
+
+        The presence of unlearned hashes will prevent a config from being added to the manager.
+        """
+        return set(v for h, v in config.iter(unhashed=False) if k not in self._cache)
 
     def effective(self) -> FeedlineConfig:
-        """Return a feedline configuration resulting from settings in the set"""
+        """
+        Return a feedline configuration resulting from settings in the set,
+        the config will not contain any hashed settings.
+        """
         setting_dict = {}
-        #TODO
-        for settings in self._dict.values():
-            setting_dict.update({k: v for k, v in settings.settings_dict if v is not None})
-        return FeedlineConfig(from_dict=setting_dict)
+        for config in self._config.values():
+            setting_dict.update({k: self._cache[v] for k, v in config.iter(hashed_only=True)})
+            setting_dict.update({k: v for k, v in config.iter(unhashed_only=True)})
+        return FeedlineConfig.from_dict(setting_dict)
 
     def pop(self, id) -> bool:
         """
         Remove settings from the set
 
         Args:
-            id: settings id to remove, raises KeyError if object isn't in the set
+            id: settings id to remove, raises KeyError if the key hasn't been added to the manager
 
         Returns: True iff the effective settings changed as a result of the pop
         """
-        #TODO
-        x = self.effective
-        self._dict.pop(id)
-        return self.effective != x
+        x = self.effective()
+        self._config.pop(id)
+        return self.effective() != x
 
     def add(self, id, config: FeedlineConfig) -> FeedlineConfig:
         """
+        Add a feedline config to the managed set of settings with an id for later removal. Configs with hashed
+        settings can not be added unless their hashes have been previously learned. All unhashed settings are learned
+        upon addition.
+
+        If the added config has settings that are not compatible with existing settings it the set then XXX happen
 
         Args:
             id: an id for the settings (for later removal from the set)
@@ -64,11 +83,19 @@ class FeedlineConfigSet:
 
         Returns: A feedline config with the settings that need updating populated and the rest None
 
+        Raises: ValueError if a config contains unlearned hashes.
+
         """
-        self._dict[id] = config
-        for k in config:
-            if config[k] is not None
-            self._settings[k].add(id)
+        self.learn(config)
+        if self.unlearned_hashes(config):
+            raise ValueError('Config contains unlearned hashes')
+        self._config[id] = config
+
+        #TODO
+        for fcfg in self._config.values():
+            for k, v in
+            if config[k] is not None:
+                self._settings[k].add(id)
         return FeedlineConfig()
 
 
@@ -95,7 +122,7 @@ class FeedlineHardware:
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
                  ignore_version=False, download=False, program_clock=True):
 
-        self._config_pot = FeedlineConfigSet()  # a set of FeedlineStettings
+        self.config_manager = FeedlineConfigManager()
         self._clock_source = validate(clock_source=clock_source, error=True)
         try:
             self._ol = pynq.Overlay(bitstream, download=download, ignore_version=ignore_version)
@@ -141,18 +168,20 @@ class FeedlineHardware:
             self._if_board.power_off(save_settings=False)
 
     def config_compatible_with(self, config: FeedlineConfig):
-        return self._config_pot.effective()==config
+        return self.config_manager.effective()==config
 
     def derequire_config(self, id):
+        """True iff the required settings changed as a result"""
         try:
-            self._config_pot.pop(id)
+            return self.config_manager.pop(id)
         except KeyError:
-            pass
+            return False
 
     def apply_config(self, id, config: FeedlineConfig):
         """Takes and applies a config to the hardware, updates and tracks the effective set of settings"""
-        # IF board
-        fl_setup = self._config_pot.add(id, config)
+
+        #Add the config to the pot and get the effective config
+        fl_setup = self.config_manager.add(id, config)
 
         # IF Board
         if fl_setup.if_setup is not None:
@@ -351,6 +380,38 @@ class FeedlineReadout:
 
         to_check = []
         checked = []
+
+        def abort_all():
+            for cr in checked + to_check:
+                cr.abort('Abort all')  # signal that captures will never happen
+            for v in running_by_id.values():  # stop any running tap threads
+                try:
+                    v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
+                except zmq.ZMQError:
+                    getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
+                    raise
+
+        def abort_by_id(id, checked, to_check, running_by_id):
+            aborted = False
+            if id in running_by_id:
+                aborted = True
+                getLogger(__name__).debug(f'Found request {id} being serviced in {running_by_id[id]}. Aborting '
+                                          f'servicer.')
+                running_by_id[id].pipe.send('abort')  # TODO what happens to pipe when thread ends?
+            for cr in filter(lambda x: x.id == id, checked):
+                aborted = True
+                getLogger(__name__).debug(f'Found request {id} in list of checked pending CR. Aborted')
+                checked.pop(checked.index(cr))
+                cr.abort('Abort by id')
+            for cr in filter(lambda x: x.id == id, to_check):
+                aborted = True
+                getLogger(__name__).debug(f'Found request {id} in list of pending CR to be checked. Aborted')
+                to_check.pop(to_check.index(cr))
+                cr.abort('Abort by id')
+
+            if not aborted:
+                getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
+
         getLogger(__name__).info('Main thread starting')
         while True:
             # Check to see if any capture threads have finished
@@ -358,79 +419,54 @@ class FeedlineReadout:
             # for each finished capture thread remove its settings from the requirements pot and cleanup
 
             if bool(complete):  # need to check up to the size of the queue if anything finished
+                #TODO technically if what finished didn't change the effective settings we might not need to but
+                # ignore this optimization for now
                 to_check.extend(checked)
                 checked = []
 
+            effective_changed = False
             for k in complete:
-                self.hardware.derequire_config(tap_threads[k].request.id)
+                effective_changed |= self.hardware.derequire_config(tap_threads[k].request.id)
                 del tap_threads[k]
                 tap_threads[k] = None
 
             running_by_id = {tt.request.id: tt for tt in tap_threads.values() if tt is not None}
 
+            cr = None  # CR is the capture request that will be ckicked off this iteration of the loop
             # check for any incoming info: CapRequest, ABORT id|all, EXIT
             cmd, data = '', ''
             try:
                 cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
             except zmq.ZMQError as e:
-                if e.errno == zmq.ETERM:
+                if e.errno !=zmq.EAGAIN:
                     for cr in checked + to_check:
                         cr.abort('Keyboard interrupt')  # signal that captures will never happen
                     for v in running_by_id.values():
                         v.pipe.send('abort')
-                    break
-                elif e.errno != zmq.EAGAIN:
-                    raise e  # real error
-            else:
-                if cmd not in ('exit', 'abort', 'capture'):
-                    getLogger(__name__).error(f'Received invalid command "{cmd}"')
-                    cmd, data = '', ''
+                    if e.errno== zmq.ETERM:
+                        break
+                    else:
+                        raise e  # real error
 
-            def abort_all():
-                for cr in checked + to_check:
-                    cr.abort('Abort all')  # signal that captures will never happen
-                for v in running_by_id.values():  # stop any running tap threads
-                    try:
-                        v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
-                    except zmq.ZMQError:
-                        getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
-                        raise
-
-            def abort_by_id(id):
-                aborted = False
-                if id in running_by_id:
-                    aborted = True
-                    getLogger(__name__).debug(f'Found request {id} being serviced in {running_by_id[id]}. Aborting '
-                                              f'servicer.')
-                    running_by_id[id].pipe.send('abort')  # TODO what happens to pipe when thread ends?
-                for cr in filter(lambda x: x.id == id, checked):
-                    aborted = True
-                    getLogger(__name__).debug(f'Found request {id} in list of checked pending CR. Aborted')
-                    checked.pop(checked.index(cr))
-                    cr.abort('Abort by id')
-                for cr in filter(lambda x: x.id == id, to_check):
-                    aborted = True
-                    getLogger(__name__).debug(f'Found request {id} in list of pending CR to be checked. Aborted')
-                    to_check.pop(to_check.index(cr))
-                    cr.abort('Abort by id')
-
-                if not aborted:
-                    getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
+            if cmd not in ('exit', 'abort', 'capture'):
+                getLogger(__name__).error(f'Received invalid command "{cmd}"')
+                cmd, data = '', ''
 
             if cmd == 'exit':
                 abort_all()
                 break
-
-            if cmd == 'abort':
+            elif cmd == 'abort':
                 if data == 'all':
                     abort_all()
                     checked, to_check = [], []
                 else:
-                    abort_by_id(data)
-
-            cr = None  # CR is the capture request that will be ckicked off this iteration of the loop
-            if cmd == 'capture':
-                if (not to_check and tap_threads[data.type] is None and
+                    abort_by_id(data, checked, to_check, running_by_id)
+            elif cmd == 'capture':
+                self.hardware.config_manager.learn(data.feedline_config)
+                unknown = self.hardware.config_manager.unlearned_hashes(data.feedline_config)
+                if unknown:
+                    data.abort({'resp': 'ERROR', 'data': unknown})  # We've never been sent the full config necessary
+                elif (not to_check and tap_threads[data.type] is None and
                         self.hardware.config_compatible_with(data.feedline_config)):
                     cr = data  # this can be run and nothing else, so it will be done below
                 else:
@@ -459,10 +495,11 @@ class FeedlineReadout:
                     cr.set_status('queued', f'tap location in use by: {tap_threads[cr.type].request.id}')
                     checked.append(cr)
                     continue
-                elif not self.hardware.config_compatible_with(cr.feedline_config):
-                    cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
-                    checked.append(cr)
-                    continue
+                else:
+                    if not self.hardware.config_compatible_with(cr.feedline_config):
+                        cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
+                        checked.append(cr)
+                        continue
             except zmq.ZMQError as e:
                 getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
                 continue
@@ -511,22 +548,6 @@ def parse_cl():
     parser.add_argument('--iv', dest='ignore_fpga_driver_version', action='store_true', required=False,
                         help='Ignore FPGA driver version checks', default=False)
     return parser.parse_args()
-
-
-def zpipe(ctx):
-    """
-    build an inproc pipe for talking to threads
-    mimic pipe used in czmq zthread_fork.
-    Returns a pair of PAIRs connected via inproc
-    """
-    a = ctx.socket(zmq.PAIR)
-    b = ctx.socket(zmq.PAIR)
-    a.linger = b.linger = 0
-    a.hwm = b.hwm = 1
-    iface = "inproc://%s" % binascii.hexlify(os.urandom(8))
-    a.bind(iface)
-    b.connect(iface)
-    return a, b
 
 
 if __name__ == '__main__':
@@ -623,7 +644,7 @@ if __name__ == '__main__':
                 socket.send_json(f'ERROR: {e}')
         elif cmd == 'capture':
             cap_pipe.send_pyobj(('capture', arg))
-            socket.send_json('OK')
+            socket.send_json({'resp': 'OK', 'code':0})
 
     main.join()
     socket.close()
