@@ -59,8 +59,8 @@ class _Waveform:
         return 'simple'
 
 
-class QuantizedTabulatedWaveform(_Waveform):
-    def __init__(self, quantized_values=None):
+class QuantizedWaveform(_Waveform):
+    def __init__(self, quantized_values=None, sample_rate=None):
         self._quantized_values = quantized_values
 
     @property
@@ -74,7 +74,7 @@ class QuantizedTabulatedWaveform(_Waveform):
 
     @property
     def sample_rate(self):
-        return 1209481743091273
+        return self.sample_rate
 
 
 class FreqlistWaveform(_Waveform):
@@ -82,7 +82,7 @@ class FreqlistWaveform(_Waveform):
                  iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
         """
         Args:
-            frequencies (float): list/array of frequencies in the comb
+            frequencies (array): list/array of frequencies in the comb
             n_samples (int): number of complex samples in waveform
             sample_rate (float): waveform sample rate in Hz
             amplitudes (float): list/array of amplitudes, one per frequency in (0,1]. If None, all ones is assumed.
@@ -98,16 +98,19 @@ class FreqlistWaveform(_Waveform):
             quant_vals (int): Computed waveform values quantized to DAC digital format with optimum precision
             max_quant_error (float): maximum difference between quant_vals and values scaled to the DAC max output.
         """
-        self.freqs = frequencies
-        self.points = n_samples
+        self.freqs = np.asarray(frequencies)
+        self.n_samples = n_samples
         self.fs = sample_rate
         self.amps = amplitudes if amplitudes is not None else np.ones_like(frequencies)
-        self.phases = phases if phases is not None else np.random.default_rng(seed=seed).uniform(0., 2. * np.pi,
-                                                                                                 len(frequencies))
-        self.iq_ratios = iq_ratios if iq_ratios is not None else np.ones_like(frequencies)
-        self.phase_offsets = phase_offsets if phase_offsets is not None else np.zeros_like(frequencies)
-        self._seed = seed
+
+        if phases is None:
+            self.phases = np.random.default_rng(seed=seed).uniform(0., 2. * np.pi, size=self.freqs.size)
+        else:
+           self.phases = np.asarray(phases)
+        self.iq_ratios = np.asarray(iq_ratios) if iq_ratios is not None else np.ones_like(frequencies)
+        self.phase_offsets = np.asarray(phase_offsets) if phase_offsets is not None else np.zeros_like(frequencies)
         self.quant_freqs = quantize_frequencies(self.freqs, rate=sample_rate, n_samples=n_samples)
+        self._seed = seed
         self._values = None
         self.quant_vals = None
         self.quant_error = None
@@ -122,12 +125,12 @@ class FreqlistWaveform(_Waveform):
             if self.maximize_dynamic_range:
                 self._optimize_random_phase(max_quant_err=3 * predict_quantization_error(resolution=DAC_RESOLUTION),
                                             max_attempts=10)
-        return self._values
+        return self._values if self.maximize_dynamic_range else self.quant_vals
 
     def _compute_waveform(self):
-        iq = np.zeros(self.points, dtype=np.complex64)
+        iq = np.zeros(self.n_samples, dtype=np.complex64)
         # generate each signal
-        t = 2 * np.pi * np.arange(self.points) / self.fs
+        t = 2 * np.pi * np.arange(iq.size) / self.fs
         logging.getLogger(__name__).debug(
             f'Computing net waveform with {self.freqs.size} tones. For 2048 tones this takes about 7 min.')
         for i in range(self.freqs.size):
@@ -173,26 +176,18 @@ class FreqlistWaveform(_Waveform):
                 raise Exception("Process reach maximum attempts: Could not find solution below max quantization error.")
         return
 
-class OptimallyQuantizedFreqlistWaveform(FreqlistWaveform):
     @property
     def output_waveform(self):
         """Subclasses shall implement are return """
-        return self.quant_vals
+        return self.values
 
     @property
     def fpgen(self):
-        return None
-
-class FastQuantizedFreqlistWaveform(FreqlistWaveform):
-    @property
-    def output_waveform(self):
-        """Subclasses shall implement are return """
-        return self._values
+        return None if self.maximize_dynamic_range else 'simple'
 
     @property
-    def fpgen(self):
-        return 'simple'
-
+    def sample_rate(self):
+        return self.fs
 
 class FLConfigMixin:
     _settings = tuple()
@@ -317,17 +312,16 @@ class ADCconfig(FLConfigMixin):
 
 def Waveform(n_uniform_tones=None, fpgen=None, output_waveform=None, frequencies=None,
              n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-             iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=):
+             iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True):
     if output_waveform is not None:
-        return QuantizedTabulatedWaveform(output_waveform)
+        return QuantizedWaveform(quantized_values=output_waveform, sample_rate=sample_rate)
+
     if n_uniform_tones is not None:
         frequencies = power_sweep_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
     frequencies = np.asarray(frequencies)
-
-    elif ...:
-        return FastQuantizedFreqlistWaveform()
-    elif ...:
-        return OptimallyQuantizedFreqlistWaveform()
+    return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
+                            amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
+                            seed=seed, maximize_dynamic_range=maximize_dynamic_range)
 
 
 class DACConfig(FLConfigMixin):
@@ -339,11 +333,14 @@ class DACConfig(FLConfigMixin):
             return
 
         waveform_spec['output_waveform']=output_waveform
-        output_waveform['fpgen']=fpgen
+        waveform_spec['fpgen']=fpgen
+        waveform_spec['n_samples']=2 ** 19
+        waveform_spec['sample_rate'] = 4.096e9
         self._waveform = Waveform(**output_waveform)
         self.output_waveform = self._waveform.output_waveform
         self.fpgen = self._waveform.fpgen
         self.qmc_settings = qmc_settings
+
 
 class IFConfig(FLConfigMixin):
     _settings = ('lo', 'adc_attn', 'dac_attn')
