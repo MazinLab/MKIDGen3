@@ -43,11 +43,43 @@ def hasher(v, pass_none=False):
     except TypeError:
         return md5(v.tobytes()).hexdigest()
 
+class _Waveform:
+    @property
+    def output_waveform(self):
+        """Subclasses shall implement are return """
+        pass
 
-class Waveform:
+    @property
+    def sample_rate(self):
+        """Subclasses shall implement are return """
+        pass
+
+    @property
+    def fpgen(self):
+        return 'simple'
+
+
+class QuantizedTabulatedWaveform(_Waveform):
+    def __init__(self, quantized_values=None):
+        self._quantized_values = quantized_values
+
+    @property
+    def output_waveform(self):
+        """Subclasses shall implement are return """
+        return self._quantized_values
+
+    @property
+    def fpgen(self):
+        return None
+
+    @property
+    def sample_rate(self):
+        return 1209481743091273
+
+
+class FreqlistWaveform(_Waveform):
     def __init__(self, frequencies=None, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-                 iq_ratios=None,
-                 phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
+                 iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
         """
         Args:
             frequencies (float): list/array of frequencies in the comb
@@ -88,9 +120,8 @@ class Waveform:
         if self._values is None:
             self._values = self._compute_waveform()
             if self.maximize_dynamic_range:
-                self._waveform.optimize_random_phase(
-                    max_quant_err=3 * predict_quantization_error(resolution=DAC_RESOLUTION),
-                    max_attempts=10)
+                self._optimize_random_phase(max_quant_err=3 * predict_quantization_error(resolution=DAC_RESOLUTION),
+                                            max_attempts=10)
         return self._values
 
     def _compute_waveform(self):
@@ -141,6 +172,26 @@ class Waveform:
             if cnt > max_attempts:
                 raise Exception("Process reach maximum attempts: Could not find solution below max quantization error.")
         return
+
+class OptimallyQuantizedFreqlistWaveform(FreqlistWaveform):
+    @property
+    def output_waveform(self):
+        """Subclasses shall implement are return """
+        return self.quant_vals
+
+    @property
+    def fpgen(self):
+        return None
+
+class FastQuantizedFreqlistWaveform(FreqlistWaveform):
+    @property
+    def output_waveform(self):
+        """Subclasses shall implement are return """
+        return self._values
+
+    @property
+    def fpgen(self):
+        return 'simple'
 
 
 class FLConfigMixin:
@@ -264,49 +315,35 @@ class ADCconfig(FLConfigMixin):
             return
 
 
-class DACConfig(FLConfigMixin):
-    _settings = ('n_uniform_tones', 'qmc_settings')
+def Waveform(n_uniform_tones=None, fpgen=None, output_waveform=None, frequencies=None,
+             n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
+             iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=):
+    if output_waveform is not None:
+        return QuantizedTabulatedWaveform(output_waveform)
+    if n_uniform_tones is not None:
+        frequencies = power_sweep_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
+    frequencies = np.asarray(frequencies)
 
-    def __init__(self, n_uniform_tones=None, waveform_spec: [np.ndarray, dict, Waveform] = None,
-                 qmc_settings=None, _hashed=None):
+    elif ...:
+        return FastQuantizedFreqlistWaveform()
+    elif ...:
+        return OptimallyQuantizedFreqlistWaveform()
+
+
+class DACConfig(FLConfigMixin):
+    _settings = ('output_waveform', 'qmc_settings','fpgen')
+
+    def __init__(self, output_waveform=None, fpgen=None, qmc_settings=None, _hashed=None, **waveform_spec):
         self._hashed = _hashed
         if self._hashed:
             return
 
-        self.n_uniform_tones = n_uniform_tones
-        self.waveform_spec=waveform_spec
-        self._waveform = None
-        # self.spec_type =
-
-        wf_spec = dict(n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-                       iq_ratios=None, phase_offsets=None, seed=2)
-        if n_uniform_tones is not None:
-            wf_spec['frequencies'] = power_sweep_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
-
-        if isinstance(waveform_spec, (np.ndarray, list)):
-            wf_spec['frequencies'] = np.asarray(waveform_spec)
-        elif isinstance(waveform_spec, dict):
-            wf_spec.update(waveform_spec)
-        elif isinstance(waveform_spec, Waveform):
-            self._waveform = waveform_spec
-
-        if not isinstance(waveform_spec,Waveform):
-            self._waveform = Waveform(**wf_spec)
-
-        if self._waveform is None:
-            raise ValueError('doing it wrong')
-
+        waveform_spec['output_waveform']=output_waveform
+        output_waveform['fpgen']=fpgen
+        self._waveform = Waveform(**output_waveform)
+        self.output_waveform = self._waveform.output_waveform
+        self.fpgen = self._waveform.fpgen
         self.qmc_settings = qmc_settings
-
-
-    @property
-    def quant_vals(self):
-        return self._waveform.quant_vals
-
-    @property
-    def waveform(self):
-        return self._waveform.values
-
 
 class IFConfig(FLConfigMixin):
     _settings = ('lo', 'adc_attn', 'dac_attn')
