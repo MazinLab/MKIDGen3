@@ -230,7 +230,7 @@ class FLMetaConfigMixin:
 class DACConfig(FLConfigMixin):
     _settings = ('quant_vals', 'qmc_settings')
 
-    def __init__(self, ntones, name: str, n_uniform_tones=None, waveform_spec: [np.array, dict, Waveform] = None,
+    def __init__(self, ntones, name: str, waveform_spec: [np.array, dict, Waveform] = None,
                  qmc_settings=None, _hashed=''):
         self._hashed = _hashed
         if self._hashed:
@@ -243,7 +243,7 @@ class DACConfig(FLConfigMixin):
         if isinstance(waveform_spec, (np.array, list)):
             wf_spec['freqs'] = np.asarray(waveform_spec)
 
-        if isinstance(waveform_spec, (dict, np.array, list)):
+        if isinstance(waveform_spec, dict):
             wf_spec.update(waveform_spec)
             self._waveform = Waveform(**wf_spec)
         elif isinstance(waveform_spec, Waveform):
@@ -322,7 +322,7 @@ class FilterConfig(FLConfigMixin):
         if self._hashed:
             return
 
-        self.coefficients = np.zeros(2048, 30)
+        self.coefficients = coefficients
 
 
 class PhotonPipeConfig(FLMetaConfigMixin):
@@ -572,7 +572,7 @@ class PowerSweepRequest:
         self.use_cached = use_cached
 
     def capture_requests(self):
-        dacsetup = DACOutputSpec('power_sweep_comb', n_uniform_tones=self.ntones)
+        dacsetup = DACConfig('power_sweep_comb', n_uniform_tones=self.ntones)
         return [CaptureRequest(self.samples, dac_setup=dacsetup,
-                               if_setup=IFSetup(lo=freq, adc_attn=adc_atten, dac_attn=dac_atten))
+                               if_setup=IFConfig(lo=freq, adc_attn=adc_atten, dac_attn=dac_atten))
                 for (adc_atten, dac_atten) in self.attens for freq in self.lo_centers]
