@@ -11,6 +11,7 @@ from hashlib import md5
 from .feedline_objects import zpipe, FeedlineConfig, CaptureRequest
 from typing import List
 
+
 class CaptureSink(threading.Thread):
     def __init__(self, request, source, context=None, start=True):
         id = request.id.decode()

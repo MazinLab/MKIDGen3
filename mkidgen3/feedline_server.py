@@ -5,98 +5,29 @@ import mkidgen3.clocking
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.schema import validate
 from logging import getLogger
-import pynq
+
 import mkidgen3.drivers.rfdc
-import mkidgen3 as g3
-from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig
-from mkidgen3.feedline_objects import FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer
-from typing import List
+from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig, FLMetaConfigMixin
+from mkidgen3.feedline_objects import FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer, FeedlineConfigManager
 import zmq
-import blosc2
-import time
 import threading
 from datetime import datetime
 import argparse
-import binascii
-import os
 import numpy as np
 from feedline_objects import zpipe
+from collections import defaultdict
+from mkidgen3.feedline_objects import FLMetaConfigMixin
+
+try:
+    import pynq
+except OSError:
+    pass
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
 CHUNKING_THRESHOLD = 1024**2
 
 
-class FeedlineConfigManager:
-    def __init__(self):
-        self._config = {}
-        self._settings = {}
-        self._cache = {}
-
-    def learn(self, config: FeedlineConfig):
-        """Commit configuration info to memory for later use, hashed configurations are not learnable"""
-        self._cache.update({h: v for h, v in config.iter(hashed=False) if h not in self._cache})
-
-    def unlearned_hashes(self, config: FeedlineConfig):
-        """
-        Return a set of any config hashes in the config that have not been learned.
-
-        The presence of unlearned hashes will prevent a config from being added to the manager.
-        """
-        return set(v for h, v in config.iter(unhashed=False) if k not in self._cache)
-
-    def effective(self) -> FeedlineConfig:
-        """
-        Return a feedline configuration resulting from settings in the set,
-        the config will not contain any hashed settings.
-        """
-        setting_dict = {}
-        for config in self._config.values():
-            setting_dict.update({k: self._cache[v] for k, v in config.iter(hashed_only=True)})
-            setting_dict.update({k: v for k, v in config.iter(unhashed_only=True)})
-        return FeedlineConfig.from_dict(setting_dict)
-
-    def pop(self, id) -> bool:
-        """
-        Remove settings from the set
-
-        Args:
-            id: settings id to remove, raises KeyError if the key hasn't been added to the manager
-
-        Returns: True iff the effective settings changed as a result of the pop
-        """
-        x = self.effective()
-        self._config.pop(id)
-        return self.effective() != x
-
-    def add(self, id, config: FeedlineConfig) -> FeedlineConfig:
-        """
-        Add a feedline config to the managed set of settings with an id for later removal. Configs with hashed
-        settings can not be added unless their hashes have been previously learned. All unhashed settings are learned
-        upon addition.
-
-        If the added config has settings that are not compatible with existing settings it the set then XXX happen
-
-        Args:
-            id: an id for the settings (for later removal from the set)
-            config: a feedline config at any level of specificity
-
-        Returns: A feedline config with the settings that need updating populated and the rest None
-
-        Raises: ValueError if a config contains unlearned hashes.
-
-        """
-        self.learn(config)
-        if self.unlearned_hashes(config):
-            raise ValueError('Config contains unlearned hashes')
-        self._config[id] = config
-
-        #TODO
-        for fcfg in self._config.values():
-            for k, v in
-            if config[k] is not None:
-                self._settings[k].add(id)
-        return FeedlineConfig()
 
 
 class DummyOverlay:
