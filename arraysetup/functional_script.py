@@ -10,7 +10,7 @@ ol = mkidgen3.overlay_helpers.configure(bitstream, ignore_version=True, clocks=T
 n_channels=N_CHANNELS
 bandwidth=BANDWIDTH
 
-template_comb_freqs = power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=BANDWIDTH)
+template_comb_freqs = bin_center_freqs(n_channels=N_CHANNELS, bandwidth=BANDWIDTH)
 template_waveform = optimize_random_phase(template_comb_freqs, n_samples=2**19, sample_rate=4.096e9, amplitudes=None, phases=None, iq_ratios=None,
                       phase_offsets=None, seed=2, max_quant_err=predict_quantization_error(),
                           max_attempts=10, return_quantized=True)
