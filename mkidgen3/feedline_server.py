@@ -99,7 +99,7 @@ class FeedlineHardware:
             self._if_board.power_off(save_settings=False)
 
     def config_compatible_with(self, config: FeedlineConfig):
-        return self.config_manager.effective()==config
+        return self.config_manager.required() < config
 
     def derequire_config(self, id):
         """True iff the required settings changed as a result"""
