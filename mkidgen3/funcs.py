@@ -151,7 +151,7 @@ def compute_lo_steps(center, resolution, bandwidth):
     return np.linspace(-bandwidth / 2, bandwidth / 2, n_steps) + center
 
 
-def bin_center_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
+def uniform_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
     """
     inputs:
     - n_channels: int
