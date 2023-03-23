@@ -43,46 +43,36 @@ def hasher(v, pass_none=False):
     except TypeError:
         return md5(v.tobytes()).hexdigest()
 
-class _Waveform:
+
+class Waveform:
     @property
     def output_waveform(self):
         """Subclasses shall implement are return """
-        pass
+        return self._values
 
     @property
     def sample_rate(self):
         """Subclasses shall implement are return """
-        pass
+        return self._sample_rate
 
     @property
     def fpgen(self):
-        return 'simple'
+        return self._fpgen
 
 
-class QuantizedWaveform(_Waveform):
-    def __init__(self, quantized_values=None, sample_rate=None):
-        self._quantized_values = quantized_values
-
-    @property
-    def output_waveform(self):
-        """Subclasses shall implement are return """
-        return self._quantized_values
-
-    @property
-    def fpgen(self):
-        return None
-
-    @property
-    def sample_rate(self):
-        return self.sample_rate
+class TabulatedWaveform(Waveform):
+    def __init__(self, tabulated_values=None, sample_rate=DAC_SAMPLE_RATE):
+        self._values = tabulated_values
+        self._fpgen = None
+        self._sample_rate=sample_rate
 
 
-class FreqlistWaveform(_Waveform):
+class FreqlistWaveform(Waveform):
     def __init__(self, frequencies=None, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
                  iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
         """
         Args:
-            frequencies (array): list/array of frequencies in the comb
+            frequencies: list/array of frequencies in the comb
             n_samples (int): number of complex samples in waveform
             sample_rate (float): waveform sample rate in Hz
             amplitudes (float): list/array of amplitudes, one per frequency in (0,1]. If None, all ones is assumed.
@@ -100,37 +90,38 @@ class FreqlistWaveform(_Waveform):
         """
         self.freqs = np.asarray(frequencies)
         self.n_samples = n_samples
-        self.fs = sample_rate
+        self._sample_rate = sample_rate
         self.amps = amplitudes if amplitudes is not None else np.ones_like(frequencies)
 
         if phases is None:
             self.phases = np.random.default_rng(seed=seed).uniform(0., 2. * np.pi, size=self.freqs.size)
         else:
-           self.phases = np.asarray(phases)
+            self.phases = np.asarray(phases)
         self.iq_ratios = np.asarray(iq_ratios) if iq_ratios is not None else np.ones_like(frequencies)
         self.phase_offsets = np.asarray(phase_offsets) if phase_offsets is not None else np.zeros_like(frequencies)
         self.quant_freqs = quantize_frequencies(self.freqs, rate=sample_rate, n_samples=n_samples)
         self._seed = seed
-        self._values = None
+        self.__values = None
         self.quant_vals = None
         self.quant_error = None
         self.maximize_dynamic_range = maximize_dynamic_range
+        self._fpgen = None if self.maximize_dynamic_range else 'simple'
         if compute:
-            self.values
+            self.output_waveform
 
     @property
-    def values(self):
-        if self._values is None:
-            self._values = self._compute_waveform()
+    def _values(self):
+        if self.__values is None:
+            self.__values = self._compute_waveform()
             if self.maximize_dynamic_range:
                 self._optimize_random_phase(max_quant_err=3 * predict_quantization_error(resolution=DAC_RESOLUTION),
                                             max_attempts=10)
-        return self._values if self.maximize_dynamic_range else self.quant_vals
+        return self.__values if self.maximize_dynamic_range else self.quant_vals
 
     def _compute_waveform(self):
         iq = np.zeros(self.n_samples, dtype=np.complex64)
         # generate each signal
-        t = 2 * np.pi * np.arange(iq.size) / self.fs
+        t = 2 * np.pi * np.arange(iq.size) / self._sample_rate
         logging.getLogger(__name__).debug(
             f'Computing net waveform with {self.freqs.size} tones. For 2048 tones this takes about 7 min.')
         for i in range(self.freqs.size):
@@ -167,7 +158,7 @@ class FreqlistWaveform(_Waveform):
                 "Calculating with new random phases")
             self._seed += 1
             self.phases = np.random.default_rng(seed=self._seed).uniform(0., 2. * np.pi, len(self.freqs))
-            self._values = self._compute_waveform()
+            self.__values = self._compute_waveform()
             self.quant_vals, self.quant_error = quantize_to_int(self._values, resolution=DAC_RESOLUTION, signed=True,
                                                                 word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
                                                                 return_error=True)
@@ -176,18 +167,21 @@ class FreqlistWaveform(_Waveform):
                 raise Exception("Process reach maximum attempts: Could not find solution below max quantization error.")
         return
 
-    @property
-    def output_waveform(self):
-        """Subclasses shall implement are return """
-        return self.values
 
-    @property
-    def fpgen(self):
-        return None if self.maximize_dynamic_range else 'simple'
+def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None,
+             n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
+             iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
+    if output_waveform is not None:
+        return TabulatedWaveform(tabulated_values=output_waveform, sample_rate=sample_rate)
 
-    @property
-    def sample_rate(self):
-        return self.fs
+    if n_uniform_tones is not None:
+        frequencies = power_sweep_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
+    frequencies = np.asarray(frequencies)
+    return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
+                            amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
+                            seed=seed, maximize_dynamic_range=maximize_dynamic_range, compute=)
+
+
 
 class FLConfigMixin:
     _settings = tuple()
@@ -204,6 +198,8 @@ class FLConfigMixin:
             if a != b:
                 return False
         return True
+
+    def more_
 
     @property
     def hashed(self):
@@ -310,36 +306,30 @@ class ADCconfig(FLConfigMixin):
             return
 
 
-def Waveform(n_uniform_tones=None, fpgen=None, output_waveform=None, frequencies=None,
-             n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-             iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True):
-    if output_waveform is not None:
-        return QuantizedWaveform(quantized_values=output_waveform, sample_rate=sample_rate)
-
-    if n_uniform_tones is not None:
-        frequencies = power_sweep_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
-    frequencies = np.asarray(frequencies)
-    return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
-                            amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
-                            seed=seed, maximize_dynamic_range=maximize_dynamic_range)
 
 
 class DACConfig(FLConfigMixin):
-    _settings = ('output_waveform', 'qmc_settings','fpgen')
+    _settings = ('output_waveform', 'qmc_settings', 'fpgen')
 
     def __init__(self, output_waveform=None, fpgen=None, qmc_settings=None, _hashed=None, **waveform_spec):
         self._hashed = _hashed
         if self._hashed:
             return
 
-        waveform_spec['output_waveform']=output_waveform
-        waveform_spec['fpgen']=fpgen
-        waveform_spec['n_samples']=2 ** 19
+        # TODO [optional] make hash use waveform_spec instead of output_waveform so that deferred computation isn't
+        # triggered by a request for the hash
+        waveform_spec['output_waveform'] = output_waveform
+        waveform_spec['n_samples'] = 2 ** 19
         waveform_spec['sample_rate'] = 4.096e9
-        self._waveform = Waveform(**output_waveform)
-        self.output_waveform = self._waveform.output_waveform
+        self._waveform = WaveformFactory(**waveform_spec)
         self.fpgen = self._waveform.fpgen
         self.qmc_settings = qmc_settings
+
+    @property
+    def output_waveform(self):
+        """This is a property so that compute=False is respected"""
+        return self._waveform.output_waveform
+
 
 
 class IFConfig(FLConfigMixin):
@@ -358,7 +348,7 @@ class IFConfig(FLConfigMixin):
 class TriggerConfig(FLConfigMixin):
     _settings = ('holdoffs', 'thresholds')
 
-    def __init__(self, holdoffs: np.ndarray=None, thresholds: np.ndarray=None, _hashed=None):
+    def __init__(self, holdoffs: np.ndarray = None, thresholds: np.ndarray = None, _hashed=None):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -430,7 +420,7 @@ class FeedlineConfig(FLMetaConfigMixin):
         self.dac_config = DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
         self.pp_config = PhotonPipeConfig(**pp_config) if isinstance(pp_config, dict) else pp_config
         self.adc_config = ADCconfig(**adc_config) if isinstance(adc_config, dict) else adc_config
-        #TODO to support captures of less than all groups we need to add a self.capture_setup which has group
+        # TODO to support captures of less than all groups we need to add a self.capture_setup which has group
         # settings for iq and phase
 
     def __str__(self):
@@ -462,12 +452,11 @@ class FeedlineConfig(FLMetaConfigMixin):
 class FeedlineConfigManager:
     def __init__(self):
         self._config = {}
-        self._settings = {}
         self._cache = {}
 
     def learn(self, config: FeedlineConfig):
         """Commit configuration info to memory for later use, hashed configurations are not learnable"""
-        self._cache.update({hash(v): v for k, v in config.iter(hashed=False)})# if hash(v) not in self._cache})
+        self._cache.update({hash(v): v for k, v in config.iter(hashed=False)})  # if hash(v) not in self._cache})
 
     def unlearned_hashes(self, config: FeedlineConfig):
         """
@@ -534,16 +523,17 @@ class FeedlineConfigManager:
         old = self.effective()
         self._config[id] = config
         new = self.effective()
-        for k,v in new:
+
+        for k, v in new:
             if getattr(old, k) is None:
                 continue
             if isinstance(v, FLMetaConfigMixin):
                 for k2, v2 in v:
-                    if getattr(getattr(old, k), k2) == v:
+                    if getattr(getattr(old, k), k2).more_specific(v):
                         setattr(setattr(new, k), k2, None)
-            else:
-                if getattr(old, k) == v:
-                    setattr(new, k, None)
+            elif getattr(old, k).more_specific(v):
+                setattr(new, k, None)
+
         return new
 
 
@@ -701,7 +691,7 @@ class CaptureRequest:
 
     @property
     def buffer_shape(self):
-        return self.nsamp, self.nchan, self.dwid//2
+        return self.nsamp, self.nchan, self.dwid // 2
 
 
 class PowerSweepRequest:
