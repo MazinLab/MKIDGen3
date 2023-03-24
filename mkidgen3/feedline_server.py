@@ -7,7 +7,7 @@ from mkidgen3.schema import validate
 from logging import getLogger
 
 import mkidgen3.drivers.rfdc
-from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig, FLMetaConfigMixin
+from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig
 from mkidgen3.feedline_objects import FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer, FeedlineConfigManager
 import zmq
 import threading
@@ -15,8 +15,7 @@ from datetime import datetime
 import argparse
 import numpy as np
 from feedline_objects import zpipe
-from collections import defaultdict
-from mkidgen3.feedline_objects import FLMetaConfigMixin
+
 
 try:
     import pynq

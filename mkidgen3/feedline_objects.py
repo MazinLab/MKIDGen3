@@ -175,9 +175,9 @@ def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None
         return TabulatedWaveform(tabulated_values=output_waveform, sample_rate=sample_rate)
 
     if n_uniform_tones is not None:
-        if n_uniform_tones not in [512, 1024, 2048]:
+        if n_uniform_tones not in (512, 1024, 2048):
             raise ValueError('Requested number of power sweep tones not supported. Allowed values are 512, 1024, 2048.')
-        frequencies = uniform_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)[::N_CHANNELS // n_unform_tones]
+        frequencies = uniform_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)[::N_CHANNELS // n_uniform_tones]
     frequencies = np.asarray(frequencies)
     return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
                             amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
@@ -248,6 +248,11 @@ class FLConfigMixin:
             if not self._hashdata_vals_equal(a,b):
                 return False
         return True
+
+    def deltafy(self, other):
+        """ Return a new config with only the _settings that went from None to a value, all else None """
+        d = {k: getattr(other, k) for k in self._settings if getattr(self, k) is None and getattr(other, k) is not None}
+        return type(self)(**d)
 
     @property
     def hashed(self):
@@ -599,15 +604,20 @@ class FeedlineConfigManager:
         # IFConfig(dac_atten=None) and thus no settings changes would be needed.
 
         for k, v in new:
-            if getattr(old, k) is None:
+            ov = getattr(old, k)
+            if ov is None:
                 continue
             if isinstance(v, FLMetaConfigMixin):
                 for k2, v2 in v:
-                    if getattr(getattr(old, k), k2) >= v2:
+                    ov2 = getattr(ov, k2)
+                    if ov2 >= v2:
                         setattr(v, k2, None)
-            elif getattr(old, k) >= v:
+                    else:
+                        setattr(v, k2, ov2.deltafy(v2))
+            elif ov >= v:
                 setattr(new, k, None)
-
+            else:
+                setattr(new, k, ov.deltafy(v))
         return new
 
 
