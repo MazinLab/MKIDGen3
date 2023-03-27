@@ -32,9 +32,12 @@ def start_clocks(external_10mhz=False):
         else:
             xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=409.6)
 
-    if board_name == 'ZCU111\x00':
+    elif board_name == 'ZCU111\x00':
         if external_10mhz:
             _patch_xrfclk_lmk()
             xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M', lmx_freq=409.6)
         else:
             xrfclk.set_ref_clks(lmk_freq=122.88, lmx_freq=409.6)
+
+    else:
+        raise ValueError('Unknown board name. Cannot proceed with clock programming.')
