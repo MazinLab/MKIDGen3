@@ -390,7 +390,7 @@ class PowerSweepJob:
         capture_data_server = 'tcp://localhost:8889'
         status_server = 'tcp://localhost:8890'
 
-        dacconfig = DACConfig('power_sweep_comb', n_uniform_tones=len(self.freqs))
+        dacconfig = DACConfig(n_uniform_tones=1024)
         dacconfig_hash = hash(dacconfig)
         jobs = []
         for adc_atten, dac_atten in self.attens:
