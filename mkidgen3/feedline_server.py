@@ -7,7 +7,7 @@ from mkidgen3.schema import validate
 from logging import getLogger
 
 import mkidgen3.drivers.rfdc
-from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig, FLMetaConfigMixin
+from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig
 from mkidgen3.feedline_objects import FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer, FeedlineConfigManager
 import zmq
 import threading
@@ -15,8 +15,7 @@ from datetime import datetime
 import argparse
 import numpy as np
 from feedline_objects import zpipe
-from collections import defaultdict
-from mkidgen3.feedline_objects import FLMetaConfigMixin
+
 
 try:
     import pynq
@@ -99,7 +98,7 @@ class FeedlineHardware:
             self._if_board.power_off(save_settings=False)
 
     def config_compatible_with(self, config: FeedlineConfig):
-        return self.config_manager.effective()==config
+        return self.config_manager.required() < config
 
     def derequire_config(self, id):
         """True iff the required settings changed as a result"""

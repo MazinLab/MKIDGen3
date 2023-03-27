@@ -175,18 +175,30 @@ def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None
         return TabulatedWaveform(tabulated_values=output_waveform, sample_rate=sample_rate)
 
     if n_uniform_tones is not None:
-        if n_uniform_tones not in [512, 1024, 2048]:
+        if n_uniform_tones not in (512, 1024, 2048):
             raise ValueError('Requested number of power sweep tones not supported. Allowed values are 512, 1024, 2048.')
-        frequencies = uniform_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)[::N_CHANNELS // n_unform_tones]
+        frequencies = uniform_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)[::N_CHANNELS // n_uniform_tones]
     frequencies = np.asarray(frequencies)
     return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
                             amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
-                            seed=seed, maximize_dynamic_range=maximize_dynamic_range, compute=)
-
+                            seed=seed, maximize_dynamic_range=maximize_dynamic_range, compute=compute)
 
 
 class FLConfigMixin:
     _settings = tuple()
+
+    def __ge__(self, other):
+        """ Returns true if self is at least as specified as other (i.e. other has = or more Nones"""
+        if other is None:
+            return True
+        if not isinstance(other, type(self)):
+            raise ValueError(f'Invalid type: {type(self)}')
+        if self.hashed or other.hashed:
+            raise ValueError('Unable to compare hashed configs.')
+        for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
+            if b is not None and a is None:
+                return False
+        return True
 
     def __eq__(self, other):
         """ Feedline configs are equivalent if all of their settings are equivalent"""
@@ -195,13 +207,52 @@ class FLConfigMixin:
         if self.hashed or other.hashed:
             return hash(self) == hash(other)
         for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
-            if a is None or b is None:
-                continue
-            if a != b:
+            if not self._hashdata_vals_equal(a,b):
                 return False
         return True
 
-    def more_
+    def __le__(self, other):
+        if other is None:
+            return False
+        return other.__ge__(self)
+
+    def __lt__(self, other):
+        """ Returns true if self other is more specified than self (i.e. self has more Nones) """
+        # if other is None:
+        #     return False
+        return not self.__ge__(other) #and not self == other
+
+    def __gt__(self, other):
+        if other is None:
+            return True
+        return self.__ge__(other) and not self == other
+
+    @staticmethod
+    def _hashdata_vals_equal(a, b):
+        if type(a) != type(b):
+            return False
+        if isinstance(a, np.ndarray) and isinstance(b, np.ndarray) and not np.allclose(a, b):
+            return False
+        elif a != b:
+            return False
+        return True
+
+    def compatible_with(self, other):
+        if not isinstance(other, type(self)):
+            return False
+        if self.hashed or other.hashed:
+            return hash(self) == hash(other)
+        for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
+            if a is None or b is None:
+                continue
+            if not self._hashdata_vals_equal(a,b):
+                return False
+        return True
+
+    def deltafy(self, other):
+        """ Return a new config with only the _settings that went from None to a value, all else None """
+        d = {k: getattr(other, k) for k in self._settings if getattr(self, k) is None and getattr(other, k) is not None}
+        return type(self)(**d)
 
     @property
     def hashed(self):
@@ -247,20 +298,55 @@ class FLConfigMixin:
 
 
 class FLMetaConfigMixin:
-    def __eq__(self, other):
+    def compatible_with(self, other):
         """ Feedline configs are equivalent if all of their settings are equivalent"""
-        for k, v in self.__dict__.items():
+        if other is None:
+            return True
+        for k, v in self:
             other_v = getattr(other, k)
             assert isinstance(v, (FLMetaConfigMixin, FLConfigMixin, type(None), int))
             assert isinstance(other_v, (FLMetaConfigMixin, FLConfigMixin, type(None), int))
-            # if either is None we match
             if v is None or other_v is None:
                 continue
+            if not v.compatible_with(other_v):
+                return False
+        return True
 
+    def __eq__(self, other):
+        """ Feedline configs are equivalent if all of their settings are equivalent"""
+        if other is None:
+            return False
+
+        for k, v in self:
+            other_v = getattr(other, k)
+            assert isinstance(v, (FLMetaConfigMixin, FLConfigMixin, type(None), int))
+            assert isinstance(other_v, (FLMetaConfigMixin, FLConfigMixin, type(None), int))
             # Compute hash if necessary
             v_hash = hash(v) if isinstance(v, FLMetaConfigMixin) else v
             o_hash = hash(other_v) if isinstance(other_v, FLMetaConfigMixin) else other_v
-            if v_hash != o_hash:
+            if not v_hash == o_hash:
+                return False
+        return True
+
+    def __gt__(self, other):
+        if other is None:
+            return True
+        return self.__ge__(self) and not self==other
+
+    def __lt__(self, other):
+        return not self.__ge__(other)
+
+    def __ge__(self, other):
+        """Self is more specified or equal to other """
+        if other is None:
+            return True
+        for k, v in self.iter():
+            ov = getattr(other, k)
+            if v is None and ov is not None:
+                return False
+            if v is None and ov is None:
+                continue
+            if not v >= ov:
                 return False
         return True
 
@@ -293,9 +379,11 @@ class FLMetaConfigMixin:
                 for a, b in v.iter(hashed=hashed, unhashed=unhashed):
                     yield f'{k}.{a}', b
             else:
-                if hashed and v.hashed:
+                if v is None:
                     yield k, v
-                if unhashed and not v.hashed:
+                elif hashed and v.hashed:
+                    yield k, v
+                elif unhashed and not v.hashed:
                     yield k, v
 
 
@@ -373,8 +461,8 @@ class ChannelConfig(FLConfigMixin):
 class DDCConfig(FLConfigMixin):
     _settings = ('tones', 'loop_center', 'phase_offset', 'center_relative', 'quantize')
 
-    def __init__(self, tones=None, loop_center=None, phase_offset=None, center_relative=False,
-                 quantize=True, _hashed=None):
+    def __init__(self, tones=None, loop_center=None, phase_offset=None, center_relative=None,
+                 quantize=None, _hashed=None):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -433,23 +521,6 @@ class FeedlineConfig(FLMetaConfigMixin):
                 f"  ADC: {self.adc_config}\n"
                 f"  PP: {pp}")
 
-    def compatible_with(self, other):
-        """ Compatibility of hashed configs is more restrictive than unhashed as the comparison can not
-        handle the compatibility of 'None' """
-        return self == other
-
-    # def iter(self, hashed=True, unhashed=True):
-    #     """an iterator of config_key: value pairs"""
-    #     for k, v in self:
-    #         if isinstance(v, FLMetaConfigMixin):
-    #             for a, b in v.iter(hashed=hashed, unhashed=unhashed):
-    #                 yield f'{k}.{a}', b
-    #         else:
-    #             if hashed and v.hashed:
-    #                 yield k, v
-    #             if unhashed and not v.hashed:
-    #                 yield k, v
-
 
 class FeedlineConfigManager:
     def __init__(self):
@@ -468,10 +539,10 @@ class FeedlineConfigManager:
         """
         return set(hash(v) for k, v in config.iter(unhashed=False) if hash(v) not in self._cache)
 
-    def effective(self) -> FeedlineConfig:
+    def required(self) -> FeedlineConfig:
         """
-        Return a feedline configuration resulting from settings in the set,
-        the config will not contain any hashed settings.
+        Return a feedline configuration resulting from settings in the set, the config will not contain any hashed
+        settings.
         """
         setting_dict = defaultdict(lambda: defaultdict(dict))
 
@@ -479,8 +550,6 @@ class FeedlineConfigManager:
             for k, v in config:
                 if isinstance(v, FLMetaConfigMixin):
                     for k2, v2 in v:
-                        # if k2 not in setting_dict[k]:
-                        #     setting_dict[k][k2] = {}
                         setting_dict[k][k2].update(v2.settings_dict(unhasher_cache=self._cache))
                 else:
                     setting_dict[k].update(v.settings_dict(unhasher_cache=self._cache))
@@ -488,18 +557,18 @@ class FeedlineConfigManager:
 
     def pop(self, id) -> bool:
         """
-        Remove settings from the set
+        Remove a config from the manager
 
         Args:
-            id: settings id to remove, raises KeyError if the key hasn't been added to the manager
+            id: settings id to remove, does nothing if it is unknown
 
-        Returns: True iff the effective settings changed as a result of the pop
+        Returns: True iff the required settings after the pop are less restrictive
         """
         if id not in self._config:
             return False
-        x = self.effective()
+        x = self.required()
         self._config.pop(id)
-        return self.effective() != x
+        return self.required() < x
 
     def add(self, id, config: FeedlineConfig) -> FeedlineConfig:
         """
@@ -507,7 +576,8 @@ class FeedlineConfigManager:
         settings can not be added unless their hashes have been previously learned. All unhashed settings are learned
         upon addition.
 
-        If the added config has settings that are not compatible with existing settings it the set then XXX happen
+        If the config to be added has settings that are not compatible with existing settings it an error will be
+        raised.
 
         Args:
             id: an id for the settings (for later removal from the set)
@@ -522,20 +592,32 @@ class FeedlineConfigManager:
         if self.unlearned_hashes(config):
             raise ValueError('Config contains unlearned hashes')
 
-        old = self.effective()
+        old = self.required()
+        if not old.compatible_with(config):
+            raise ValueError('Proposed settings not compatible with required settings')
         self._config[id] = config
-        new = self.effective()
+        new = self.required()
+
+        # NB >= is read as "at more or equally restrictive" on the needed FPGA settings
+        # so IFConfig(dac_atten=3) and IFConfig(dac_atten=4) are equally restrictive but not equal, not compatible
+        # hence the need for the compatible_with check above. IFConfig(dac_atten=3) is more restrictive than
+        # IFConfig(dac_atten=None) and thus no settings changes would be needed.
 
         for k, v in new:
-            if getattr(old, k) is None:
+            ov = getattr(old, k)
+            if ov is None:
                 continue
             if isinstance(v, FLMetaConfigMixin):
                 for k2, v2 in v:
-                    if getattr(getattr(old, k), k2).more_specific(v):
-                        setattr(setattr(new, k), k2, None)
-            elif getattr(old, k).more_specific(v):
+                    ov2 = getattr(ov, k2)
+                    if ov2 >= v2:
+                        setattr(v, k2, None)
+                    else:
+                        setattr(v, k2, ov2.deltafy(v2))
+            elif ov >= v:
                 setattr(new, k, None)
-
+            else:
+                setattr(new, k, ov.deltafy(v))
         return new
 
 
