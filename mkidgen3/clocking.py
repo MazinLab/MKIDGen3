@@ -16,27 +16,27 @@ def _parse_ticspro(file):
 def _patch_xrfclk_lmk():
     # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
 
-    lmk04208_files = {
+    _LMK04208_FILES = {
         '122.88_viaext10M': 'config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt'
     }
 
-    lmk04828_files = {
+    _LMK04828_FILES = {
         '256.0_MTS': 'config/LMK04828_256.0_MTS.txt',
         '500.0_MTS': 'config/LMK04828_500.0_MTS.txt'
     }
 
-    lmx2594_files = {
+    _LMX2594_FILES = {
         '500.0_MTS': 'config/LMX2594_500.0_MTS.txt',
         '409.6_MTS': 'config/LMX2594_409.6_256FoscMTS.txt'
     }
 
-    clock_config_dict = {
+    _CLOCK_CONFIG_DICT = {
     'lmk04208': lmk04208_files,
     'lmk04828': lmk04828_files,
     'lmx2594': lmx2594_files
     }
 
-    for clock_part in clock_config_dict:
+    for clock_part in _CLOCK_CONFIG_DICT:
         for programming_key, fname in clock_config_dict[clock_part].items():
             tpro_file = pkg_resources.resource_filename('mkidgen3',fname)
             xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)

@@ -1,13 +1,13 @@
 from logging import getLogger
 import numpy as np
+import time
 
 import mkidgen3.clocking
 import mkidgen3.dsp as dsp
 from .drivers.ddc import tone_increments
 from . import util
 
-
-_gen3_overlay, _frequencies = [None]*2
+_gen3_overlay, _frequencies = [None] * 2
 
 
 def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg):
@@ -48,12 +48,12 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
         phases = np.zeros(n_res)
         for i in range(freq.size):
             comb += amplitudes[i] * np.exp(1j * (t * freq[i] + phases[i]))
-        dactable={'comb':comb}
+        dactable = {'comb': comb}
     else:
         if attenuations is not None:
             dactable = daccomb(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
                                sample_rate=sample_rate, return_full=True)
-            comb=dactable['comb']
+            comb = dactable['comb']
         else:
             if amplitudes is None:
                 amplitudes = np.ones_like(freq)
@@ -133,6 +133,7 @@ def configure(bitstream, ignore_version=False, clocks=False, programming_key=Fal
     if clocks:
         import mkidgen3.drivers.rfdc
         mkidgen3.clocking.start_clocks(programming_key=programming_key)
+        time.sleep(0.5)  # allow clocks to stabilize before loading overlay
 
     global _gen3_overlay
     ol = _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
@@ -151,7 +152,7 @@ def capture_opfb(n=256, raw=False):
         x.freebuffer()
     else:
         out[:, :2048] = util.buf2complex(x, free=True)
-    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(2048,4096)
+    _gen3_overlay.photon_pipe.reschan.bin_to_res.bins = range(2048, 4096)
 
     x = _gen3_overlay.capture.capture_iq(n, 'all', tap_location='rawiq')
     if raw:
