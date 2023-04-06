@@ -26,7 +26,7 @@ def _patch_xrfclk_lmk():
     }
 
     lmx2594_files = {
-        '500.0_MTS': 'config/LMX2594_500.0_MKTS.txt',
+        '500.0_MTS': 'config/LMX2594_500.0_MTS.txt',
         '409.6_MTS': 'config/LMX2594_409.6_256FoscMTS.txt'
     }
 
@@ -70,7 +70,6 @@ def start_clocks(programming_key=False):
 
     elif board_name == 'ZCU111\x00':
         if programming_key == 'external_10mhz':
-            _patch_xrfclk_lmk()
             xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M', lmx_freq=409.6)
         else:
             xrfclk.set_ref_clks(lmk_freq=122.88, lmx_freq=409.6)
