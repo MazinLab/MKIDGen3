@@ -31,13 +31,13 @@ def _patch_xrfclk_lmk():
     }
 
     _CLOCK_CONFIG_DICT = {
-    'lmk04208': lmk04208_files,
-    'lmk04828': lmk04828_files,
-    'lmx2594': lmx2594_files
+    'lmk04208': _LMK04208_FILES,
+    'lmk04828': _LMK04828_FILES,
+    'lmx2594': _LMX2594_FILES
     }
 
     for clock_part in _CLOCK_CONFIG_DICT:
-        for programming_key, fname in clock_config_dict[clock_part].items():
+        for programming_key, fname in _CLOCK_CONFIG_DICT[clock_part].items():
             tpro_file = pkg_resources.resource_filename('mkidgen3',fname)
             xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)
 
