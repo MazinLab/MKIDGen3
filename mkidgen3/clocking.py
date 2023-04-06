@@ -15,25 +15,60 @@ def _parse_ticspro(file):
 
 def _patch_xrfclk_lmk():
     # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
-    tpro_file = pkg_resources.resource_filename('mkidgen3','config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt')
-    xrfclk.xrfclk._Config['lmk04208']['122.88_viaext10M'] = _parse_ticspro(tpro_file)
+
+    lmk04208_files = {
+        '122.88_viaext10M': 'config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt'
+    }
+
+    lmk04828_files = {
+        '256.0_MTS': 'config/LMK04828_256.0_MTS.txt',
+        '500.0_MTS': 'config/LMK04828_500.0_MTS.txt'
+    }
+
+    lmx2594_files = {
+        '500.0_MTS': 'config/LMX2594_500.0_MKTS.txt',
+        '409.6_MTS': 'config/LMX2594_409.6_256FoscMTS.txt'
+    }
+
+    clock_config_dict = {
+    'lmk04208': lmk04208_files,
+    'lmk04828': lmk04828_files,
+    'lmx2594': lmx2594_files
+    }
+
+    for clock_part in clock_config_dict:
+        for programming_key, fname in clock_config_dict[clock_part].items():
+            tpro_file = pkg_resources.resource_filename('mkidgen3',fname)
+            xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)
 
 
-def start_clocks(external_10mhz=False):
+def start_clocks(programming_key=False):
+    """
+    - 'external_10mhz' pull LMK clock source from 10 MHz Ref
+    - '
+    """
     try:
         import xrfclk, xrfdc
     except ImportError:
         getLogger(__name__).warning('xrfclk/xrfdc unavaiable, clock will not be started')
         return
+    if programming_key is not False:
+        _patch_xrfclk_lmk()
+
     board_name = subprocess.run(['cat', '/proc/device-tree/chosen/pynq_board'], capture_output=True, text=True).stdout
+
     if board_name == 'RFSoC4x2\x00':
-        if external_10mhz:
+        if programming_key == 'external_10mhz':
             raise ValueError('External 10 MHz is not supported on RFSoC4x2')
+        if programming_key == '4.096GSPS_MTS':
+            xrfclk.set_ref_clks(lmk_freq='256.0_MTS', lmx_freq='409.6_MTS')
+        if programming_key == '5.000GSPS_MTS':
+            xrfclk.set_ref_clks(lmk_freq='500.0_MTS', lmx_freq='500.0_MTS')
         else:
             xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=409.6)
 
     elif board_name == 'ZCU111\x00':
-        if external_10mhz:
+        if programming_key == 'external_10mhz':
             _patch_xrfclk_lmk()
             xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M', lmx_freq=409.6)
         else:
