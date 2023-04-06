@@ -44,8 +44,9 @@ def _patch_xrfclk_lmk():
 
 def start_clocks(programming_key=False):
     """
-    - 'external_10mhz' pull LMK clock source from 10 MHz Ref
-    - '
+    - 'external_10mhz' pull LMK clock source from 10 MHz Ref (ZCU111 Only for now)
+    - '4.096GSPS_MTS' MTS compatible with 4.096 GSPS Sampling Fequency (RFSoC4x2 Only)
+    - '5.000GSPS_MTS' MTS compatible with 5.000 GSPS Sampling Frequency (RFSoC4x2 Only)
     """
     try:
         import xrfclk, xrfdc

@@ -127,12 +127,12 @@ def enable_interrupts():
     _gen3_overlay.axi_intc_0.register_map.MER.ME = True
 
 
-def configure(bitstream, ignore_version=False, clocks=False, external_10mhz=False, download=True):
+def configure(bitstream, ignore_version=False, clocks=False, programming_key=False, download=True):
     import pynq
 
     if clocks:
         import mkidgen3.drivers.rfdc
-        mkidgen3.clocking.start_clocks(external_10mhz=external_10mhz)
+        mkidgen3.clocking.start_clocks(programming_key=programming_key)
 
     global _gen3_overlay
     ol = _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
