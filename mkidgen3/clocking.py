@@ -15,6 +15,7 @@ def _parse_ticspro(file):
 
 def _patch_xrfclk_lmk():
     # access with     xrfdc.set_ref_clks(lmk_freq='122.88_viaext10M')
+    import xrfclk
 
     _LMK04208_FILES = {
         '122.88_viaext10M': 'config/ZCU111_LMK04208_10MHz_Ref_J109SMA.txt'
