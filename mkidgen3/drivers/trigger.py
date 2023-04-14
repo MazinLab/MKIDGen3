@@ -4,7 +4,7 @@ import numpy as np
 
 class PhotonTrigger(DefaultIP):
     resmap_addr = 0x1000
-    bindto = ['MazinLab:mkidgen3:trigger:0.2']
+    bindto = ['mazinlab:mkidgen3:trigger:0.2']
 
     def __init__(self, description):
         """
