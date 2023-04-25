@@ -198,7 +198,7 @@ class PhotonPostageMAXI(DefaultIP):
 class PhotonIDMAXI(DefaultIP):
     N_PHOTON_BUFFERS=2
     PHOTON_BUFF_N=8192
-    PHOTON_DTYPE = np.dtype([('time', np.uint16), ('phase', np.int16), ('id', np.int16)])
+    PHOTON_DTYPE = np.dtype([('time', np.uint16), ('phase', np.int16), ('id', np.uint16)])
     bindto = ['mazinlab:mkidgen3:photons_maxi_id:0.1']
 
     def __init__(self, description):
@@ -248,10 +248,11 @@ class PhotonIDMAXI(DefaultIP):
 
     def get_photons(self):
         ab = self.read(0x28) & 0xff
-        ret = self._buf[0 if ab else 1].copy()
+        ret = np.array(self._buf[0 if ab else 1])
         count = self.read(0x20)
         ab2 = self.read(0x28) & 0xff
         counts = [count & 0x1fff, (count >> 16) & 0x1fff]
+        count = counts[0 if ab else 1]
         getLogger(__name__).debug(f'Active Buffer: {ab}. Buffer counts: {counts}')
         if not ab == ab2:
             raise RuntimeError('Buffer changed during read')
