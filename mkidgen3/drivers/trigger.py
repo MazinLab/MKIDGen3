@@ -125,9 +125,9 @@ class PhotonPostageFilter(DefaultIP):
         """ monitor_channels shall be 8 integers in [0,2047] """
         if monitor_channels is None:
             return
-        monitor_channels = np.asarray(monitor_channels, dtype=int).clip(0, 2047)
+        monitor_channels = np.asarray(monitor_channels, dtype=np.uint16).clip(0, 2047)
         for a, c in zip(self.ADDR_MONITOR_CHAN, monitor_channels):
-            self.write(a, c)
+            self.write(a, int(c))
 
 
 class PhotonPostageMAXI(DefaultIP):
@@ -174,21 +174,21 @@ class PhotonPostageMAXI(DefaultIP):
         self._buf = None
 
     def capture(self):
-        if not self.register_map.AP_CTRL.AP_IDLE:
+        if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
             raise RuntimeError('Core already capturing')
-        self.write(0x08, 1)
-        self.write(0x04, 1)
+        self.register_map.IP_IER.CHAN0_INT_EN = 1
+        self.register_map.GIER=1
         self.read(0x0C)
         self._buf = buffer.allocate((8, self.POSTAGE_BUFFER_LEN, self.N_CAPDATA, 2), dtype=np.int16)
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
-        self.register_map.AP_CTRL.AP_START=1
+        self.register_map.CTRL.AP_START=1
         return self._buf
 
     @property
     def event_count(self):
-        return np.frombuffer(self.mmio.array[0x20/4:0x2f/4+1].copy(), dtype=np.uint16)
+        return np.frombuffer(self.mmio.array[0x20//4:0x2f//4+1].copy(), dtype=np.uint16)
 
     def configure(self):
         """ monitor_channels shall be 8 integers in [0,2047] """
@@ -258,16 +258,16 @@ class PhotonIDMAXI(DefaultIP):
         return ret[:count]
 
     def capture(self):
-        if not self.register_map.AP_CTRL.AP_IDLE:
+        if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
-        self.write(0x08, 1)
-        self.write(0x04, 1)
+        self.register_map.IP_IER.CHAN0_INT_EN = 1
+        self.register_map.GIER=1
         self.read(0x0C)
         self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N), dtype=self.PHOTON_DTYPE)
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
-        self.register_map.AP_CTRL.AP_AUTO_RESTART = 1
-        self.register_map.AP_CTRL.AP_START = 1
+        self.register_map.CTRL.AUTO_RESTART = 1
+        self.register_map.CTRL.AP_START = 1
         return self._buf
 
     def configure(self):
