@@ -133,7 +133,7 @@ class PhotonPostageFilter(DefaultIP):
 class PhotonPostageMAXI(DefaultIP):
     POSTAGE_BUFFER_LEN = 1000
     N_CAPDATA = 90
-    bindto = ['mazinlab:mkidgen3:photons_maxi_id:0.1']
+    bindto = ['mazinlab:mkidgen3:postage_maxi:0.1']
 
     def __init__(self, description):
         """
