@@ -329,7 +329,7 @@ class PhotonMAXI(DefaultIP):
                                      f'{_buffer_time_ms:.2f} ms')
         else:
             getLogger(__name__).debug(f'Photon buffer interval: {_buffer_time_ms:.2f} ms')
-        self.write(0x40, l2_buffer_shift)
+        self.write(0x40, int(l2_buffer_shift))
 
     def capture(self, n_photons_per_buffer=2 ** 16 - 1, buffer_time_ms=4.096):
         if not self.register_map.CTRL.AP_IDLE:
