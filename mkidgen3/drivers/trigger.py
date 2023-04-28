@@ -2,9 +2,10 @@ from pynq import DefaultIP, buffer
 import numpy as np
 from logging import getLogger
 
+
 class PhotonTrigger(DefaultIP):
     ADDR_RESMAP = 0x1000
-    bindto = ['mazinlab:mkidgen3:trigger:0.2']
+    bindto = ['mazinlab:mkidgen3:trigger:0.4']
 
     def __init__(self, description):
         """
@@ -101,7 +102,7 @@ class PhotonTrigger(DefaultIP):
 
 class PhotonPostageFilter(DefaultIP):
     ADDR_MONITOR_CHAN = tuple(range(0x10, 0x49, 0x8))
-    bindto = ['mazinlab:mkidgen3:postage_filter:0.1']
+    bindto = ['mazinlab:mkidgen3:postage_filter:0.2']
 
     def __init__(self, description):
         """
@@ -131,9 +132,9 @@ class PhotonPostageFilter(DefaultIP):
 
 
 class PhotonPostageMAXI(DefaultIP):
-    POSTAGE_BUFFER_LEN = 1000
-    N_CAPDATA = 90
-    bindto = ['mazinlab:mkidgen3:postage_maxi:0.1']
+    POSTAGE_BUFFER_LEN = 1000*8  # Must be N_MONITOR*POSTAGE_BUFSIZE from the HLS
+    N_CAPDATA = 128  # Must match the HLS
+    bindto = ['mazinlab:mkidgen3:postage_maxi:0.2']
 
     def __init__(self, description):
         """
@@ -164,49 +165,83 @@ class PhotonPostageMAXI(DefaultIP):
         //        bit 31~0 - iq[31:0] (Read/Write)
         // 0x14 : Data signal of iq
         //        bit 31~0 - iq[63:32] (Read/Write)
-        // 0x20 ~
-        // 0x2f : Memory 'event_count' (8 * 16b)
-        //        Word n : bit [15: 0] - event_count[2n]
-        //                 bit [31:16] - event_count[2n+1]
-
+        // 0x18 : reserved
+        // 0x1c : Data signal of event_count
+        //        bit 15~0 - event_count[15:0] (Read/Write)
+        //        others   - reserved
+        // 0x20 : reserved
+        // 0x24 : Data signal of max_events
+        //        bit 15~0 - max_events[15:0] (Read/Write)
+        //        others   - reserved
+        // 0x28 : reserved
         """
         super().__init__(description=description)
         self._buf = None
 
-    def capture(self):
+    def capture(self, max_events=1000):
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
-            raise RuntimeError('Core already capturing')
         self.register_map.IP_IER.CHAN0_INT_EN = 1
-        self.register_map.GIER=1
+        self.register_map.GIER = 1
         self.read(0x0C)
-        self._buf = buffer.allocate((8, self.POSTAGE_BUFFER_LEN, self.N_CAPDATA, 2), dtype=np.int16)
+        self.write(0x24, min(max(max_events, 1), self.POSTAGE_BUFFER_LEN))
+        self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA, 2), dtype=np.int16)
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
-        self.register_map.CTRL.AP_START=1
+        self.register_map.CTRL.AP_START = 1
         return self._buf
+
+    def get_postage(self):
+        count = self.event_count
+        data = np.array(self._buf[:count])
+        ids = data[:, 0, 0].astype(np.uint16)
+        events = data[:, 1:, :]
+        return ids, events
 
     @property
     def event_count(self):
-        return np.frombuffer(self.mmio.array[0x20//4:0x2f//4+1].copy(), dtype=np.uint16)
+        return self.read(0x1c)
 
-    def configure(self):
+    def configure(self, max_events=None):
         """ monitor_channels shall be 8 integers in [0,2047] """
-        return self.capture()
+        return self.capture(max_events)
 
 
-class PhotonIDMAXI(DefaultIP):
-    N_PHOTON_BUFFERS=2
-    PHOTON_BUFF_N=8192
-    PHOTON_DTYPE = np.dtype([('time', np.uint16), ('phase', np.int16), ('id', np.uint16)])
-    bindto = ['mazinlab:mkidgen3:photons_maxi_id:0.1']
+class PhotonMAXI(DefaultIP):
+    N_PHOTON_BUFFERS = 2  # Must match HLS C
+    PHOTON_BUFF_N = 102400  # 10ms 5000 cps 2048 resonators Must match HLS C
+    PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
+    PHOTON_PACKED_DTYPE = np.uint64
+    bindto = ['mazinlab:mkidgen3:photon_maxi:0.2']
+
+    @staticmethod
+    def pack_photons(x, out=None):
+        ret = np.zeros(x.size, dtype=PhotonMAXI.PHOTON_PACKED_DTYPE) if out is None else out
+        ret[:] = (((x['time'] << 12) | x['id']) << 16) | x['phase'].astype(np.uint16)
+        return ret
+
+    @staticmethod
+    def unpack_photons(x, out=None):
+        ret = np.zeros(x.size, dtype=PhotonMAXI.PHOTON_DTYPE) if out is None else out
+        ret['phase'] = x & 0xffff
+        ret['time'] = x >> 28
+        ret['id'] = (x >> 16) & 0xfff
+        return ret
+
+    @staticmethod
+    def gen_fake_buffer_data(n, time_us):
+        n = int(n)
+        data = np.zeros(n, dtype=PhotonMAXI.PHOTON_DTYPE)
+        data['time'] = np.sort(np.random.randint(0, high=time_us, size=n))
+        data['id'] = np.random.randint(0, high=2047, size=n)
+        data['phase'] = np.random.randint(-0x7fff, high=0x7fff, size=n)
+        return data
 
     def __init__(self, description):
         """
         The core watches for trigger events on 8 resonator channels and forwards IQ snippets around trigger events on
         for capture by other parts of the firmware. It is configured with 8 resonator channel values for monitoring.
 
-        // control
         // 0x00 : Control signals
         //        bit 0  - ap_start (Read/Write/COH)
         //        bit 1  - ap_done (Read/COR)
@@ -237,36 +272,79 @@ class PhotonIDMAXI(DefaultIP):
         // 0x2c : Control signal of active_buffer
         //        bit 0  - active_buffer_ap_vld (Read/COR)
         //        others - reserved
+        // 0x38 : Data signal of photons_per_buf
+        //        bit 16~0 - photons_per_buf[16:0] (Read/Write)
+        //        others   - reserved
+        // 0x3c : reserved
+        // 0x40 : Data signal of time_shift
+        //        bit 4~0 - time_shift[4:0] (Read/Write)
+        //        others  - reserved
+        // 0x44 : reserved
         // 0x20 ~
-        // 0x27 : Memory 'n_photons' (2 * 13b)
-        //        Word n : bit [12: 0] - n_photons[2n]
-        //                 bit [28:16] - n_photons[2n+1]
-        //                 others      - reserved
+        // 0x27 : Memory 'n_photons' (2 * 17b)
+        //        Word n : bit [16:0] - n_photons[n]
+        //                 others     - reserved
         """
         super().__init__(description=description)
         self._buf = None
 
+    async def get_photons_corot(self):
+        await self.interrupt.wait()
+        return self.get_photons()
+
     def get_photons(self):
         ab = self.read(0x28) & 0xff
-        ret = np.array(self._buf[0 if ab else 1])
-        count = self.read(0x20)
+        count = self.read(0x20) if ab else self.read(0x24)
+        count &= 0x1ffff
+        ret = np.array(self._buf[0 if ab else 1][:count])
         ab2 = self.read(0x28) & 0xff
-        counts = [count & 0x1fff, (count >> 16) & 0x1fff]
-        count = counts[0 if ab else 1]
-        getLogger(__name__).debug(f'Active Buffer: {ab}. Buffer counts: {counts}')
+        getLogger(__name__).debug(f'Active Buffer: {ab}. Buffer counts: {count}')
         if not ab == ab2:
             raise RuntimeError('Buffer changed during read')
-        return ret[:count]
+        return ret
 
-    def capture(self):
+    def stop_capture(self):
+        self.register_map.CTRL.AUTO_RESTART = 0
+
+    @property
+    def buffer_count_interval(self):
+        return self.read(0x38)
+
+    @property
+    def buffer_interval(self):
+        return 2 ** self.read(0x40) / 1e3
+
+    @buffer_interval.setter
+    def buffer_interval(self, interval_ms):
+        if not self.register_map.CTRL.AP_IDLE:
+            getLogger(__name__).warning('buffer_interval change will not take effect until core restart')
+        l2_buffer_shift = np.round(np.log2(interval_ms * 1000))
+        _buffer_time_ms = 2 ** l2_buffer_shift / 1000
+        if l2_buffer_shift < 9 or l2_buffer_shift > 20:
+            getLogger(__name__).warning(f'Requested photon buffer interval ({interval_ms:.2f} ms) unsupported, '
+                                        f'using {_buffer_time_ms:.2f}')
+            l2_buffer_shift = min(max(l2_buffer_shift, 9), 20)
+        elif abs(_buffer_time_ms - interval_ms) >= .01:
+            getLogger(__name__).info(f'Photon buffer interval {interval_ms:.2f} ms rounded to '
+                                     f'{_buffer_time_ms:.2f} ms')
+        else:
+            getLogger(__name__).debug(f'Photon buffer interval: {_buffer_time_ms:.2f} ms')
+        self.write(0x40, l2_buffer_shift)
+
+    def capture(self, n_photons_per_buffer=2 ** 16 - 1, buffer_time_ms=4.096):
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
         self.register_map.IP_IER.CHAN0_INT_EN = 1
-        self.register_map.GIER=1
+        self.register_map.GIER = 1
         self.read(0x0C)
-        self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N), dtype=self.PHOTON_DTYPE)
+        self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N), dtype=self.PHOTON_PACKED_DTYPE)
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
+        self.buffer_interval = buffer_time_ms
+        if n_photons_per_buffer > 2 ** 16 - 1:
+            getLogger(__name__).warning(f'Requested rotation count too high, photon buffer will be rotated at n'
+                                        f'={2 ** 16 - 1}')
+        self.write(0x38, min(max(int(n_photons_per_buffer), 0), 2 ** 16 - 1))
         self.register_map.CTRL.AUTO_RESTART = 1
         self.register_map.CTRL.AP_START = 1
         return self._buf
