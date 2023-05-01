@@ -79,7 +79,7 @@ class PhotonTrigger(DefaultIP):
             _thresholds, _holdoffs = self._fetch()
 
         if holdoffs is not None:
-            holdoffs = holdoffs.astype(int).clip(0, 254) + 1
+            holdoffs = holdoffs.astype(int).clip(0, 254)
             if len(holdoffs) != 2048:
                 raise ValueError('len(holdoffs)!=2048')
         elif _holdoffs is None:
