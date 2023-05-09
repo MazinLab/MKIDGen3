@@ -36,38 +36,13 @@ class PhotonTrigger(DefaultIP):
         """
         super().__init__(description=description)
 
-    @staticmethod
-    def _checkgroup(group_ndx):
-        if group_ndx < 0 or group_ndx > 511:
-            raise ValueError('group_ndx must be in [0,511]')
-
-    def _read_group(self, group_ndx):
-        """return a list of the 8 byte values in the group"""
-        self._checkgroup(group_ndx)
-        g = 0
-        vals = [self.read(self.ADDR_RESMAP + 8 * group_ndx + 4 * i) for i in range(2)]
-        for i, v in enumerate(vals):
-            g |= v << (32 * i)
-        return [((g >> (8 * j)) & 0xff) for j in range(8)]
-
-    def _write_group(self, group_ndx, group):
-        self._checkgroup(group_ndx)
-        if len(group) != 8:
-            raise ValueError('len(group)!=8')
-        bits = 0
-        for i, g in enumerate(group):
-            bits |= (int(g) & 0xff) << (8 * i)
-        data = bits.to_bytes(12, 'little', signed=False)
-        self.write(self.ADDR_RESMAP + 16 * group_ndx, data)
-
     def _fetch(self):
         """ Return arrays of the thresholds (in raw format) and the holdoffs assigned to each of the  2048 resonator
         channels
         """
-        groups = np.array([self._read_group(i) for i in range(511)], dtype=int)
-        thresh = groups[:, ::2].ravel()  # /256-.5
-        hoff = groups[:, 1::2].ravel() - 1
-        return thresh, hoff
+        sl = slice(0x1000 // 4, 0x1000 // 4 + 1024)
+        x = np.frombuffer(np.array(self.mmio.array[sl]), dtype=np.uint8).reshape(2048, 2)
+        return x[::2], x[1::2]
 
     def configure(self, thresholds=None, holdoffs=None):
         """Thresholds shall be floating point numbers in [-1,1) and will be converted to ap_fixed<8,0>"""
@@ -96,12 +71,11 @@ class PhotonTrigger(DefaultIP):
 
         assert thresholds.size == holdoffs.size
 
-        t_iter = iter(thresholds)
-        h_iter = iter(holdoffs)
-        groups = [g for g in zip(t_iter, h_iter, t_iter, h_iter, t_iter, h_iter, t_iter, h_iter)]
-
-        for i, g in enumerate(groups):
-            self._write_group(i, g)
+        data = np.zeros((2048, 2), dtype=np.uint8)
+        data[:, 0] = thresholds
+        data[:, 0] = holdoffs
+        sl = slice(0x1000 // 4, 0x1000 // 4 + 1024)
+        self.mmio.array[sl]=np.frombuffer(data, dtype=np.uint32)
 
 
 class PhotonPostageFilter(DefaultIP):
