@@ -132,7 +132,7 @@ class PhotonPostageFilter(DefaultIP):
 
 
 class PhotonPostageMAXI(DefaultIP):
-    POSTAGE_BUFFER_LEN = 1000*8  # Must be N_MONITOR*POSTAGE_BUFSIZE from the HLS
+    POSTAGE_BUFFER_LEN = 1000*8  # Must be POSTAGE_BUFSIZE from the HLS
     N_CAPDATA = 128  # Must match the HLS
     bindto = ['mazinlab:mkidgen3:postage_maxi:0.2']
 
@@ -167,13 +167,15 @@ class PhotonPostageMAXI(DefaultIP):
         //        bit 31~0 - iq[63:32] (Read/Write)
         // 0x18 : reserved
         // 0x1c : Data signal of event_count
-        //        bit 15~0 - event_count[15:0] (Read/Write)
+        //        bit 15~0 - event_count[15:0] (Read)
         //        others   - reserved
-        // 0x20 : reserved
-        // 0x24 : Data signal of max_events
+        // 0x20 : Control signal of event_count
+        //        bit 0  - event_count_ap_vld (Read/COR)
+        //        others - reserved
+        // 0x2c : Data signal of max_events
         //        bit 15~0 - max_events[15:0] (Read/Write)
         //        others   - reserved
-        // 0x28 : reserved
+        // 0x30 : reserved
         """
         super().__init__(description=description)
         self._buf = None
@@ -185,7 +187,7 @@ class PhotonPostageMAXI(DefaultIP):
         self.register_map.IP_IER.CHAN0_INT_EN = 1
         self.register_map.GIER = 1
         self.read(0x0C)
-        self.write(0x24, min(max(max_events, 1), self.POSTAGE_BUFFER_LEN))
+        self.write(0x2c, min(max(max_events, 1), self.POSTAGE_BUFFER_LEN))
         self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA, 2), dtype=np.int16)
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
         self.register_map.CTRL.AP_START = 1
