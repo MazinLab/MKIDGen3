@@ -345,7 +345,7 @@ class PhotonMAXI(DefaultIP):
         loop = asyncio.new_event_loop()
         q = Queue(maxsize=10)
         kill = threading.Event()
-        coro = get_photons_corot(q, kill)
+        coro = get_photons_corot(self, q, kill)
         # Submit the coroutine to a given loop
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return q, kill, future
