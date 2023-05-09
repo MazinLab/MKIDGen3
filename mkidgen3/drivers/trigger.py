@@ -72,7 +72,7 @@ class PhotonTrigger(DefaultIP):
         assert thresholds.size == holdoffs.size
 
         data = np.zeros((2048, 2), dtype=np.uint8)
-        data[:, 0] = thresholds
+        data[:, 0] = thresholds.astype(np.uint8)
         data[:, 0] = holdoffs
         sl = slice(0x1000 // 4, 0x1000 // 4 + 1024)
         self.mmio.array[sl]=np.frombuffer(data, dtype=np.uint32)
