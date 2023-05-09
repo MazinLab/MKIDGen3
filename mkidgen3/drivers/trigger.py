@@ -73,9 +73,9 @@ class PhotonTrigger(DefaultIP):
 
         data = np.zeros((2048, 2), dtype=np.uint8)
         data[:, 0] = thresholds.astype(np.uint8)
-        data[:, 0] = holdoffs
+        data[:, 1] = holdoffs
         sl = slice(0x1000 // 4, 0x1000 // 4 + 1024)
-        self.mmio.array[sl]=np.frombuffer(data, dtype=np.uint32)
+        self.mmio.array[sl] = np.frombuffer(data, dtype=np.uint32)
 
 
 class PhotonPostageFilter(DefaultIP):
