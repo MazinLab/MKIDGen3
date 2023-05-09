@@ -41,7 +41,7 @@ class PhotonTrigger(DefaultIP):
         channels
         """
         sl = slice(0x1000 // 4, 0x1000 // 4 + 1024)
-        x = np.frombuffer(np.array(self.mmio.array[sl]), dtype=np.uint8).reshape(2048, 2)
+        x = np.frombuffer(np.array(self.mmio.array[sl]), dtype=np.uint8)
         return x[::2], x[1::2]
 
     def configure(self, thresholds=None, holdoffs=None):
