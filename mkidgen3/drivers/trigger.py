@@ -1,7 +1,11 @@
 from pynq import DefaultIP, buffer
 import numpy as np
 from logging import getLogger
-
+import threading
+from queue import Queue
+import queue
+import asyncio
+import time
 
 class PhotonTrigger(DefaultIP):
     ADDR_RESMAP = 0x1000
@@ -133,7 +137,7 @@ class PhotonPostageFilter(DefaultIP):
 
 class PhotonPostageMAXI(DefaultIP):
     POSTAGE_BUFFER_LEN = 1000*8  # Must be POSTAGE_BUFSIZE from the HLS
-    N_CAPDATA = 128  # Must match the HLS
+    N_CAPDATA = 127  # Must be 1 less than the HLS value
     bindto = ['mazinlab:mkidgen3:postage_maxi:0.2']
 
     def __init__(self, description):
@@ -180,7 +184,9 @@ class PhotonPostageMAXI(DefaultIP):
         super().__init__(description=description)
         self._buf = None
 
-    def capture(self, max_events=1000):
+    def capture(self, max_events=None):
+        if max_events is None:
+            max_events = self.POSTAGE_BUFFER_LEN
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
@@ -188,16 +194,28 @@ class PhotonPostageMAXI(DefaultIP):
         self.register_map.GIER = 1
         self.read(0x0C)
         self.write(0x2c, min(max(max_events, 1), self.POSTAGE_BUFFER_LEN))
-        self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA, 2), dtype=np.int16)
+        self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA+1, 2), dtype=np.int16)
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
         self.register_map.CTRL.AP_START = 1
         return self._buf
 
-    def get_postage(self):
+    def get_postage(self, raw=False, scaled=True):
+        """
+        Raw takes precedence
+
+        Returns array of event resonator channels and array of [n_events,N_CAPDATA]
+
+        get channels with events via set(ids)
+        select events from a channel via events[ids==<your_channel>]
+        """
         count = self.event_count
         data = np.array(self._buf[:count])
         ids = data[:, 0, 0].astype(np.uint16)
         events = data[:, 1:, :]
+        if not raw:
+            if scaled:
+                events /= 2**14
+            events = events[:, :, 0]+events[:, :, 0]*1j
         return ids, events
 
     @property
@@ -290,10 +308,6 @@ class PhotonMAXI(DefaultIP):
         super().__init__(description=description)
         self._buf = None
 
-    async def get_photons_corot(self):
-        await self.interrupt.wait()
-        return self.get_photons()
-
     def get_photons(self):
         ab = self.read(0x28) & 0xff
         count = self.read(0x20) if ab else self.read(0x24)
@@ -307,6 +321,35 @@ class PhotonMAXI(DefaultIP):
 
     def stop_capture(self):
         self.register_map.CTRL.AUTO_RESTART = 0
+
+    def photon_fountain(self):
+        """
+        returns photon_queue, kill_event, future. kill with kill_event.set()
+        get photons with PhotonMAXI.unpack_photons(q.get())
+        """
+        async def get_photons_corot(self, q, kill):
+            while not kill.is_set():
+                await self.interrupt.wait()
+                try:
+                    tic = time.time()
+                    p = self.get_photons()
+                    toc = time.time()
+                    getLogger(__name__).getChild('timing').debug(f'Get Photons took {(toc-tic)*1000:.2f} ms')
+                except RuntimeError:
+                    getLogger(__name__).error(f"Dropping photons, couldn't keep up with with buffer rotation")
+                    continue
+                try:
+                    q.put_nowait(p)
+                except queue.Full:
+                    getLogger(__name__).debug(f'Dropping photons, fountain Q full')
+        loop = asyncio.new_event_loop()
+        q = Queue(maxsize=10)
+        kill = threading.Event()
+        coro = get_photons_corot(q, kill)
+        q.
+        # Submit the coroutine to a given loop
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return q, kill, future
 
     @property
     def buffer_count_interval(self):
@@ -340,7 +383,8 @@ class PhotonMAXI(DefaultIP):
         self.register_map.IP_IER.CHAN0_INT_EN = 1
         self.register_map.GIER = 1
         self.read(0x0C)
-        self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N), dtype=self.PHOTON_PACKED_DTYPE)
+        self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N), dtype=self.PHOTON_PACKED_DTYPE,
+                                    cacheable=True)
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
         self.buffer_interval = buffer_time_ms
         if n_photons_per_buffer > 2 ** 16 - 1:
