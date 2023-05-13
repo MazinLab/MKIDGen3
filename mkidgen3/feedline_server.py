@@ -1,5 +1,6 @@
 import json
 import logging
+import queue
 
 import mkidgen3.clocking
 from mkidgen3.drivers.ifboard import IFBoard
@@ -165,7 +166,7 @@ class FeedlineReadout:
         return status
 
     @staticmethod
-    def plram_cap(pipe, cr, ol: pynq.Overlay, context=None):
+    def plram_cap(pipe, cr:CaptureRequest, ol: pynq.Overlay, context=None):
         """
 
         Args:
@@ -239,7 +240,7 @@ class FeedlineReadout:
             del cr
 
     @staticmethod
-    def photon_cap(pipe, context, cr, ol):
+    def photon_cap(pipe, context, cr:CaptureRequest, ol):
         try:
             cr.establish(context)
         except Exception:
@@ -250,22 +251,38 @@ class FeedlineReadout:
         abort.setsockopt(zmq.SUBSCRIBE, id)
         abort.connect('inproc://cap_abort')
 
-        buffers = []
         try:
-            buffers = [FLPhotonBuffer() for _ in range(2)]
-            buf = None
+            # stop = threading.Event()
+            q, q_other = zpipe(zmq.Context.instance())
+            # q = queue.SimpleQueue()
+            photon_maxi = ol.photon_pipe.trigger_system.photon_maxi
+            fountain_thread, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=False)
+            def photon_sender(q: zmq.Socket, cr, unpack=False):
+                log = getLogger('__name__')
+                while True:
+                    log.info(f'iter start')
+                    photons = q.recv_pyobj()
+                    log.info(f'received')
+                    if photons is None:
+                        cr.finish()
+                        break
+                    cr.add_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False)
+                log.info(f'done')
+
+            compressor_thread = threading.Thread(target=photon_sender, args=(q, cr))
+            compressor_thread.start()
+            fountain_thread.start()
+            ol.photon_pipe.trigger_system.
+            photon_maxi.capture(buffer_time_ms=cr.)
             while not cr.aborted() and abort.poll(1) == 0:
-                to_send = buf
-                buf = buffers.pop(0)
-                buffers.append(buf)
-                ol.photon_capture.capture(buf.buffer)
-                if to_send:
-                    cr.add_data(to_send.buffer)
-                while not buf.full and not abort.poll(5):
+                while not abort.poll(5):
                     pass
-            ol.photon_capture.stop()
-            cr.add_data(buf.buffer)
-            cr.finish()
+            ol.photon_pipe_trigger_system.photon_maxi.stop_capture()
+            stop.set()
+            fountain_thread.join()
+            compressor_thread.join()
+            if not cr.completed:
+                cr.finish()
         except Exception as e:
             getLogger(__name__).error(f'Terminating capture {id} due to {e}')
             cr.fail(f'Aborted due to {str(e)}')

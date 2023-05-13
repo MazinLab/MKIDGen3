@@ -729,11 +729,11 @@ class CaptureRequest:
         self._send_status('aborted', message)
         self.destablish()
 
-    def add_data(self, data, status=''):
+    def add_data(self, data, status='', copy=True):
         if not self._data_socket or not self._status_socket:
             raise RuntimeError('Establish must be called before add_data')
         # TODO ensure we are being smart about pointers and buffer acces vs copys
-        self._data_socket.send_multipart([self.id, blosc2.compress(data)])
+        self._data_socket.send_multipart([self.id, blosc2.compress(data)], copy=copy)
         self._send_status('capturing', status)
 
     def _send_status(self, status, message=''):
@@ -743,6 +743,10 @@ class CaptureRequest:
         getLogger(__name__).debug(f'Published status update {self.id}: "{update}"')
         self._last_status = (status, message)
         self._status_socket.send_multipart([self.id, update.encode()])
+
+    @property
+    def completed(self):
+        return self._last_status is not None and self._last_status[0] in ('finished', 'aborted', 'failed')
 
     def set_status(self, status, message='', context: zmq.Context = None):
         """
