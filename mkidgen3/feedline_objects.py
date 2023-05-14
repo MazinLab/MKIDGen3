@@ -714,26 +714,49 @@ class CaptureRequest:
         except AttributeError:
             pass
 
-    def fail(self, message):
-        self._data_socket.send_multipart([self.id, b''])
-        self._send_status('failed', message)
-        self.destablish()
+    def fail(self, message, raise_exception=False):
+        if self.completed:
+            return
+        try:
+            self._data_socket.send_multipart([self.id, b''])
+            self._send_status('failed', message)
+            self.destablish()
+        except zmq.ZMQError as ez:
+            getLogger(__name__).warning(f'Failed to send fail message {self} due to {ez}')
+            if raise_exception:
+                raise ez
 
-    def finish(self):
-        self._data_socket.send_multipart([self.id, b''])
-        self._send_status('finished')
-        self.destablish()
+    def finish(self, raise_exception=True):
+        if self.completed:
+            return
+        try:
+            self._data_socket.send_multipart([self.id, b''])
+            self._send_status('finished')
+            self.destablish()
+        except zmq.ZMQError as ez:
+            getLogger(__name__).warning(f'Failed to send finished message {self} due to {ez}')
+            if raise_exception:
+                raise ez
 
-    def abort(self, message):
-        self._data_socket.send_multipart([self.id, b''])
-        self._send_status('aborted', message)
-        self.destablish()
+    def abort(self, message, raise_exception=False):
+        if self.completed:
+            return
+        try:
+            self._data_socket.send_multipart([self.id, b''])
+            self._send_status('aborted', message)
+            self.destablish()
+        except zmq.ZMQError as ez:
+            getLogger(__name__).warning(f'Failed to send abort message {self} due to {ez}')
+            if raise_exception:
+                raise ez
 
-    def add_data(self, data, status=''):
+    def add_data(self, data, status='', copy=False):
         if not self._data_socket or not self._status_socket:
             raise RuntimeError('Establish must be called before add_data')
         # TODO ensure we are being smart about pointers and buffer acces vs copys
-        self._data_socket.send_multipart([self.id, blosc2.compress(data)])
+        if copy:
+            data = np.array(data)
+        self._data_socket.send_multipart([self.id, blosc2.compress(data)], copy=False)
         self._send_status('capturing', status)
 
     def _send_status(self, status, message=''):
@@ -743,6 +766,10 @@ class CaptureRequest:
         getLogger(__name__).debug(f'Published status update {self.id}: "{update}"')
         self._last_status = (status, message)
         self._status_socket.send_multipart([self.id, update.encode()])
+
+    @property
+    def completed(self):
+        return self._last_status is not None and self._last_status[0] in ('finished', 'aborted', 'failed')
 
     def set_status(self, status, message='', context: zmq.Context = None):
         """

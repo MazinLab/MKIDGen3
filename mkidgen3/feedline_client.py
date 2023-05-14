@@ -3,7 +3,7 @@ ctx = zmq.Context.instance()
 ctx.linger = 0
 import logging
 logging.basicConfig(level=logging.DEBUG)
-from mkidgen3.feedline_objects import CaptureRequest, CaptureJob, FeedlineConfig
+from mkidgen3.feedline_client_objects import CaptureRequest, CaptureJob, FeedlineConfig
 
 # cap command default 8888
 # cap data 8889
