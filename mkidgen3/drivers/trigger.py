@@ -12,6 +12,8 @@ from collections import namedtuple
 from datetime import datetime
 
 
+LOWPASSED_IQ_SAMPLE_RATE = 1e6
+
 class PhotonTrigger(DefaultIP):
     bindto = ['mazinlab:mkidgen3:trigger:0.4']
     THRESHOFF_SLICE = slice(0x1000 // 4, 0x1000 // 4 + 1024)
@@ -118,6 +120,7 @@ class PhotonPostageFilter(DefaultIP):
 class PhotonPostageMAXI(DefaultIP):
     POSTAGE_BUFFER_LEN = 1000 * 8  # Must be POSTAGE_BUFSIZE from the HLS
     N_CAPDATA = 127  # Must be 1 less than the HLS value
+    MAX_CAPTURE_TIME_S = POSTAGE_BUFFER_LEN/8*(N_CAPDATA+1)/LOWPASSED_IQ_SAMPLE_RATE
     bindto = ['mazinlab:mkidgen3:postage_maxi:0.2']
 
     def __init__(self, description):

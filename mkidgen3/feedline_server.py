@@ -1,6 +1,7 @@
 import json
 import logging
 import queue
+import time
 
 import mkidgen3.clocking
 from mkidgen3.drivers.ifboard import IFBoard
@@ -240,25 +241,42 @@ class FeedlineReadout:
             del cr
 
     @staticmethod
-    def photon_cap(pipe, context, cr:CaptureRequest, ol):
+    def photon_cap(pipe:zmq.Socket, cr:CaptureRequest, ol: pynq.Overlay, context=None):
+        """
+        pipe: a zme pair pipe to detect abort
+        cr: the capture request
+        ol: the overlay
+        """
+        failmsg = ''
         try:
-            cr.establish(context)
-        except Exception:
-            getLogger(__name__).error(f"Unable to establish capture {cr.id}, dropping request.")
+            assert cr.type == 'engineering', 'Incorrect capture request type'
+            assert ol.capture.ready(), 'Capture Subsystem is busy'
+        except AssertionError as e:
+            failmsg = str(e)
+
+        try:
+            cr.establish(context=context)
+        except zmq.ZMQError as e:
+            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
+
+        if failmsg:
+            getLogger(__name__).error(failmsg)
+            try:
+                cr.fail(failmsg)
+                cr.destablish()
+            except zmq.ZMQError as ez:
+                getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
             return
 
-        abort = context.socket(zmq.SUB)
-        abort.setsockopt(zmq.SUBSCRIBE, id)
-        abort.connect('inproc://cap_abort')
+        photon_maxi = ol.photon_pipe.trigger_system.photon_maxi
 
-        try:
-            # stop = threading.Event()
-            q, q_other = zpipe(zmq.Context.instance())
-            # q = queue.SimpleQueue()
-            photon_maxi = ol.photon_pipe.trigger_system.photon_maxi
-            fountain_thread, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=False)
-            def photon_sender(q: zmq.Socket, cr, unpack=False):
-                log = getLogger('__name__')
+        q, q_other = zpipe(zmq.Context.instance())
+        # q = queue.SimpleQueue()  #an alternative
+        fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=False)
+
+        def photon_sender(q: zmq.Socket, cr, unpack=False):
+            log = getLogger(__name__)
+            try:
                 while True:
                     log.info(f'iter start')
                     photons = q.recv_pyobj()
@@ -267,36 +285,83 @@ class FeedlineReadout:
                         cr.finish()
                         break
                     cr.add_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False)
-                log.info(f'done')
+            except Exception as e:
+                cr.abort(f'Uncaught exception: {e}')
+                q.close()
+                raise e
+            log.info(f'done')
 
-            compressor_thread = threading.Thread(target=photon_sender, args=(q, cr))
-            compressor_thread.start()
-            fountain_thread.start()
-            ol.photon_pipe.trigger_system.
-            photon_maxi.capture(buffer_time_ms=cr.)
-            while not cr.aborted() and abort.poll(1) == 0:
-                while not abort.poll(5):
-                    pass
+        sender = threading.Thread(target=photon_sender, args=(q, cr))
+
+        try:
+            sender.start()
+            fountain.start()
+            photon_maxi.capture(buffer_time_ms=1337)   # todo: add support for setting the latency via the request?
+            while not cr.completed:
+                try:
+                    abort = pipe.recv(zmq.NOBLOCK)
+                    raise CaptureAbortedException(abort)
+                except zmq.ZMQError as e:
+                    if e.errno != zmq.EAGAIN:
+                        raise
+        except CaptureAbortedException as e:
+            stop.set()  # sender will finish up the CR
+        except Exception as e:
+            getLogger(__name__).error(f'Terminating {cr} due to {e}')
+            stop.set()
+            cr.fail(f'Failed due to {e}')
+        finally:
+            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
+            del cr
             ol.photon_pipe_trigger_system.photon_maxi.stop_capture()
             stop.set()
-            fountain_thread.join()
-            compressor_thread.join()
-            if not cr.completed:
-                cr.finish()
-        except Exception as e:
-            getLogger(__name__).error(f'Terminating capture {id} due to {e}')
-            cr.fail(f'Aborted due to {str(e)}')
-        finally:
-            ol.photon_capture.stop()
-            del cr
-            while buffers:
-                b = buffers.pop()
-                del b
-            abort.close()
+            pipe.close()
+            fountain.join()
+            sender.join()
+            if isinstance(q, zmq.Socket):
+                q.close()
 
     @staticmethod
     def stamp_cap(pipe, context, cr, ol):
-        pass
+        failmsg = ''
+        postage_maxi = ol.photon_pipe.trigger_system.postage_max
+        try:
+            assert cr.type == 'postage', 'Incorrect capture request type'
+            assert postage_maxi.register_map.AP_CTRL_AP_IDLE==1, 'Postage MAXI is busy'
+        except AssertionError as e:
+            failmsg = str(e)
+
+        try:
+            cr.establish(context=context)
+        except zmq.ZMQError as e:
+            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
+
+        if failmsg:
+            getLogger(__name__).error(failmsg)
+            cr.fail(failmsg, raise_exception=False)
+            return
+
+        try:
+            postage_maxi.capture()
+            while not postage_maxi.interrupt.is_set():
+                try:
+                    abort = pipe.recv(zmq.NOBLOCK)
+                    raise CaptureAbortedException(abort)
+                except zmq.ZMQError as e:
+                    if e.errno != zmq.EAGAIN:
+                        raise
+                time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S/10, .1))
+            cr.add_data(postage_maxi.get_postage(raw=False, scaled=True), copy=False)
+            cr.finish()
+        except CaptureAbortedException as e:
+            cr.abort(e, raise_exception=False)
+        except Exception as e:
+            getLogger(__name__).error(f'Terminating {cr} due to {e}')
+            cr.fail(f'Failed due to {e}', raise_exception=False)
+        finally:
+            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
+            del cr
+            pipe.close()
 
     def main(self, pipe: zmq.Socket, context: zmq.Context = None):
         """
