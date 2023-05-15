@@ -24,7 +24,7 @@ status_server = 'tcp://localhost:8890'
 #start a listner for data
 
 fc = FeedlineConfig()
-cr = CaptureRequest(1337, 'iq', fc, feedline_server)
+cr = CaptureRequest(1337, 'iq', fc)
 cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
 cj.submit()
 

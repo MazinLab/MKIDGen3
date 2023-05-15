@@ -1,3 +1,4 @@
+import pickle
 import threading
 import time
 
@@ -666,8 +667,8 @@ class CaptureRequest:
     DATA_ENDPOINT = 'inproc://cap_data.xsub'
     FINAL_STATUSES = ('finished', 'aborted', 'failed')
 
-    def __init__(self, n, tap, feedline_config: FeedlineConfig, feedline_server):
-        self.nsamp = n
+    def __init__(self, n, tap, feedline_config: FeedlineConfig, feedline_server=None):
+        self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
         self.tap = tap  # maybe add some error handling here
         self.feedline_config = feedline_config
@@ -675,6 +676,16 @@ class CaptureRequest:
         self._status_socket = None
         self._data_socket = None
         self._established = False
+
+    @property
+    def feedline_server(self):
+        return self._feedline_server
+
+    @feedline_server.setter
+    def feedline_server(self, server):
+        if self._feedline_server is not None:
+            raise RuntimeError('Once set the server may not be changed.')
+        self._feedline_server = server
 
     def __hash__(self):
         return int(md5(str((hash(self.feedline_config), self.tap,
@@ -753,9 +764,14 @@ class CaptureRequest:
     def add_data(self, data, status='', copy=False):
         if not self._data_socket or not self._status_socket:
             raise RuntimeError('Establish must be called before add_data')
-        # TODO ensure we are being smart about pointers and buffer acces vs copys
+        # TODO ensure we are being smart about pointers and buffer access vs copys
+
+        #TODO how do we ship the various data formats?
+        if not isinstance(data, np.ndarray):
+            data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
         if copy:
             data = np.array(data)
+
         self._data_socket.send_multipart([self.id, blosc2.compress(data)], copy=False)
         self._send_status('capturing', status)
 

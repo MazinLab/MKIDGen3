@@ -248,9 +248,9 @@ class FeedlineReadout:
         ol: the overlay
         """
         failmsg = ''
+        photon_maxi = ol.photon_pipe.trigger_system.photon_maxi
         try:
-            assert cr.type == 'engineering', 'Incorrect capture request type'
-            assert ol.capture.ready(), 'Capture Subsystem is busy'
+            assert cr.type == 'photon', 'Incorrect capture request type'
         except AssertionError as e:
             failmsg = str(e)
 
@@ -267,8 +267,6 @@ class FeedlineReadout:
             except zmq.ZMQError as ez:
                 getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
             return
-
-        photon_maxi = ol.photon_pipe.trigger_system.photon_maxi
 
         q, q_other = zpipe(zmq.Context.instance())
         # q = queue.SimpleQueue()  #an alternative
@@ -296,7 +294,7 @@ class FeedlineReadout:
         try:
             sender.start()
             fountain.start()
-            photon_maxi.capture(buffer_time_ms=1337)   # todo: add support for setting the latency via the request?
+            photon_maxi.capture(buffer_time_ms=cr.nsamp)   # todo: add support for setting the latency via the request?
             while not cr.completed:
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
@@ -562,6 +560,32 @@ def parse_cl():
     return parser.parse_args()
 
 
+def start_zmq_devices(cap_addr, stat_addr):
+    from zmq.devices import ThreadDevice
+
+    cap_addr_internal = 'inproc://cap_data.xsub'
+    stat_addr_internal = 'inproc://cap_stat.xsub'
+    # Set up a proxy for routing all the capture requests
+    dtd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    dtd.setsockopt_in(zmq.LINGER, 0)
+    dtd.setsockopt_out(zmq.LINGER, 0)
+    dtd.bind_in(cap_addr_internal)
+    dtd.bind_out(cap_addr)
+    dtd.daemon = True
+    dtd.start()
+    getLogger(__name__).info(f'Publishing capture data to {cap_addr} from relay @ {cap_addr_internal}')
+
+    std = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    std.setsockopt_in(zmq.LINGER, 0)
+    std.setsockopt_out(zmq.LINGER, 0)
+    std.bind_in(stat_addr_internal)
+    std.bind_out(stat_addr)
+    std.daemon = True
+    std.start()
+    getLogger(__name__).info(f'Publishing capture status information to {stat_addr} from relay @ {stat_addr_internal}')
+
+    return dtd, std
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
 
@@ -569,39 +593,17 @@ if __name__ == '__main__':
     context = zmq.Context.instance()
     context.linger = 0
 
-
     fr = FeedlineReadout(args.bitstream, clock_source=args.clock, if_port=args.if_board,
                          ignore_version=args.ignore_fpga_driver_version)
 
-    capture_port = args.capture_port
-    status_port = args.status_port
-    command_port = args.port
-    from zmq.devices import ThreadDevice
-
-    cap_addr = f'tcp://*:{capture_port}'
-    stat_addr = f'tcp://*:{status_port}'
-    cmd_addr = f"tcp://*:{command_port}"
-    # Set up a proxy for routing all the capture requests
-    dtd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
-    dtd.setsockopt_in(zmq.LINGER, 0)
-    dtd.setsockopt_out(zmq.LINGER, 0)
-    dtd.bind_in('inproc://cap_data.xsub')
-    dtd.bind_out(cap_addr)
-    dtd.daemon = True
-    dtd.start()
-    getLogger(__name__).info(f'Publishing capture data to {cap_addr}')
-
-    std = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
-    std.setsockopt_in(zmq.LINGER, 0)
-    std.setsockopt_out(zmq.LINGER, 0)
-    std.bind_in('inproc://cap_stat.xsub')
-    std.bind_out(stat_addr)
-    dtd.daemon = True
-    std.start()
-    getLogger(__name__).info(f'Publishing capture status information to {stat_addr}')
+    # Set up proxies for routing all the capture data and status
+    cap_addr = f'tcp://*:{args.capture_port}'
+    stat_addr = f'tcp://*:{args.status_port}'
+    dtd, std = start_zmq_devices(cap_addr, stat_addr)
 
     # Set up a command port
-
+    command_port = args.port
+    cmd_addr = f"tcp://*:{command_port}"
     socket = context.socket(zmq.REP)
     socket.bind(cmd_addr)
     getLogger(__name__).info(f'Accepting commands on {cmd_addr}')

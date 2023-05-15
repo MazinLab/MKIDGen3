@@ -1,3 +1,4 @@
+import pickle
 import threading
 import time
 import numpy as np
@@ -10,6 +11,7 @@ from logging import getLogger
 from hashlib import md5
 from .feedline_objects import zpipe, FeedlineConfig, CaptureRequest
 from typing import List
+from mkidgen3.drivers.trigger import PhotonMAXI
 
 
 class CaptureSink(threading.Thread):
@@ -95,7 +97,7 @@ class StreamCaptureSink(CaptureSink):
             getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}')
         elif n < self._expected_buffer_shape[0]:
             getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}')
-        #TODO this would technically be a memory leak if we captured too much data
+        #TODO this would technically be a memory leak if we captured more data
         self.result = np.frombuffer(self._buf, count=np.prod(shape, dtype=int), dtype=np.int16).reshape(shape).squeeze()
 
 
@@ -111,9 +113,22 @@ class PhaseCaptureSink(StreamCaptureSink):
     pass
 
 
+class SimplePhotonSink(CaptureSink):
+    def _accumulate_data(self, d):
+        if self._buf is None:
+            self._buf = []
+        self._buf.append(blosc2.decompress(d))
+        if sum(map(len, self._buf))/1024**2 > 100:  #limit to 100MiB
+            self._buf.pop(0)
+
+    def _finish_accumulation(self):
+        self._buf = b''.join(self._buf)
+
+    def _finalize_data(self):
+        self.result = np.frombuffer(self._buf, dtype=PhotonMAXI.PHOTON_DTYPE)
+
+
 class PhotonCaptureSink(CaptureSink):
-    def __init__(self, source, context: zmq.Context = None):
-        pass
 
     def capture(self, hdf, xymap, feedline_source, fl_ids):
         t = threading.Thread(target=self._main, args=(hdf, xymap, feedline_source, fl_ids))
@@ -200,11 +215,15 @@ class PhotonCaptureSink(CaptureSink):
 
 
 class PostageCaptureSink(CaptureSink):
-    def __init__(self, source, context: zmq.Context = None):
-        pass
+    def _finalize_data(self):
+        # get_postage returns:
+        #  ids (nevents uint16 array or res cahnnels),
+        #  events (nevents x 127 x2 of iq da
+        ids, iqs = pickle.loads(self._buf)
+        self.result = ids, iqs
 
 
-def CaptureSinkFactory(request, server, start=True) -> ((zmq.Socket, zmq.Socket), CaptureSink):
+def CaptureSinkFactory(request, server, start=True) -> CaptureSink:
     if request.tap == 'adc':
         saver = ADCCaptureSink(request.id, server, start=start)
     elif request.tap == 'iq':
@@ -212,10 +231,9 @@ def CaptureSinkFactory(request, server, start=True) -> ((zmq.Socket, zmq.Socket)
     elif request.tap == 'phase':
         saver = PhaseCaptureSink(request.id, server, start=start)
     elif request.tap == 'photon':
-        saver = PhotonCaptureSink(request.id, server)
+        saver = SimplePhotonSink(request.id, server, start=start)
     elif request.tap == 'postage':
-        saver = PostageCaptureSink(request.id, server)
-
+        saver = PostageCaptureSink(request.id, server, start=start)
     else:
         raise ValueError(f'Malformed CaptureRequest {request}')
     return saver
@@ -288,6 +306,7 @@ class CaptureJob:  # feedline client end
     def __init__(self, request: CaptureRequest, feedline_server: str, data_server: str, status_server: str,
                  submit=True):
         self.request = request
+        self.request.feedline_server = feedline_server
         self.feedline_server = feedline_server
         self._status_listner = StatusListner(request.id, status_server, initial_state='CREATED', start=False)
         self._datasaver = CaptureSinkFactory(request, data_server, start=False)
@@ -333,11 +352,18 @@ class CaptureJob:  # feedline client end
     def data(self):
         return self._datasaver.data()
 
-    def submit(self):
+    def start_listeners(self):
         self._status_listner.start()
         self._datasaver.start()
         self._status_listner.ready()
         self._datasaver.ready()
+
+    def submit(self):
+        if self.request.feedline_server is None:
+            self.request.feedline_server = self.feedline_server
+        elif self.request.feedline_server != self.feedline_server:
+            raise ValueError('Job server and request server mismatch. Code has been profoundly abused!')
+        self.start_listeners()
         try:
             self._submit()
         except Exception as e:
@@ -349,6 +375,7 @@ class CaptureJob:  # feedline client end
         ctx = zmq.Context().instance()
         with ctx.socket(zmq.REQ) as s:
             s.connect(self.feedline_server)
+            assert self.request.feedline_server == self.feedline_server
             s.send_pyobj(('capture', self.request))
             return s.recv_json()
 
@@ -397,7 +424,7 @@ class PowerSweepJob:
             for freq in self.lo_centers:
                 ifconfig = IFConfig(lo=freq, adc_attn=adc_atten, dac_attn=dac_atten)
                 fc = FeedlineConfig(dac_setup=dacconfig_hash if jobs else dacconfig, if_setup=ifconfig)
-                cr = CaptureRequest(self.points, 'adc', feedline_config=fc, feedline_server=feedline_server)
+                cr = CaptureRequest(self.points, 'adc', feedline_config=fc)
                 cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
                 jobs.append(cj)
 
