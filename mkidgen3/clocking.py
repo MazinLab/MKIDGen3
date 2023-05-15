@@ -62,9 +62,9 @@ def start_clocks(programming_key=False):
     if board_name == 'RFSoC4x2\x00':
         if programming_key == 'external_10mhz':
             raise ValueError('External 10 MHz is not supported on RFSoC4x2')
-        if programming_key == '4.096GSPS_MTS':
+        elif programming_key == '4.096GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='256.0_MTS', lmx_freq='409.6_MTS')
-        if programming_key == '5.000GSPS_MTS':
+        elif programming_key == '5.000GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='500.0_MTS', lmx_freq='500.0_MTS')
         else:
             xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=409.6)
