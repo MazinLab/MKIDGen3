@@ -37,7 +37,7 @@ class PhasematchDriver(pynq.DefaultHierarchy):
     @staticmethod
     def vet_res_id(res_id):
         if 0 > res_id or res_id >= PhasematchDriver.N_RES:
-            raise ValueError(f'resID must be in [0-{PhasematchDriver.N_RES}]')
+            raise ValueError(f'resID must be in [0-{PhasematchDriver.N_RES}-1]')
 
     @staticmethod
     def reorder_coeffs(coeffs):
@@ -88,3 +88,17 @@ class PhasematchDriver(pynq.DefaultHierarchy):
             if self.fifo.tx_vacancy < 500:
                 time.sleep(.1)
             self.load_coeff(res, coeff_sets[res], vet=True, force_commit=False)
+
+    def configure(self, coefficients):
+        getLogger(__name__).info(f'Configuring phasematch with {coefficients}')
+        if isinstance(coefficients, str) and coefficients == 'unity':
+            coefficients = np.zeros((2048, 30), dtype=np.int16)
+            coefficients[:, 0] = 2 ** 15 - 1
+        if coefficients.shape != (2048, 30) or coefficients.dtype != 'int16':
+            raise ValueError('Please specify a (2048,30) array of int16s')
+
+        channel = 0
+        for coefs in coefficients:
+            self.load_coeff(channel, coefs, vet=False, raw=True)
+            channel += 1
+        self.load_coeff(channel - 1, coefs, vet=False, raw=True, force_commit=True)

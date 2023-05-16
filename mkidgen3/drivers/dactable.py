@@ -10,7 +10,7 @@ class DACTableAXIM(pynq.DefaultIP):
 
     def __init__(self, description):
         super().__init__(description=description)
-        self._buffer=None
+        self._buffer = None
 
     def replay_ramp(self, tlast_every=256):
         ramp = np.arange(2 ** 19, dtype=np.complex64)
@@ -34,8 +34,8 @@ class DACTableAXIM(pynq.DefaultIP):
         if self.register_map.run.run and not stop_if_needed:
             raise RuntimeError('Replay in progress. Call .stop() or with stop_if_needed=True')
         if fpgen == 'simple':
-            data = (data*8192).round().clip(-8192, 8191)*4
-            fpgen=None
+            data = (data * 8192).round().clip(-8192, 8191) * 4
+            fpgen = None
         # Data has right shape
         if data.size < 2 ** 19:
             getLogger(__name__).warning('Insufficient data, padding with zeros')
@@ -74,7 +74,7 @@ class DACTableAXIM(pynq.DefaultIP):
         qload = fpgen(data.imag) if fpgen is not None else data.imag.astype(np.int16)
         for i in range(16):
             self._buffer[i:data.size * 2:32] = iload[i::16]
-            self._buffer[i+16:data.size * 2:32] = qload[i::16]
+            self._buffer[i + 16:data.size * 2:32] = qload[i::16]
 
         if self.register_map.run.run:
             self.stop()
@@ -83,7 +83,7 @@ class DACTableAXIM(pynq.DefaultIP):
         self.register_map.a_1 = self._buffer.device_address
         self.register_map.length_r = replay_len - 1  # length counter
         self.register_map.tlast = bool(tlast)
-        self.register_map.replay_length = tlast_every-1
+        self.register_map.replay_length = tlast_every - 1
         self.register_map.run = True
         if start:
             self.register_map.CTRL.AP_START = 1
@@ -98,11 +98,19 @@ class DACTableAXIM(pynq.DefaultIP):
         self.replay(np.zeros(16, dtype=np.complex64), tlast=False, replay_len=16, stop_if_needed=True)
 
     def start(self):
-        #TODO probably need to check for the case where not idle and run = False (axis stall to completion)
+        # TODO probably need to check for the case where not idle and run = False (axis stall to completion)
         if self._buffer is None:
             raise RuntimeError('Must call replay first to configure the core')
         self.register_map.CTRL.AP_START = 1
 
     def status(self):
         return {'running': self.register_map.run and self.register_map.CTRL.AP_START,
-                'buffer': self._buffer.copy() if self._buffer is not None else None }
+                'buffer': self._buffer.copy() if self._buffer is not None else None}
+
+    def configure(self, waveform_values=None, fpgen=None):
+
+        if waveform_values is None:
+            raise ValueError('waveform_values is None')
+
+        self.replay(waveform_values, tlast=True, tlast_every=256, replay_len=None, start=True,
+                    fpgen=fpgen, stop_if_needed=True)

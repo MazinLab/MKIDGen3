@@ -186,7 +186,6 @@ class IFBoard(SerialDevice):
         """
         current = [self.attens[v] for v in ('dac1', 'dac2', 'adc1', 'adc2')]
 
-
         if not isinstance(input_attens, (tuple, list)):
             x = min(input_attens, 2 * MAX_IN_ATTEN)
 
@@ -285,6 +284,13 @@ class IFBoard(SerialDevice):
         Returns:
 
         """
+        getLogger(__name__).warning('Requested to stop LO, but function is presently NOOP')
+        pass
+
+    def configure(self, lo=None, dac_attn=None, adc_attn=None):
+        self.power_on()
+        self.set_lo(lo)
+        self.set_attens(dac_attn, adc_attn)
 
 class IFStatus:
     def __init__(self, jsonstr):

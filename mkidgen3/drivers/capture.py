@@ -354,7 +354,6 @@ class CaptureHierarchy(DefaultHierarchy):
             task = loop.create_task(self.axis2mm.o_int.wait())
             loop.run_until_complete(task)
 
-
         if complex:
             if not (sleep or use_interrupt):
                 getLogger(__name__).warning('Complex return not supported with immediate return.')

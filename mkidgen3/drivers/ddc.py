@@ -218,9 +218,9 @@ class ThreepartDDC(CenteringDDC):
         #backup: init with bram_controller_mmio = MMIO(offset, length=8 * 2048)
         self.mmio=bram_controller_mmio
 
-    def configure_ddc(self, freq, phase_offset=None, loop_center=None, center_relative=False, quantize=True):
+    def configure(self, tones=None, phase_offset=None, loop_center=None, center_relative=False, quantize=True):
         """
-        Configure the DDC to down-convert resonator channels containing the specified frequencies.
+        Configure the DDC to down-convert resonator channels containing the specified tones.
 
         Optionally phase offsets may be specified for each channel. Phase offsets are in [-pi,pi] radians. Values outside
         are clipped.
@@ -235,7 +235,7 @@ class ThreepartDDC(CenteringDDC):
         remaining channels, however they may be determined by inspecting the .tones property of resonator_ddc.
         """
         data = np.zeros((2, 2048))
-        freq = np.asarray(freq)
+        freq = np.asarray(tones)
 
         if freq.size > 2048:
             getLogger(__name__).warning(f'Using first 2048 of {freq.size} provided frequencies')

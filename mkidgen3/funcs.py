@@ -151,16 +151,16 @@ def compute_lo_steps(center, resolution, bandwidth):
     return np.linspace(-bandwidth / 2, bandwidth / 2, n_steps) + center
 
 
-def power_sweep_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
+def uniform_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
     """
     inputs:
     - n_channels: int
-        Number of channels in the OPFB (all of the places an MKID could be)
+        Number of channels in the DDC
     - BANDWIDTH: float
         Full channelizer bandwidth (ADC Nyquist bandwidth) in Hz
-    Returns a comb with one frequency at each bin center.
+    Returns a comb with one frequency per DDC channel, evenly spaced in the bandwidth.
     """
-    return (np.linspace(0, n_channels - 1, n_channels) - n_channels / 2) * (bandwidth / n_channels)
+    return np.linspace(-n_channels/2, n_channels/2 - 1, n_channels)* (bandwidth / n_channels)
 
 
 def est_loop_centers(iq):

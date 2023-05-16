@@ -1,4 +1,6 @@
-from . import axiswitch, bintores, capture, ddc, dactable, axififo, phasematch, iqgen, rfdc
-import xrfdc
-__all__ = ['axiswitch', 'bintores', 'capture', 'ddc', 'dactable', 'xrfdc', 'axififo', 'rfdc', 'iqgen',
+try:
+    from . import axiswitch, bintores, capture, ddc, dactable, axififo, phasematch, iqgen, rfdc
+except OSError:
+    pass
+__all__ = ['axiswitch', 'bintores', 'capture', 'ddc', 'dactable', 'axififo', 'rfdc', 'iqgen',
            'phasematch']
