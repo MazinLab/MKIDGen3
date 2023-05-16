@@ -1,23 +1,21 @@
 import json
 import logging
-import queue
 import time
 
 import mkidgen3.clocking
 from mkidgen3.drivers.ifboard import IFBoard
-from mkidgen3.schema import validate
+from mkidgen3.server.schema import validate
 from logging import getLogger
 
 import mkidgen3.drivers.rfdc
-from mkidgen3.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig
-from mkidgen3.feedline_objects import FeedlineStatus, DACStatus, DDCStatus, FLPhotonBuffer, FeedlineConfigManager
+from mkidgen3.server.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineConfig
+from mkidgen3.server.feedline_objects import FeedlineConfigManager
 import zmq
 import threading
 from datetime import datetime
 import argparse
 import numpy as np
 from feedline_objects import zpipe
-
 
 try:
     import pynq
@@ -26,9 +24,7 @@ except OSError:
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
-CHUNKING_THRESHOLD = 1024**2
-
-
+CHUNKING_THRESHOLD = 1024 ** 2
 
 
 class DummyOverlay:
@@ -39,7 +35,7 @@ class DummyOverlay:
     class DummyCap:
         @staticmethod
         def capture(csize, *args, **kwargs):
-            n = csize*2
+            n = csize * 2
             return np.random.uniform(low=-10000, high=10000, size=n).astype(np.int16).view(DummyOverlay.DummyBuffer)
 
         @staticmethod
@@ -112,7 +108,7 @@ class FeedlineHardware:
     def apply_config(self, id, config: FeedlineConfig):
         """Takes and applies a config to the hardware, updates and tracks the effective set of settings"""
 
-        #Add the config to the pot and get the effective config
+        # Add the config to the pot and get the effective config
         fl_setup = self.config_manager.add(id, config)
 
         # IF Board
@@ -147,8 +143,7 @@ class FeedlineHardware:
 
 
 class FeedlineReadout:
-    def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
-                 ignore_version=False):
+    def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard', ignore_version=False):
         self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
                                          ignore_version=ignore_version, download=True, program_clock=True)
 
@@ -167,10 +162,11 @@ class FeedlineReadout:
         return status
 
     @staticmethod
-    def plram_cap(pipe, cr:CaptureRequest, ol: pynq.Overlay, context=None):
+    def plram_cap(pipe, cr: CaptureRequest, ol: pynq.Overlay, context=None):
         """
 
         Args:
+            pipe:
             context:
             cr: A CaptureRequest object
             ol: A pynq.Overlay with the firmware bitstream loaded, assumed to be thread safe
@@ -184,14 +180,6 @@ class FeedlineReadout:
             assert ol.capture.ready(), 'Capture Subsystem is busy'
         except AssertionError as e:
             failmsg = str(e)
-
-        # try:
-        #     abort = context.socket(
-        #         zmq.SUB)  # TODO Use of subscribe will probably result in missed abort messages, REQ/REP?
-        #     abort.setsockopt(zmq.SUBSCRIBE, id)
-        #     abort.connect('inproc://cap_abort')
-        # except zmq.EFAULT:
-        #     failmsg = f"Unable to establish abort socket {cr.id}, dropping request."
 
         try:
             cr.establish(context=context)
@@ -207,12 +195,13 @@ class FeedlineReadout:
                 getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
             return
 
+        nchunks = cr.size_bytes // CHUNKING_THRESHOLD
+        partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
+        chunks = [CHUNKING_THRESHOLD] * nchunks
+        if partial:
+            chunks.append(partial)
+
         try:
-            nchunks = cr.size // CHUNKING_THRESHOLD
-            partial = cr.size - CHUNKING_THRESHOLD * nchunks
-            chunks = [CHUNKING_THRESHOLD] * nchunks
-            if partial:
-                chunks.append(partial)
             for i, csize in enumerate(chunks):
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
@@ -222,7 +211,7 @@ class FeedlineReadout:
                         raise
                 data = ol.capture.capture(csize, tap=cr.tap, wait=True)
                 # data = np.random.uniform(-10000,10000, size=csize*2).astype(np.int16)
-                cr.add_data(data, status=f'{i+1}/{len(chunks)}')
+                cr.add_data(data, status=f'{i + 1}/{len(chunks)}')
                 data.free_buffer()
             cr.finish()
         except CaptureAbortedException as e:
@@ -241,7 +230,7 @@ class FeedlineReadout:
             del cr
 
     @staticmethod
-    def photon_cap(pipe:zmq.Socket, cr:CaptureRequest, ol: pynq.Overlay, context=None):
+    def photon_cap(pipe: zmq.Socket, cr: CaptureRequest, ol: pynq.Overlay, context=None):
         """
         pipe: a zme pair pipe to detect abort
         cr: the capture request
@@ -294,7 +283,7 @@ class FeedlineReadout:
         try:
             sender.start()
             fountain.start()
-            photon_maxi.capture(buffer_time_ms=cr.nsamp)   # todo: add support for setting the latency via the request?
+            photon_maxi.capture(buffer_time_ms=cr.nsamp)  # todo: add support for setting the latency via the request?
             while not cr.completed:
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
@@ -325,7 +314,7 @@ class FeedlineReadout:
         postage_maxi = ol.photon_pipe.trigger_system.postage_max
         try:
             assert cr.type == 'postage', 'Incorrect capture request type'
-            assert postage_maxi.register_map.AP_CTRL_AP_IDLE==1, 'Postage MAXI is busy'
+            assert postage_maxi.register_map.AP_CTRL_AP_IDLE == 1, 'Postage MAXI is busy'
         except AssertionError as e:
             failmsg = str(e)
 
@@ -348,7 +337,7 @@ class FeedlineReadout:
                 except zmq.ZMQError as e:
                     if e.errno != zmq.EAGAIN:
                         raise
-                time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S/10, .1))
+                time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
             cr.add_data(postage_maxi.get_postage(raw=False, scaled=True), copy=False)
             cr.finish()
         except CaptureAbortedException as e:
@@ -429,7 +418,7 @@ class FeedlineReadout:
             # for each finished capture thread remove its settings from the requirements pot and cleanup
 
             if bool(complete):  # need to check up to the size of the queue if anything finished
-                #TODO technically if what finished didn't change the effective settings we might not need to but
+                # TODO technically if what finished didn't change the effective settings we might not need to but
                 # ignore this optimization for now
                 to_check.extend(checked)
                 checked = []
@@ -448,12 +437,12 @@ class FeedlineReadout:
             try:
                 cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
             except zmq.ZMQError as e:
-                if e.errno !=zmq.EAGAIN:
+                if e.errno != zmq.EAGAIN:
                     for cr in checked + to_check:
                         cr.abort('Keyboard interrupt')  # signal that captures will never happen
                     for v in running_by_id.values():
                         v.pipe.send('abort')
-                    if e.errno== zmq.ETERM:
+                    if e.errno == zmq.ETERM:
                         break
                     else:
                         raise e  # real error
@@ -477,7 +466,7 @@ class FeedlineReadout:
                 if unknown:
                     data.abort({'resp': 'ERROR', 'data': unknown})  # We've never been sent the full config necessary
                 elif (not to_check and tap_threads[data.type] is None and
-                        self.hardware.config_compatible_with(data.feedline_config)):
+                      self.hardware.config_compatible_with(data.feedline_config)):
                     cr = data  # this can be run and nothing else, so it will be done below
                 else:
                     q = to_check if to_check else checked
@@ -586,6 +575,7 @@ def start_zmq_devices(cap_addr, stat_addr):
 
     return dtd, std
 
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
 
@@ -658,7 +648,7 @@ if __name__ == '__main__':
                 socket.send_json(f'ERROR: {e}')
         elif cmd == 'capture':
             cap_pipe.send_pyobj(('capture', arg))
-            socket.send_json({'resp': 'OK', 'code':0})
+            socket.send_json({'resp': 'OK', 'code': 0})
 
     main.join()
     socket.close()

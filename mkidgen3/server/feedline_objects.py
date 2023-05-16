@@ -65,7 +65,7 @@ class TabulatedWaveform(Waveform):
     def __init__(self, tabulated_values=None, sample_rate=DAC_SAMPLE_RATE):
         self._values = tabulated_values
         self._fpgen = None
-        self._sample_rate=sample_rate
+        self._sample_rate = sample_rate
 
 
 class FreqlistWaveform(Waveform):
@@ -170,8 +170,8 @@ class FreqlistWaveform(Waveform):
 
 
 def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None,
-             n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-             iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
+                    n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
+                    iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
     if output_waveform is not None:
         return TabulatedWaveform(tabulated_values=output_waveform, sample_rate=sample_rate)
 
@@ -208,7 +208,7 @@ class FLConfigMixin:
         if self.hashed or other.hashed:
             return hash(self) == hash(other)
         for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
-            if not self._hashdata_vals_equal(a,b):
+            if not self._hashdata_vals_equal(a, b):
                 return False
         return True
 
@@ -221,7 +221,7 @@ class FLConfigMixin:
         """ Returns true if self other is more specified than self (i.e. self has more Nones) """
         # if other is None:
         #     return False
-        return not self.__ge__(other) #and not self == other
+        return not self.__ge__(other)  # and not self == other
 
     def __gt__(self, other):
         if other is None:
@@ -246,7 +246,7 @@ class FLConfigMixin:
         for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
             if a is None or b is None:
                 continue
-            if not self._hashdata_vals_equal(a,b):
+            if not self._hashdata_vals_equal(a, b):
                 return False
         return True
 
@@ -332,7 +332,7 @@ class FLMetaConfigMixin:
     def __gt__(self, other):
         if other is None:
             return True
-        return self.__ge__(self) and not self==other
+        return self.__ge__(self) and not self == other
 
     def __lt__(self, other):
         return not self.__ge__(other)
@@ -397,8 +397,6 @@ class ADCconfig(FLConfigMixin):
             return
 
 
-
-
 class DACConfig(FLConfigMixin):
     _settings = ('output_waveform', 'qmc_settings', 'fpgen')
 
@@ -420,7 +418,6 @@ class DACConfig(FLConfigMixin):
     def output_waveform(self):
         """This is a property so that compute=False is respected"""
         return self._waveform.output_waveform
-
 
 
 class IFConfig(FLConfigMixin):
@@ -487,8 +484,8 @@ class FilterConfig(FLConfigMixin):
 
 
 class PhotonPipeConfig(FLMetaConfigMixin):
-    def __init__(self, chan_config: ChannelConfig = None, ddc_config: DDCConfig = None,
-                 filter_config: FilterConfig = None, trig_config: TriggerConfig = None):
+    def __init__(self, chan_config: (dict, ChannelConfig) = None, ddc_config: (dict, DDCConfig) = None,
+                 filter_config: (dict, FilterConfig) = None, trig_config: (dict, TriggerConfig) = None):
         self.chan_config = ChannelConfig(**chan_config) if isinstance(chan_config, dict) else chan_config
         self.ddc_config = DDCConfig(**ddc_config) if isinstance(ddc_config, dict) else ddc_config
         self.trig_config = TriggerConfig(**trig_config) if isinstance(trig_config, dict) else trig_config
@@ -505,8 +502,8 @@ class PhotonPipeConfig(FLMetaConfigMixin):
 class FeedlineConfig(FLMetaConfigMixin):
     """All attributes must be _FLConfigMixin"""
 
-    def __init__(self, if_config: IFConfig = None, dac_config: DACConfig = None, pp_config: PhotonPipeConfig = None,
-                 adc_config: ADCconfig = None):
+    def __init__(self, if_config: (dict,IFConfig) = None, dac_config: (DACConfig, dict) = None,
+                 pp_config: (dict,PhotonPipeConfig) = None, adc_config: (dict,ADCconfig) = None):
         self.if_config = IFConfig(**if_config) if isinstance(if_config, dict) else if_config
         self.dac_config = DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
         self.pp_config = PhotonPipeConfig(**pp_config) if isinstance(pp_config, dict) else pp_config
@@ -766,7 +763,7 @@ class CaptureRequest:
             raise RuntimeError('Establish must be called before add_data')
         # TODO ensure we are being smart about pointers and buffer access vs copys
 
-        #TODO how do we ship the various data formats?
+        # TODO how do we ship the various data formats?
         if not isinstance(data, np.ndarray):
             data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
         if copy:

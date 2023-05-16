@@ -1,4 +1,4 @@
-from mkidgen3.feedline_objects import *
+from mkidgen3.server.feedline_objects import *
 
 if1 = IFConfig(lo=6.0, adc_attn=(3.0, None), dac_attn=None)
 if1a = IFConfig(lo=6.0, adc_attn=(3.0, None), dac_attn=3.0)

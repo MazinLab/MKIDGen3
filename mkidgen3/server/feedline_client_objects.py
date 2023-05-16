@@ -4,13 +4,13 @@ import time
 import numpy as np
 import zmq
 import blosc2
-
-from .funcs import SYSTEM_BANDWIDTH, compute_lo_steps
-import os
-from logging import getLogger
-from hashlib import md5
-from .feedline_objects import zpipe, FeedlineConfig, CaptureRequest
 from typing import List
+from logging import getLogger
+import os
+from hashlib import md5
+
+from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
+from .feedline_objects import zpipe, FeedlineConfig, CaptureRequest
 from mkidgen3.drivers.trigger import PhotonMAXI
 
 
@@ -79,12 +79,12 @@ class CaptureSink(threading.Thread):
         finally:
             self._pipe[1].close()
 
-    def data(self):
-        self.join()
+    def data(self, timeout=None):
+        self.join(timeout=timeout)
         return self.result
 
     def ready(self):
-        self._pipe[0].recv()  # TODO make this line block
+        self._pipe[0].recv()  # TODO verify that this line blocks
 
 
 class StreamCaptureSink(CaptureSink):
@@ -239,7 +239,7 @@ def CaptureSinkFactory(request, server, start=True) -> CaptureSink:
     return saver
 
 
-class StatusListner(threading.Thread):
+class StatusListener(threading.Thread):
     def __init__(self, id, source, initial_state='Created', start=True):
         super().__init__(name=f'StautsListner_{id}')
         self.daemon = True
@@ -298,6 +298,9 @@ class StatusListner(threading.Thread):
     def latest(self):
         return self._status_messages[-1]
 
+    def history(self):
+        return tuple(self._status_messages)
+
     def ready(self):
         self._pipe[0].recv()  # TODO make this line block
 
@@ -308,7 +311,7 @@ class CaptureJob:  # feedline client end
         self.request = request
         self.request.feedline_server = feedline_server
         self.feedline_server = feedline_server
-        self._status_listner = StatusListner(request.id, status_server, initial_state='CREATED', start=False)
+        self._status_listner = StatusListener(request.id, status_server, initial_state='CREATED', start=False)
         self._datasaver = CaptureSinkFactory(request, data_server, start=False)
         if submit:
             self.submit()
@@ -316,6 +319,10 @@ class CaptureJob:  # feedline client end
     def status(self):
         """ Return the last known status of the request """
         return self._status_listner.latest()
+
+    def status_history(self) -> tuple[str]:
+        """Return a tuple of the status history of the job"""
+        return self._status_listner.history()
 
     def cancel(self, kill_status_monitor=False, kill_data_sink=True):
         """
@@ -349,8 +356,8 @@ class CaptureJob:  # feedline client end
             if self._datasaver.is_alive():
                 getLogger(__name__).warning(f'Data sink did not instantly terminate')
 
-    def data(self):
-        return self._datasaver.data()
+    def data(self, timeout=None):
+        return self._datasaver.data(timeout=timeout)
 
     def start_listeners(self):
         self._status_listner.start()
