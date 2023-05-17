@@ -142,12 +142,35 @@ class FeedlineHardware:
                 self._ol.photon_pipe.phasematch.configure(**fl_setup.pp_setup.trig_config.settings_dict())
 
 
+class TapThread:
+    def __init__(self, thread, pipe, other_pipe, request):
+        self.thread = thread
+        self.request = request
+        self.pipe = pipe
+        self._other_pipe = other_pipe
+
+    def abort(self):
+        try:
+            # Abort the thread, not the request, the thread will handle the abort of the request if necessary!
+            # TODO add support for reason?
+            self.pipe.send('abort')  # TODO what happens to pipe when thread ends?
+        except zmq.ZMQError:
+            getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
+            raise
+
+    def __del__(self):
+        self.pipe.close()
+        self._other_pipe.close()
+
+
 class FeedlineReadout:
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard', ignore_version=False):
         self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
                                          ignore_version=ignore_version, download=True, program_clock=True)
 
-        # self.status_keeper = StatusKeeper(status_port)  #TODO
+        self._tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
+        self._to_check = []
+        self._checked = []
 
     def status(self):
         """
@@ -160,6 +183,12 @@ class FeedlineReadout:
                   'pending_captures': self._pending_captures()}
 
         return status
+
+    def _running_captures(self):
+        return tuple([tt.request.id for tt in list(self._tap_threads.values())])
+
+    def _pending_captures(self):
+        return tuple([cr.id for cr in self._checked+self._to_check])
 
     @staticmethod
     def plram_cap(pipe, cr: CaptureRequest, ol: pynq.Overlay, context=None):
@@ -210,24 +239,18 @@ class FeedlineReadout:
                     if e.errno != zmq.EAGAIN:
                         raise
                 data = ol.capture.capture(csize, tap=cr.tap, wait=True)
-                # data = np.random.uniform(-10000,10000, size=csize*2).astype(np.int16)
-                cr.add_data(data, status=f'{i + 1}/{len(chunks)}')
+                cr.add_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
                 data.free_buffer()
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e)
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            try:
-                cr.fail(f'Aborted due to {e}')
-            except zmq.ZMQError as ez:
-                # if ez.errno == zmq.EFAULT:
-                getLogger(__name__).warning(f'Failed to send abort message {cr} due to {ez}')
-                # else:
-                #     getLogger(__name__).warning(f'Failed to send abort message {cr} due to {ez}')
+            cr.fail(f'Aborted due to {e}', raise_exception=False)
         finally:
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
+        pipe.close()
 
     @staticmethod
     def photon_cap(pipe: zmq.Socket, cr: CaptureRequest, ol: pynq.Overlay, context=None):
@@ -350,6 +373,40 @@ class FeedlineReadout:
             del cr
             pipe.close()
 
+    def abort_all(self, join=False, reason='Abort all'):
+        for cr in self._checked + self._to_check:
+            cr.abort(reason)  # signal that captures will never happen
+        self._checked, self._to_check = [], []
+        for tt in self._tap_threads:  # stop any running tap threads
+            if tt is not None:
+                tt.abort()
+        if join:
+            for tt in self._tap_threads:
+                if tt:
+                    tt.thread.join()
+
+    def abort_by_id(self, id):
+        aborted = False
+        running_by_id = {tt.request.id: tt for tt in self._tap_threads.values() if tt is not None}
+        if id in running_by_id:
+            tt = running_by_id[id]
+            aborted = True
+            getLogger(__name__).debug(f'Found request {id} being serviced in {tt}. Aborting servicer.')
+            tt.abort()
+        for cr in filter(lambda x: x.id == id, self._checked):
+            aborted = True
+            getLogger(__name__).debug(f'Found request {id} in list of checked pending CR. Aborted')
+            self._checked.pop(self._checked.index(cr))
+            cr.abort('Abort by id')
+        for cr in filter(lambda x: x.id == id, self._to_check):
+            aborted = True
+            getLogger(__name__).debug(f'Found request {id} in list of pending CR to be checked. Aborted')
+            self._to_check.pop(self._to_check.index(cr))
+            cr.abort('Abort by id')
+
+        if not aborted:
+            getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
+
     def main(self, pipe: zmq.Socket, context: zmq.Context = None):
         """
         Enqueue a list of capture requests for future handling. Invalid requests are dealt with immediately and not
@@ -364,72 +421,25 @@ class FeedlineReadout:
         """
         context = context or zmq.Context().instance()
 
-        class TapThread:
-            def __init__(self, thread, pipe, other_pipe, request):
-                self.thread = thread
-                self.request = request
-                self.pipe = pipe
-                self._other_pipe = other_pipe
-
-            def __del__(self):
-                self.pipe.close()
-                self._other_pipe.close()
-
-        tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
-
-        to_check = []
-        checked = []
-
-        def abort_all():
-            for cr in checked + to_check:
-                cr.abort('Abort all')  # signal that captures will never happen
-            for v in running_by_id.values():  # stop any running tap threads
-                try:
-                    v.pipe.send('abort')  # TODO what happens to pipe when thread ends?
-                except zmq.ZMQError:
-                    getLogger(__name__).critical('Error sending abort to worker thread. Exiting')
-                    raise
-
-        def abort_by_id(id, checked, to_check, running_by_id):
-            aborted = False
-            if id in running_by_id:
-                aborted = True
-                getLogger(__name__).debug(f'Found request {id} being serviced in {running_by_id[id]}. Aborting '
-                                          f'servicer.')
-                running_by_id[id].pipe.send('abort')  # TODO what happens to pipe when thread ends?
-            for cr in filter(lambda x: x.id == id, checked):
-                aborted = True
-                getLogger(__name__).debug(f'Found request {id} in list of checked pending CR. Aborted')
-                checked.pop(checked.index(cr))
-                cr.abort('Abort by id')
-            for cr in filter(lambda x: x.id == id, to_check):
-                aborted = True
-                getLogger(__name__).debug(f'Found request {id} in list of pending CR to be checked. Aborted')
-                to_check.pop(to_check.index(cr))
-                cr.abort('Abort by id')
-
-            if not aborted:
-                getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
-
         getLogger(__name__).info('Main thread starting')
         while True:
             # Check to see if any capture threads have finished
-            complete = [k for k, t in tap_threads.items() if t is not None and not t.thread.is_alive()]
+            complete = [k for k, t in self._tap_threads.items() if t is not None and not t.thread.is_alive()]
             # for each finished capture thread remove its settings from the requirements pot and cleanup
 
             if bool(complete):  # need to check up to the size of the queue if anything finished
                 # TODO technically if what finished didn't change the effective settings we might not need to but
-                # ignore this optimization for now
-                to_check.extend(checked)
-                checked = []
+                #  ignore this optimization for now
+                self._to_check.extend(self._checked)
+                self._checked = []
 
             effective_changed = False
             for k in complete:
-                effective_changed |= self.hardware.derequire_config(tap_threads[k].request.id)
-                del tap_threads[k]
-                tap_threads[k] = None
+                effective_changed |= self.hardware.derequire_config(self._tap_threads[k].request.id)
+                del self._tap_threads[k]
+                self._tap_threads[k] = None
 
-            running_by_id = {tt.request.id: tt for tt in tap_threads.values() if tt is not None}
+            running_by_id = {tt.request.id: tt for tt in self._tap_threads.values() if tt is not None}
 
             cr = None  # CR is the capture request that will be ckicked off this iteration of the loop
             # check for any incoming info: CapRequest, ABORT id|all, EXIT
@@ -438,10 +448,7 @@ class FeedlineReadout:
                 cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
             except zmq.ZMQError as e:
                 if e.errno != zmq.EAGAIN:
-                    for cr in checked + to_check:
-                        cr.abort('Keyboard interrupt')  # signal that captures will never happen
-                    for v in running_by_id.values():
-                        v.pipe.send('abort')
+                    self.abort_all(reason='Keyboard interrupt')
                     if e.errno == zmq.ETERM:
                         break
                     else:
@@ -452,24 +459,23 @@ class FeedlineReadout:
                 cmd, data = '', ''
 
             if cmd == 'exit':
-                abort_all()
+                self.abort_all(join=True)
                 break
             elif cmd == 'abort':
                 if data == 'all':
-                    abort_all()
-                    checked, to_check = [], []
+                    self.abort_all(join=True)
                 else:
-                    abort_by_id(data, checked, to_check, running_by_id)
+                    self.abort_by_id(data)
             elif cmd == 'capture':
                 self.hardware.config_manager.learn(data.feedline_config)
                 unknown = self.hardware.config_manager.unlearned_hashes(data.feedline_config)
                 if unknown:
                     data.abort({'resp': 'ERROR', 'data': unknown})  # We've never been sent the full config necessary
-                elif (not to_check and tap_threads[data.type] is None and
+                elif (not self._to_check and self._tap_threads[data.type] is None and
                       self.hardware.config_compatible_with(data.feedline_config)):
                     cr = data  # this can be run and nothing else, so it will be done below
                 else:
-                    q = to_check if to_check else checked
+                    q = self._to_check if self._to_check else self._checked
                     try:
                         data.set_status('queued', f'Queued')
                         q.append(data)
@@ -483,21 +489,21 @@ class FeedlineReadout:
 
             if not cr:
                 try:
-                    cr = to_check.pop(0)
+                    cr = self._to_check.pop(0)
                 except IndexError:
                     continue
 
             assert isinstance(cr, CaptureRequest)
 
             try:
-                if tap_threads[cr.type] is not None:
-                    cr.set_status('queued', f'tap location in use by: {tap_threads[cr.type].request.id}')
-                    checked.append(cr)
+                if self._tap_threads[cr.type] is not None:
+                    cr.set_status('queued', f'tap location in use by: {self._tap_threads[cr.type].request.id}')
+                    self._checked.append(cr)
                     continue
                 else:
                     if not self.hardware.config_compatible_with(cr.feedline_config):
                         cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
-                        checked.append(cr)
+                        self._checked.append(cr)
                         continue
             except zmq.ZMQError as e:
                 getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
@@ -507,7 +513,7 @@ class FeedlineReadout:
                 self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
                 getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
-                for cr in checked + to_check:
+                for cr in self._checked + self._to_check:
                     cr.abort('Hardware settings failure')  # signal that captures will never happen
                 for v in running_by_id.values():  # stop any running tap threads
                     try:
@@ -524,7 +530,7 @@ class FeedlineReadout:
             t = threading.Thread(target=target, name=f"CapThread: {cr.id}",
                                  args=(b, cr, self.hardware._ol), kwargs=dict(context=context))
             t.start()
-            tap_threads[cr.type] = TapThread(t, a, b, cr)
+            self._tap_threads[cr.type] = TapThread(t, a, b, cr)
 
         getLogger(__name__).info('Capture thread exiting')
         # context.term()
