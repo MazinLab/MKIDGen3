@@ -332,9 +332,9 @@ class FeedlineReadout:
                 q.close()
 
     @staticmethod
-    def stamp_cap(pipe, context, cr, ol):
+    def stamp_cap(pipe: zmq.Socket, context: zmq.Context, cr: CaptureRequest, ol):
         failmsg = ''
-        postage_maxi = ol.photon_pipe.trigger_system.postage_max
+        postage_maxi = ol.photon_pipe.trigger_system.postage_maxi
         try:
             assert cr.type == 'postage', 'Incorrect capture request type'
             assert postage_maxi.register_map.AP_CTRL_AP_IDLE == 1, 'Postage MAXI is busy'
@@ -407,6 +407,36 @@ class FeedlineReadout:
         if not aborted:
             getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
 
+    def capture_handler(self, start=True, daemon=False, context: zmq.Context = None):
+        cap_pipe, cap_pipe_thread = zpipe(context or zmq.Context.instance())
+
+        thread = threading.Thread(name='CaptureHandler', target=fr.main, args=(cap_pipe_thread,),
+                                kwargs={'context': context}, daemon=daemon)
+        if start:
+            thread.start()
+
+        return thread, cap_pipe
+
+    def _cleanup_completed(self):
+        """ Return true iff the effective config requirements changed """
+        # Check to see if any capture threads have finished
+        complete = [k for k, t in self._tap_threads.items() if t is not None and not t.thread.is_alive()]
+        # for each finished capture thread remove its settings from the requirements pot and cleanup
+
+        if bool(complete):  # need to check up to the size of the queue if anything finished
+            # TODO technically if what finished didn't change the effective settings we might not need to but
+            #  ignore this optimization for now
+            self._to_check.extend(self._checked)
+            self._checked = []
+
+        effective_changed = False
+        for k in complete:
+            effective_changed |= self.hardware.derequire_config(self._tap_threads[k].request.id)
+            del self._tap_threads[k]
+            self._tap_threads[k] = None
+
+        return effective_changed
+
     def main(self, pipe: zmq.Socket, context: zmq.Context = None):
         """
         Enqueue a list of capture requests for future handling. Invalid requests are dealt with immediately and not
@@ -423,21 +453,8 @@ class FeedlineReadout:
 
         getLogger(__name__).info('Main thread starting')
         while True:
-            # Check to see if any capture threads have finished
-            complete = [k for k, t in self._tap_threads.items() if t is not None and not t.thread.is_alive()]
-            # for each finished capture thread remove its settings from the requirements pot and cleanup
 
-            if bool(complete):  # need to check up to the size of the queue if anything finished
-                # TODO technically if what finished didn't change the effective settings we might not need to but
-                #  ignore this optimization for now
-                self._to_check.extend(self._checked)
-                self._checked = []
-
-            effective_changed = False
-            for k in complete:
-                effective_changed |= self.hardware.derequire_config(self._tap_threads[k].request.id)
-                del self._tap_threads[k]
-                self._tap_threads[k] = None
+            effective_changed = self._cleanup_completed()
 
             running_by_id = {tt.request.id: tt for tt in self._tap_threads.values() if tt is not None}
 
@@ -533,6 +550,7 @@ class FeedlineReadout:
             self._tap_threads[cr.type] = TapThread(t, a, b, cr)
 
         getLogger(__name__).info('Capture thread exiting')
+        pipe.close()
         # context.term()
 
 
@@ -604,12 +622,7 @@ if __name__ == '__main__':
     socket.bind(cmd_addr)
     getLogger(__name__).info(f'Accepting commands on {cmd_addr}')
 
-    cap_pipe, cap_pipe_thread = zpipe(zmq.Context.instance())
-
-    main = threading.Thread(name='CaptureHandler', target=fr.main, args=(cap_pipe_thread,),
-                            kwargs={'context': context})
-    main.daemon = False
-    main.start()
+    thread, cap_pipe = fr.capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
 
     while True:
         try:
@@ -623,7 +636,7 @@ if __name__ == '__main__':
             cap_pipe.send_pyobj(('exit', None))
             break
         else:
-            if not main.is_alive():
+            if not thread.is_alive():
                 getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
                                              f'never complete. Exiting.')
                 socket.send_json('ERROR')
@@ -631,12 +644,11 @@ if __name__ == '__main__':
         getLogger(__name__).debug(f'Recieved command "{cmd}" with args {arg}')
         if cmd == 'reset':
             cap_pipe.send_pyobj(('exit', None))
-            main.join()
+            thread.join()
+            cap_pipe.close()
             fr.hardware.reset()
-            main = threading.Thread(name='CaptureHandler', target=fr.main, args=(cap_pipe_thread,),
-                                    kwargs={'context': context})
-            main.daemon = False
-            main.start()
+            thread, cap_pipe = fr.capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
+
             socket.send_json('OK')
         elif cmd == 'status':
             try:
@@ -656,8 +668,7 @@ if __name__ == '__main__':
             cap_pipe.send_pyobj(('capture', arg))
             socket.send_json({'resp': 'OK', 'code': 0})
 
-    main.join()
+    thread.join()
     socket.close()
     cap_pipe.close()
-    cap_pipe_thread.close()
     context.term()
