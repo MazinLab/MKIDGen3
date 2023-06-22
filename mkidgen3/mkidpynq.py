@@ -1,6 +1,15 @@
+import subprocess
+import numpy as np
+
 MAX_CAP_RAM_BYTES = 2**32
 PL_DDR4_ADDR = 0x500000000
 N_IQ_GROUPS = 256
+
+PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
+
+def get_board_name():
+    x = subprocess.run(['cat', '/proc/device-tree/chosen/pynq_board'], capture_output=True, text=True).stdout
+    return x.strip().strip('\x00')
 
 
 def enable_axi_timeout():

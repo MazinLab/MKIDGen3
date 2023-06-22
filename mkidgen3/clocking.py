@@ -1,7 +1,9 @@
 import re
 import pkg_resources
 from logging import getLogger
-import subprocess
+from mkidgen3.mkidpynq import get_board_name
+
+
 def _parse_ticspro(file):
     with open(file, 'r') as f:
         lines = [l.rstrip("\n") for l in f]
@@ -43,7 +45,7 @@ def _patch_xrfclk_lmk():
             xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)
 
 
-def start_clocks(programming_key=False):
+def start_clocks(programming_key=''):
     """
     - 'external_10mhz' pull LMK clock source from 10 MHz Ref (ZCU111 Only for now)
     - '4.096GSPS_MTS' MTS compatible with 4.096 GSPS Sampling Fequency (RFSoC4x2 Only)
@@ -54,12 +56,12 @@ def start_clocks(programming_key=False):
     except ImportError:
         getLogger(__name__).warning('xrfclk/xrfdc unavaiable, clock will not be started')
         return
-    if programming_key is not False:
+    if programming_key:
         _patch_xrfclk_lmk()
 
-    board_name = subprocess.run(['cat', '/proc/device-tree/chosen/pynq_board'], capture_output=True, text=True).stdout
+    board_name = get_board_name()
 
-    if board_name == 'RFSoC4x2\x00':
+    if board_name == 'RFSoC4x2':
         if programming_key == 'external_10mhz':
             raise ValueError('External 10 MHz is not supported on RFSoC4x2')
         elif programming_key == '4.096GSPS_MTS':
@@ -69,7 +71,7 @@ def start_clocks(programming_key=False):
         else:
             xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=409.6)
 
-    elif board_name == 'ZCU111\x00':
+    elif board_name == 'ZCU111':
         if programming_key == 'external_10mhz':
             xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M', lmx_freq=409.6)
         else:

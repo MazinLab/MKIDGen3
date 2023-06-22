@@ -209,11 +209,12 @@ class PhotonPostageMAXI(DefaultIP):
         """ monitor_channels shall be 8 integers in [0,2047] """
         return self.capture(max_events)
 
+from mkidgen3.mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
 
 class PhotonMAXI(DefaultIP):
     N_PHOTON_BUFFERS = 2  # Must match HLS C
     PHOTON_BUFF_N = 102400  # 10ms 5000 cps 2048 resonators Must match HLS C
-    PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
+    PHOTON_DTYPE = _PHOTON_DTYPE
     PHOTON_PACKED_DTYPE = np.uint64
     bindto = ['mazinlab:mkidgen3:photon_maxi:0.2']
 

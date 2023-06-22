@@ -26,6 +26,8 @@ COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
 CHUNKING_THRESHOLD = 1024 ** 2
 
+DEFAULT_BIT_FILE='/home/xilinx/jupyter_notebooks/gen3_top_power_test/gen3_top.bit'
+
 
 class DummyOverlay:
     class DummyBuffer(np.ndarray):
@@ -65,11 +67,11 @@ class FeedlineHardware:
         self._ignore_version = ignore_version
         if program_clock:
             import mkidgen3.drivers.rfdc
-            mkidgen3.clocking.start_clocks(external_10mhz=clock_source == 'external_10mhz')
+            mkidgen3.clocking.start_clocks(clock_source)
 
     def reset(self):
         self._if_board.power_off(save_settings=False)
-        mkidgen3.clocking.start_clocks(external_10mhz=self._clock_source == 'external_10mhz')
+        mkidgen3.clocking.start_clocks(self._clock_source)
         self._ol = pynq.Overlay(self._ol.bitfile_name, ignore_version=self._ignore_version, download=True)
         self._if_board.power_on()
 
@@ -377,11 +379,11 @@ class FeedlineReadout:
         for cr in self._checked + self._to_check:
             cr.abort(reason)  # signal that captures will never happen
         self._checked, self._to_check = [], []
-        for tt in self._tap_threads:  # stop any running tap threads
+        for tt in self._tap_threads.values():  # stop any running tap threads
             if tt is not None:
                 tt.abort()
         if join:
-            for tt in self._tap_threads:
+            for tt in self._tap_threads.values():
                 if tt:
                     tt.thread.join()
 
@@ -471,7 +473,7 @@ class FeedlineReadout:
                     else:
                         raise e  # real error
 
-            if cmd not in ('exit', 'abort', 'capture'):
+            if cmd not in ('exit', 'abort', 'capture', ''):
                 getLogger(__name__).error(f'Received invalid command "{cmd}"')
                 cmd, data = '', ''
 
@@ -563,9 +565,10 @@ def parse_cl():
     parser.add_argument('--sta_port', dest='status_port', action='store', required=False, type=int,
                         help='Capture Status Port', default='8890')
     parser.add_argument('--clock', dest='clock', action='store', required=False, type=str,
-                        help='Clock Source', default='external_10mhz')
+                        help='Clock Source', default='default')
     parser.add_argument('-b', '--bitstream', dest='bitstream', action='store', required=False, type=str,
-                        help='bitstream file', default='')
+                        help='bitstream file',
+                        default=DEFAULT_BIT_FILE)
     parser.add_argument('--if', dest='if_board', action='store', required=False, type=str,
                         help='IF Board device', default='/dev/if_board')
     parser.add_argument('--iv', dest='ignore_fpga_driver_version', action='store_true', required=False,
@@ -602,6 +605,7 @@ def start_zmq_devices(cap_addr, stat_addr):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
+
 
     args = parse_cl()
     context = zmq.Context.instance()

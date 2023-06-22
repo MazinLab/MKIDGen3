@@ -42,7 +42,7 @@ class RFDCHierarchy(DefaultHierarchy):
             getLogger(__name__).info('RFDCHierarchy does not support switching ADCs')
 
     def start_clocks(self, external_10mhz=False):
-        start_clocks(external_10mhz=external_10mhz)
+        start_clocks(external_10mhz)
 
     def reset(self):
         self.rfdc.write(0x0004, 0x00000001)

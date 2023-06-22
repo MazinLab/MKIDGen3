@@ -11,7 +11,7 @@ from hashlib import md5
 
 from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 from .feedline_objects import zpipe, FeedlineConfig, CaptureRequest
-from mkidgen3.drivers.trigger import PhotonMAXI
+from ..mkidpynq import PHOTON_DTYPE
 
 
 class CaptureSink(threading.Thread):
@@ -125,7 +125,7 @@ class SimplePhotonSink(CaptureSink):
         self._buf = b''.join(self._buf)
 
     def _finalize_data(self):
-        self.result = np.frombuffer(self._buf, dtype=PhotonMAXI.PHOTON_DTYPE)
+        self.result = np.frombuffer(self._buf, dtype=PHOTON_DTYPE)
 
 
 class PhotonCaptureSink(CaptureSink):

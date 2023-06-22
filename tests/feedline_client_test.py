@@ -9,10 +9,10 @@ from mkidgen3.server.feedline_client_objects import CaptureJob, PowerSweepJob
 # cap command default 8888
 # cap data 8889
 # cap status 9000
-
-feedline_server = 'tcp://localhost:8888'
-capture_data_server = 'tcp://localhost:8889'
-status_server = 'tcp://localhost:8890'
+server_ip = 'mkidrfsoc4x2.physics.ucsb.edu'
+feedline_server = f'tcp://{server_ip}:8888'
+capture_data_server = f'tcp://{server_ip}:8889'
+status_server = f'tcp://{server_ip}:8890'
 
 #start a listner for status
 # pd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
@@ -26,10 +26,10 @@ status_server = 'tcp://localhost:8890'
 fc = FeedlineConfig()
 cr = CaptureRequest(1337, 'iq', fc)
 cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
-cj.submit()
-
-
-ps = PowerSweepJob()
-jobs = ps.generate_jobs(submit=True)
-for j in jobs:
-    j.data()   # Will block until data is ready
+# cj.submit()
+#
+#
+# ps = PowerSweepJob()
+# jobs = ps.generate_jobs(submit=True)
+# for j in jobs:
+#     j.data()   # Will block until data is ready
