@@ -225,15 +225,15 @@ class PostageCaptureSink(CaptureSink):
 
 def CaptureSinkFactory(request, server, start=True) -> CaptureSink:
     if request.tap == 'adc':
-        saver = ADCCaptureSink(request.id, server, start=start)
+        saver = ADCCaptureSink(request, server, start=start)
     elif request.tap == 'iq':
-        saver = IQCaptureSink(request.id, server, start=start)
+        saver = IQCaptureSink(request, server, start=start)
     elif request.tap == 'phase':
-        saver = PhaseCaptureSink(request.id, server, start=start)
+        saver = PhaseCaptureSink(request, server, start=start)
     elif request.tap == 'photon':
-        saver = SimplePhotonSink(request.id, server, start=start)
+        saver = SimplePhotonSink(request, server, start=start)
     elif request.tap == 'postage':
-        saver = PostageCaptureSink(request.id, server, start=start)
+        saver = PostageCaptureSink(request, server, start=start)
     else:
         raise ValueError(f'Malformed CaptureRequest {request}')
     return saver
