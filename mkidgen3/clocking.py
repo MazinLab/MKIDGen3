@@ -25,11 +25,13 @@ def _patch_xrfclk_lmk():
 
     _LMK04828_FILES = {
         '256.0_MTS': 'config/LMK04828_256.0_MTS.txt',
+        '512.0_MTS': 'config/LMK04828_512.0_MTS.txt',
         '500.0_MTS': 'config/LMK04828_500.0_MTS.txt'
     }
 
     _LMX2594_FILES = {
         '500.0_MTS': 'config/LMX2594_500.0_MTS.txt',
+        '512.0_MTS': 'config/LMX2594_512.0_MTS.txt',
         '409.6_MTS': 'config/LMX2594_409.6_256FoscMTS.txt'
     }
 
