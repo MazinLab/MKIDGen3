@@ -2,7 +2,7 @@ from pynq import DefaultHierarchy
 from logging import getLogger
 
 from mkidgen3.clocking import start_clocks
-
+from mkidgen3.mkidpynq import get_board_name
 
 def status():
     import mkidgen3
@@ -24,12 +24,18 @@ def status():
         for k, r in regmap.items():
             print(f'  {k}:  {rfdc.read(taddr + r)}')
 
-
 def reset():
     import mkidgen3
     rfdc = mkidgen3._gen3_overlay.usp_rf_data_converter_0
     rfdc.write(0x0004, 0x00000001)
 
+# This does not appear to actually be necessary for MTS but the example does do it.
+def reset_clockwiz():
+    CLOCKWIZARD_LOCK_ADDRESS = 0x0004
+    CLOCKWIZARD_RESET_ADDRESS = 0x0000
+    CLOCKWIZARD_RESET_TOKEN = 0x000A
+    mmcm = _gen3_overlay.Clocktree.RF_CLKGEN
+    mmcm.mmio.write_reg(CLOCKWIZARD_RESET_ADDRESS, CLOCKWIZARD_RESET_TOKEN)
 
 class RFDCHierarchy(DefaultHierarchy):
     def __init__(self, description):
@@ -91,6 +97,100 @@ class RFDCHierarchy(DefaultHierarchy):
         if 'usp_rf_data_converter_0' not in description['ip']:
             return False
         return True
+
+    def enable_mts(self):
+        """Synchronizes all active ADC and DAC tiles"""
+        if get_board_name() == "RFSoC4x2":
+            self.ACTIVE_DAC_TILES = 0b0101
+            self.ACTIVE_ADC_TILES = 0b0101
+            self.MAX_DAC_TILES = 4
+            self.MAX_ADC_TILES = 4
+            self.DAC_REF_TILE = 2
+            self.ADC_REF_TILE = 2
+        else:
+            raise NotImplementedError("{:s} MTS Not Supported".format(get_board()))
+
+        self.rfdc.mts_dac_config.RefTile = self.DAC_REF_TILE
+        self.rfdc.mts_adc_config.RefTile = self.ADC_REF_TILE
+
+        self.init_tile_sync()
+        self.sync_tiles()
+
+    def init_tile_sync(self, reset_clockwiz = False):
+        """Initilizes the ADCs and DACs for MTS
+
+        This resets all the DACs and ADCs, initilizes the MTS engine in the tiles with the CLK
+        inputs and turns the rest of the tiles back on
+
+        Parameters
+        ----------
+        reset_clockwiz : Boolean
+            Resets the clockwizard driving the design, this does not appear to be required
+        """
+        import time
+
+        self.rfdc.mts_dac_config.Tiles = 0b0001 # turn only one tile on first
+        self.rfdc.mts_adc_config.Tiles = 0b0001
+        self.rfdc.mts_dac_config.SysRef_Enable = 1
+        self.rfdc.mts_adc_config.SysRef_Enable = 1
+        self.rfdc.mts_dac_config.Target_Latency = -1
+        self.rfdc.mts_adc_config.Target_Latency = -1
+        self.rfdc.mts_dac()
+        self.rfdc.mts_adc()
+        # Reset MTS ClockWizard MMCM - refer to PG065
+        if reset_clockwiz:
+            reset_clockwiz()
+        time.sleep(0.1)
+        # Reset only user selected DAC tiles
+        bitvector = self.ACTIVE_DAC_TILES
+        for n in range(self.MAX_DAC_TILES):
+            if (bitvector & 0x1):
+                self.rfdc.dac_tiles[n].Reset()
+            bitvector = bitvector >> 1
+        # Reset ADC FIFO of only user selected tiles - restarts MTS engine
+        for toggleValue in range(0,1):
+            bitvector = self.ACTIVE_ADC_TILES
+            for n in range(self.MAX_ADC_TILES):
+                if (bitvector & 0x1):
+                    self.rfdc.adc_tiles[n].SetupFIFOBoth(toggleValue)
+                bitvector = bitvector >> 1
+
+    def sync_tiles(self, dac_target=-1, adc_target=-1):
+        """Synchronize all the active ADC and DAC tiles in the design
+
+        Parameters
+        ----------
+        dac_target : int
+            Set a target latency for the DAC tiles between 0 and 127 cycles passing -1 allows the
+            MTS engine to select a latency
+        adc_target : int
+            Set a target latency for the ADC tiles between 0 and 127 cycles passing -1 allows the
+            MTS engine to select a latency
+        """
+        self._sync_tiles(dac_target, adc_target)
+        import mkidgen3.quirks
+        if mkidgen3.quirks.MTS.double_sync:
+            self._sync_tiles(dac_target, adc_target)
+
+    def _sync_tiles(self, dac_target=-1, adc_target=-1):
+        """ Configures RFSoC MTS alignment"""
+        # Set which RF tiles use MTS and turn MTS off
+        if self.ACTIVE_ADC_TILES > 0:
+            self.rfdc.mts_adc_config.Tiles = self.ACTIVE_ADC_TILES
+            self.rfdc.mts_adc_config.SysRef_Enable = 1
+            self.rfdc.mts_adc_config.Target_Latency = adc_target
+            self.rfdc.mts_adc()
+        else:
+            self.rfdc.mts_adc_config.Tiles = 0x0
+            self.rfdc.mts_adc_config.SysRef_Enable = 0
+        if self.ACTIVE_DAC_TILES > 0:
+            self.rfdc.mts_dac_config.Tiles = self.ACTIVE_DAC_TILES # group defined in binary 0b1111
+            self.rfdc.mts_dac_config.SysRef_Enable = 1
+            self.rfdc.mts_dac_config.Target_Latency = dac_target
+            self.rfdc.mts_dac()
+        else:
+            self.rfdc.mts_dac_config.Tiles = 0x0
+            self.rfdc.mts_dac_config.SysRef_Enable = 0
 
     def set_gain(self, gain=1.0, qmc_settings=None):
         settings = {'EnableGain': 1, 'EnablePhase': 0, 'EventSource': 0, 'GainCorrectionFactor': gain,
