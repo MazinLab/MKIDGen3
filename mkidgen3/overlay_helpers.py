@@ -129,6 +129,7 @@ def enable_interrupts():
 
 def configure(bitstream, ignore_version=False, clocks=False, programming_key=False, download=True):
     import pynq
+    import mkidgen3
 
     if clocks:
         import mkidgen3.drivers.rfdc
@@ -136,8 +137,10 @@ def configure(bitstream, ignore_version=False, clocks=False, programming_key=Fal
         time.sleep(0.5)  # allow clocks to stabilize before loading overlay
 
     global _gen3_overlay
-    ol = _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
+    ol = _gen3_overlay = mkidgen3._gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
     getLogger(__name__).info(f"PL Bitfile: {pynq.PL.bitfile_name} ({ol.timestamp})  Loaded: {ol.is_loaded()}")
+
+    mkidgen3.quirks.Overlay.post_configure()
 
     return _gen3_overlay
 
