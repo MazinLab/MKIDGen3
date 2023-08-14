@@ -127,20 +127,25 @@ def enable_interrupts():
     _gen3_overlay.axi_intc_0.register_map.MER.ME = True
 
 
-def configure(bitstream, ignore_version=False, clocks=False, programming_key=False, download=True):
+def configure(bitstream, ignore_version=False, clocks=False, programming_key=False, download=True, mts=False):
     import pynq
+    import mkidgen3
 
     if clocks:
-        import mkidgen3.drivers.rfdc
         mkidgen3.clocking.start_clocks(programming_key=programming_key)
         time.sleep(0.5)  # allow clocks to stabilize before loading overlay
 
     global _gen3_overlay
-    ol = _gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
+    ol = _gen3_overlay = mkidgen3._gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
     getLogger(__name__).info(f"PL Bitfile: {pynq.PL.bitfile_name} ({ol.timestamp})  Loaded: {ol.is_loaded()}")
 
-    return _gen3_overlay
+    mkidgen3.quirks.Overlay.post_configure()
 
+    if mts:
+        assert download, "Enable MTS after downloading the bitstream with ol.rfdc.enable_mts()"
+        ol.rfdc.enable_mts()
+
+    return _gen3_overlay
 
 def capture_opfb(n=256, raw=False):
     """Capture the OPFB output, exercise caution with large n as the result is copied from PL to PS DDR4"""
