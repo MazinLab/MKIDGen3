@@ -26,12 +26,14 @@ def _patch_xrfclk_lmk():
     _LMK04828_FILES = {
         '256.0_MTS': 'config/LMK04828_256.0_MTS.txt',
         '512.0_MTS': 'config/LMK04828_512.0_MTS.txt',
+        '512.0_MTS_dualloop': 'config/LMK04828_512_dualloop.txt',
         '500.0_MTS': 'config/LMK04828_500.0_MTS.txt'
     }
 
     _LMX2594_FILES = {
         '500.0_MTS': 'config/LMX2594_500.0_MTS.txt',
         '512.0_MTS': 'config/LMX2594_512.0_MTS.txt',
+        '512.0_MTS_dualloop': 'config/LMX2594_512.0_MTS.txt',
         '409.6_MTS': 'config/LMX2594_409.6_256FoscMTS.txt'
     }
 
@@ -47,7 +49,7 @@ def _patch_xrfclk_lmk():
             xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)
 
 
-def start_clocks(programming_key=''):
+def start_clocks(programming_key='', ref='file-defined'):
     """
     - 'external_10mhz' pull LMK clock source from 10 MHz Ref (ZCU111 Only for now)
     - '4.096GSPS_MTS' MTS compatible with 4.096 GSPS Sampling Fequency (RFSoC4x2 Only)
@@ -64,14 +66,19 @@ def start_clocks(programming_key=''):
     board_name = get_board_name()
 
     if board_name == 'RFSoC4x2':
-        if programming_key == 'external_10mhz':
-            raise ValueError('External 10 MHz is not supported on RFSoC4x2')
-        elif programming_key == '4.096GSPS_MTS':
+        if programming_key == '4.096GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='512.0_MTS', lmx_freq='512.0_MTS')
+        if programming_key == '4.096GSPS_MTS_dualloop':
+            xrfclk.set_ref_clks(lmk_freq='512.0_MTS_dualloop', lmx_freq='512.0_MTS_dualloop')
         elif programming_key == '5.000GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='500.0_MTS', lmx_freq='500.0_MTS')
         else:
             xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=409.6)
+        for lmk in xrfclk.lmk_devices:
+            if ref == 'external':
+                xrfclk.xrfclk._write_LMK_regs([0x1470a], lmk)
+            if ref == 'internal':
+                xrfclk.xrfclk._write_LMK_regs([0x1471a], lmk)
 
     elif board_name == 'ZCU111':
         if programming_key == 'external_10mhz':
