@@ -196,7 +196,7 @@ class PhotonPostageMAXI(DefaultIP):
         ids = data[:, 0, 0].astype(np.uint16)
         events = data[:, 1:, :]
         if not raw:
-            events = events[:, :, 0] + events[:, :, 0] * 1j
+            events = events[:, :, 0] + events[:, :, 1] * 1j
             if scaled:
                 events /= 2 ** 14
         return ids, events
