@@ -3,7 +3,10 @@
 ## Overview
 The MKIDGEN3 software facilitates using multiple hardware subsystems (RFSoC board, IF board) to set up and read out and MKID array. 
 The core functionality revolves around capturing data at various points in the FPGA DSP pipeline.
-Captures are facilitated by `capture requests`.
+Captures are facilitated by `capture requests`. The `Director` progam runs on the client machine and facilitates
+generating capture requests to fufill array setup steps. Once all calibration settings have been established, it facilitates
+a standing capture request to record photons. The `GUI` can be clicked to call director functions and facilitate
+array setup steps in a graphical way. 
 
 ### Capture Requests
 Capture requests can target three possible locations:
@@ -17,9 +20,14 @@ Capture requests can target three possible locations:
 All three locations can run captures concurrently but the setup / engineering capture only supports
 one sub-location at a time.
 
-The FRS accepts capture requests and processes then in a loose priority order, executing requestes as they are 
+The FRS accepts capture requests on the capture request port and processes then in a loose priority order, executing requestes as they are 
 compatible with those previously received and running. Requestes may fail and abort at any time. Upon completion 
 (including failure) a single null data byte will be published. 
+
+Anyone is able to subscribe to published data and they are able to filter by capture ID. Only the computer that generated
+the capture request necessarily knows the capture ID(s) for the requests they submitted.
+
+
 
 ## Array Setup Steps
 1. Run sweeps (power and freq.) to find res and drive power
@@ -39,7 +47,7 @@ compatible with those previously received and running. Requestes may fail and ab
 - capture request: contains an id which is the hash of the capture settings
 
 ## Main Programs, and their objects:
-- Feedline Readout Server
+- Feedline Readout Server (FRS)
   - FeedlineReadoutServer
     - FeedlineHardware
     - TapThread
