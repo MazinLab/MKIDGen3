@@ -12,10 +12,6 @@ from datetime import datetime
 import argparse
 from feedline_objects import zpipe
 
-try:
-    import pynq
-except OSError:
-    pass
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
@@ -51,6 +47,7 @@ class FeedlineReadoutServer:
         self._tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
         self._to_check = []
         self._checked = []
+        self._cap_pipe=None
 
     def status(self):
         """
@@ -71,18 +68,19 @@ class FeedlineReadoutServer:
         return tuple([cr.id for cr in self._checked+self._to_check])
 
     @staticmethod
-    def plram_cap(pipe, cr: CaptureRequest, ol: pynq.Overlay, context=None):
+    def plram_cap(pipe, cr: CaptureRequest, frhardware: FeedlineHardware, context=None):
         """
 
         Args:
             pipe:
             context:
             cr: A CaptureRequest object
-            ol: A pynq.Overlay with the firmware bitstream loaded, assumed to be thread safe
+            frhardware: A FeedlineHardware with the firmware bitstream loaded, assumed to be thread safe
 
         Returns: None
 
         """
+        ol = frhardware._ol
         failmsg = ''
         try:
             assert cr.type == 'engineering', 'Incorrect capture request type'
@@ -133,12 +131,14 @@ class FeedlineReadoutServer:
         pipe.close()
 
     @staticmethod
-    def photon_cap(pipe: zmq.Socket, cr: CaptureRequest, ol: pynq.Overlay, context=None):
+    def photon_cap(pipe: zmq.Socket, cr: CaptureRequest, frhardware: FeedlineHardware, context=None):
         """
+        #TODO should this be a instance method of FeedlineHardware?
         pipe: a zme pair pipe to detect abort
         cr: the capture request
         ol: the overlay
         """
+        ol = frhardware._ol
         failmsg = ''
         photon_maxi = ol.photon_pipe.trigger_system.photon_maxi
         try:
@@ -212,8 +212,9 @@ class FeedlineReadoutServer:
                 q.close()
 
     @staticmethod
-    def stamp_cap(pipe: zmq.Socket, context: zmq.Context, cr: CaptureRequest, ol):
+    def stamp_cap(pipe: zmq.Socket, context: zmq.Context, cr: CaptureRequest, frhardware:FeedlineHardware):
         failmsg = ''
+        ol =  frhardware._ol
         postage_maxi = ol.photon_pipe.trigger_system.postage_maxi
         try:
             assert cr.type == 'postage', 'Incorrect capture request type'
@@ -253,7 +254,7 @@ class FeedlineReadoutServer:
             del cr
             pipe.close()
 
-    def abort_all(self, join=False, reason='Abort all', raisezmqerror=True):
+    def _abort_all(self, join=False, reason='Abort all', raisezmqerror=True):
         for cr in self._checked + self._to_check:
             cr.abort(reason)  # signal that captures will never happen
         self._checked, self._to_check = [], []
@@ -269,7 +270,7 @@ class FeedlineReadoutServer:
                 if tt:
                     tt.thread.join()
 
-    def abort_by_id(self, id):
+    def _abort_by_id(self, id):
         aborted = False
         running_by_id = {tt.request.id: tt for tt in self._tap_threads.values() if tt is not None}
         if id in running_by_id:
@@ -292,14 +293,27 @@ class FeedlineReadoutServer:
             getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
 
     def create_capture_handler(self, start=True, daemon=False, context: zmq.Context = None):
-        cap_pipe, cap_pipe_thread = zpipe(context or zmq.Context.instance())
+        self._cap_pipe, cap_pipe_thread = zpipe(context or zmq.Context.instance())
 
-        thread = threading.Thread(name='CaptureHandler', target=self.main, args=(cap_pipe_thread,),
+        thread = threading.Thread(name='CaptureHandler', target=self._main, args=(cap_pipe_thread,),
                                   kwargs={'context': context}, daemon=daemon)
         if start:
             thread.start()
 
-        return thread, cap_pipe
+        return thread
+
+    def terminate_capture_handler(self):
+        if self._cap_pipe:
+            self._cap_pipe.send_pyobj(('exit', None))
+            self._cap_pipe.close()
+
+    def abort_all(self):
+        if self._cap_pipe:
+            self._cap_pipe.send_pyobj(('abort', 'all'))
+
+    def capture(self, capture_request):
+        if self._cap_pipe:
+            self._cap_pipe.send_pyobj(('capture', capture_request))
 
     def _cleanup_completed(self):
         """ Return true iff the effective config requirements changed """
@@ -321,7 +335,7 @@ class FeedlineReadoutServer:
 
         return effective_changed
 
-    def main(self, pipe: zmq.Socket, context: zmq.Context = None):
+    def _main(self, pipe: zmq.Socket, context: zmq.Context = None):
         """
         Enqueue a list of capture requests for future handling. Invalid requests are dealt with immediately and not
         enqueued.
@@ -349,7 +363,7 @@ class FeedlineReadoutServer:
                 cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
             except zmq.ZMQError as e:
                 if e.errno != zmq.EAGAIN:
-                    self.abort_all(reason='Keyboard interrupt')
+                    self._abort_all(reason='Keyboard interrupt')
                     if e.errno == zmq.ETERM:
                         break
                     else:
@@ -360,13 +374,13 @@ class FeedlineReadoutServer:
                 cmd, data = '', ''
 
             if cmd == 'exit':
-                self.abort_all(join=True)
+                self._abort_all(join=True)
                 break
             elif cmd == 'abort':
                 if data == 'all':
-                    self.abort_all(join=True)
+                    self._abort_all(join=True)
                 else:
-                    self.abort_by_id(data)
+                    self._abort_by_id(data)
             elif cmd == 'capture':
                 self.hardware.config_manager.learn(data.feedline_config)
                 unknown = self.hardware.config_manager.unlearned_hashes(data.feedline_config)
@@ -414,7 +428,7 @@ class FeedlineReadoutServer:
                 self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
                 getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
-                self.abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False)
+                self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False)
                 break
 
             self.start_tap_thread(cr)
@@ -440,7 +454,7 @@ class FeedlineReadoutServer:
         a, b = zpipe(context)
         cr.set_status('running', f'Started at UTC {datetime.utcnow()}', destablish=True)
         t = threading.Thread(target=target, name=f"CapThread: {cr.id}",
-                             args=(b, cr, self.hardware._ol), kwargs=dict(context=context))
+                             args=(b, cr, self.hardware), kwargs=dict(context=context))
         t.start()
         self._tap_threads[cr.type] = TapThread(t, a, b, cr)
 
@@ -505,7 +519,7 @@ if __name__ == '__main__':
     # Set up proxies for routing all the capture data and status
     cap_addr = f'tcp://*:{args.capture_port}'
     stat_addr = f'tcp://*:{args.status_port}'
-    dtd, std = start_zmq_devices(cap_addr, stat_addr)
+    start_zmq_devices(cap_addr, stat_addr)
 
     # Set up a command port
     command_port = args.port
@@ -514,18 +528,18 @@ if __name__ == '__main__':
     socket.bind(cmd_addr)
     getLogger(__name__).info(f'Accepting commands on {cmd_addr}')
 
-    thread, cap_pipe = fr.create_capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
+    thread = fr.create_capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
 
     while True:
         try:
             cmd, arg = socket.recv_pyobj()
         except zmq.ZMQError as e:
             getLogger(__name__).error(f'Caught {e}, aborting and shutting down')
-            cap_pipe.send_pyobj(('exit', None))
+            fr.terminate_capture_handler()
             break
         except KeyboardInterrupt:
             getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
-            cap_pipe.send_pyobj(('exit', None))
+            fr.terminate_capture_handler()
             break
         else:
             if not thread.is_alive():
@@ -537,13 +551,11 @@ if __name__ == '__main__':
         getLogger(__name__).debug(f'Received command "{cmd}" with args {arg}')
 
         if cmd == 'reset':
-            cap_pipe.send_pyobj(('exit', None))
-            thread.join()
-            cap_pipe.close()
-            fr.hardware.reset()
-            thread, cap_pipe = fr.create_capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
-
             socket.send_json('OK')
+            fr.terminate_capture_handler()
+            thread.join()
+            fr.hardware.reset()
+            thread = fr.create_capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
 
         elif cmd == 'status':
             try:
@@ -554,7 +566,7 @@ if __name__ == '__main__':
             socket.send_json(status)
 
         elif cmd == 'bequiet':
-            cap_pipe.send_pyobj(('abort', 'all'))
+            fr.abort_all()
             try:
                 fr.hardware.bequiet(**json.loads(arg))  # This might take a while and fail
                 socket.send_json('OK')
@@ -562,10 +574,9 @@ if __name__ == '__main__':
                 socket.send_json(f'ERROR: {e}')
 
         elif cmd == 'capture':
-            cap_pipe.send_pyobj(('capture', arg))
+            fr.capture(arg)
             socket.send_json({'resp': 'OK', 'code': 0})
 
     thread.join()
     socket.close()
-    cap_pipe.close()
     context.term()

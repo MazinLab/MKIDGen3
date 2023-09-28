@@ -12,7 +12,7 @@ Feedline readout server (FRS) accepts requests for specific actions:
   - requests are always accepted, if completed the included settings will be used
   - capture requests include:
     - FeedlineSetup to be used for the capture
-- restart()
+- reset()
   - Purpose is to reset the FPGA to a know initial state 
   - cancels any running or pending capture requests
   - resets the PL by reloading the bitstream
@@ -28,9 +28,7 @@ Feedline readout server (FRS) accepts requests for specific actions:
 - configure()
   - applies a FeedlineSetup without triggering a capture
   - results in an error if captures are in progress or pending 
-- tweakCaptureSettings()????
-  - maybe
-- getRunningPending()????
+
 
 The FRS program has a main thread and worker capture threads. Worker threads may be aborted from the main thread or
 a connection they have to their capture client. 

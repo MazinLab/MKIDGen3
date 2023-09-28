@@ -49,13 +49,13 @@ class Gen3LiveImage:
 class PhotonAggregator:
     """ A stub for combining photon capture data from multiple feedlines into a cohesive entity suitable for further
     use. Photon CaptureJobs result in photon data being published by the various feedline readout servers under the
-    associated capture ID. To gather data from a full array we need to connect to each stream recieve the data,
+    associated capture ID. To gather data from a full array we need to connect to each stream receive the data,
     uncompress it, convert the timestamps to full unix times, convert the feedline channels to full readout channels (
     FL+FLchannel), and then, depending, do things like convert to a rate, array image, save send on, or so forth
 
     Captures can die or be killed
     """
-    def __init__(self, time_offset, jobs: List[CaptureJob], pixel_map:ChannelPixelMap):
+    def __init__(self, time_offset, jobs: List[CaptureJob] or None, pixel_map:ChannelPixelMap):
         self._time_offset = time_offset
         self._new_jobs = jobs
         self._map = pixel_map

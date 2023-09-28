@@ -5,6 +5,32 @@ from mkidgen3.server.feedline_objects import DACConfig, PhotonPipeConfig
 from mkidgen3.server.feedline_client_objects import CaptureRequest, CaptureJob, FeedlineConfig
 
 
+"""
+Setting up from scratch
+1. Run sweeps (power and freq.) to find res and drive power
+2. Process
+3. Rerun 1&2 with fixed freq to finialize optimal drive power
+4. Run IQ sweeps to find loop centers
+5. Process
+6. capture Optimal filter phase data
+7. Process
+8. capture phase data for thresholding
+9. Process
+10. ready to observe
+
+Observing
+
+IrrOps
+Observing, feedline is acting weird, what do?
+0. stop observing or cut out feedline
+1. e.g. reset/power cycle/replace feedline
+2. resume
+
+
+"""
+
+
+
 ctx = zmq.Context.instance()
 ctx.linger = 0
 
