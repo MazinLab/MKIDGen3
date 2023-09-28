@@ -120,7 +120,7 @@ class SerialDevice:
 
     def receive(self):
         """
-        Receive data until a timeout or a :/n or ?/n is recieved.
+        Receive data until a timeout or a :/n or ?/n is received.
         received, decode it and strip it of the confirmation/rejection. In the case of a serialException,
         disconnects from the serial port and raises an IOError.
 

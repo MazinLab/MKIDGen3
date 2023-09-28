@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from mkidgen3.dsp import opfb_bin_spectrum, opfb_bin_frequencies
+from mkidgen3.opfb import opfb_bin_spectrum, opfb_bin_frequencies
 import numpy as np
 
 
@@ -168,8 +168,9 @@ def plot_waveforms(x, sample_rate=2e6, sw_phase=False, cordic=False, ax=None, la
     if xlabel:
         plt.xlabel(xlabel)
 
-def plot_res_chan(riq,channel,**kwargs):
-    reschan_fft = 20*np.log10(np.abs(np.fft.fftshift(np.fft.fft(riq[:,channel]))))
-    reschan_norm = reschan_fft-max(reschan_fft)
-    f_ax = np.linspace(-1.024,1.024,riq.shape[0])
-    plt.plot(f_ax,reschan_norm,**kwargs)
+
+def plot_res_chan(riq, channel, **kwargs):
+    reschan_fft = 20 * np.log10(np.abs(np.fft.fftshift(np.fft.fft(riq[:, channel]))))
+    reschan_norm = reschan_fft - max(reschan_fft)
+    f_ax = np.linspace(-1.024, 1.024, riq.shape[0])
+    plt.plot(f_ax, reschan_norm, **kwargs)

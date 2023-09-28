@@ -13,19 +13,26 @@ from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 from .feedline_objects import zpipe, FeedlineConfig, CaptureRequest
 from ..mkidpynq import PHOTON_DTYPE
 
+from typing import Tuple
+
 
 class CaptureSink(threading.Thread):
-    def __init__(self, request, source, context=None, start=True):
-        id = request.id.decode()
+    def __init__(self, req_nfo:[CaptureRequest,tuple], start=True):
+        if isinstance(req_nfo, CaptureRequest):
+            id, buffer_shape, source_url = req_nfo.id, req_nfo.buffer_shape, req_nfo.server.data_url
+        else:
+            id, buffer_shape, source_url = req_nfo
+        if isinstance(id, bytes):
+            id = id.decode()
         super(CaptureSink, self).__init__(name=f'cap_id={id}')
-        self._expected_buffer_shape = request.buffer_shape
+        self._expected_buffer_shape = buffer_shape
         self.daemon = True
         self.cap_id = id
-        self.data_source = source
+        self.data_source = source_url
         self.result = None
-        self._ctx = context or zmq.Context.instance()
-        self._pipe = zpipe(self._ctx)
+        self._pipe = zpipe(zmq.Context.instance())
         self._buf = None
+        self.socket = None
         if start:
             self.start()
 
@@ -36,7 +43,7 @@ class CaptureSink(threading.Thread):
     def _accumulate_data(self, d):
         if self._buf is None:
             self._buf = []
-        self._buf.append(blosc2.decompress(d))
+        self._buf.append(d)
 
     def _finish_accumulation(self):
         self._buf = b''.join(self._buf)
@@ -44,39 +51,53 @@ class CaptureSink(threading.Thread):
     def _finalize_data(self):
         self.result = np.frombuffer(self._buf, dtype=np.int16)
 
+    def establish(self, ctx:zmq.Context=None):
+        ctx = ctx or zmq.Context.instance()
+        self.socket = ctx.socket(zmq.SUB)
+        self.socket.setsockopt(zmq.SUBSCRIBE, self.cap_id)
+        self.socket.connect(self.data_source)
+        return self.socket
+
+    def receive(self):
+        id, data = self.socket.recv_multipart(copy=False)
+        if not data:
+            self.socket.close()
+            return None
+        return blosc2.decompress(data)
+
+    def destablish(self):
+        self.socket.close()
+        self.socket = None
+
     def run(self):
+        assert self.socket is None
         try:
-            with self._ctx.socket(zmq.SUB) as sock:
-                sock.setsockopt(zmq.SUBSCRIBE, self.cap_id)
-                sock.connect(self.data_source)
+            self.establish()
+            poller = zmq.Poller()
+            poller.register(self._pipe[1], flags=zmq.POLLIN)
+            poller.register(self.socket, flags=zmq.POLLIN)
 
-                poller = zmq.Poller()
-                poller.register(self._pipe[1], flags=zmq.POLLIN)
-                poller.register(sock, flags=zmq.POLLIN)
-
-                getLogger(__name__).debug(f'Listening for data for {self.cap_id}')
-                self._pipe[1].send(b'')
-                while True:
-                    avail = dict(poller.poll())
-                    if self._pipe[1] in avail:
-                        getLogger(__name__).debug(f'Received shutdown order, terminating data acq. of {self}')
-                        break
-                    elif sock not in avail:
-                        time.sleep(.1)  # play nice
-                        continue
-                    id, data = sock.recv_multipart(copy=False)
-                    if not data:
-                        getLogger(__name__).debug(f'Received null, capture data stream over')
-                        break
-                    getLogger(__name__).debug(f'Received data snippet for {self}')
-                    self._accumulate_data(data)
-                self._finish_accumulation()
-                self._finalize_data()
-                getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.shape} '
-                                         f'{self.result.dtype}: {self.result}')
+            getLogger(__name__).debug(f'Listening for data for {self.cap_id}')
+            self._pipe[1].send(b'')
+            while True:
+                avail = dict(poller.poll())
+                if self._pipe[1] in avail:
+                    getLogger(__name__).debug(f'Received shutdown order, terminating data acq. of {self}')
+                    break
+                data = self.receive()
+                if not data:
+                    getLogger(__name__).debug(f'Received null, capture data stream over')
+                    break
+                getLogger(__name__).debug(f'Received data snippet for {self}')
+                self._accumulate_data(data)
+            self._finish_accumulation()
+            self._finalize_data()
+            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.shape} '
+                                     f'{self.result.dtype}: {self.result}')
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
         finally:
+            self.destablish()
             self._pipe[1].close()
 
     def data(self, timeout=None):
@@ -223,22 +244,6 @@ class PostageCaptureSink(CaptureSink):
         self.result = ids, iqs
 
 
-def CaptureSinkFactory(request, server, start=True) -> CaptureSink:
-    if request.tap == 'adc':
-        saver = ADCCaptureSink(request, server, start=start)
-    elif request.tap == 'iq':
-        saver = IQCaptureSink(request, server, start=start)
-    elif request.tap == 'phase':
-        saver = PhaseCaptureSink(request, server, start=start)
-    elif request.tap == 'photon':
-        saver = SimplePhotonSink(request, server, start=start)
-    elif request.tap == 'postage':
-        saver = PostageCaptureSink(request, server, start=start)
-    else:
-        raise ValueError(f'Malformed CaptureRequest {request}')
-    return saver
-
-
 class StatusListener(threading.Thread):
     def __init__(self, id, source, initial_state='Created', start=True):
         super().__init__(name=f'StautsListner_{id}')
@@ -305,24 +310,44 @@ class StatusListener(threading.Thread):
         self._pipe[0].recv()  # TODO make this line block
 
 
-class CaptureJob:  # feedline client end
-    def __init__(self, request: CaptureRequest, feedline_server: str, data_server: str, status_server: str,
-                 submit=True):
+class CaptureJob:
+    def __init__(self, request: CaptureRequest, submit=False):
         self.request = request
-        self.request.feedline_server = feedline_server
-        self.feedline_server = feedline_server
-        self._status_listner = StatusListener(request.id, status_server, initial_state='CREATED', start=False)
-        self._datasaver = CaptureSinkFactory(request, data_server, start=False)
+        self.submitted = False
+
+        self._status_listener = StatusListener(request.id, request.server.status_url,
+                                               initial_state='CREATED', start=False)
+
+        if request.tap == 'adc':
+            datasink = ADCCaptureSink
+        elif request.tap == 'iq':
+            datasink = IQCaptureSink
+        elif request.tap == 'phase':
+            datasink = PhaseCaptureSink
+        elif request.tap == 'photon':
+            datasink = SimplePhotonSink
+        elif request.tap == 'postage':
+            datasink = PostageCaptureSink
+        else:
+            raise ValueError(f'Unknown tap location {request.tap}')
+
+        self.datasink = datasink(request, start=False)
+
         if submit:
             self.submit()
+        elif isinstance(tuple):
+            self.submit(**submit)
+
+    def __del__(self):
+        self._kill_workers(kill_status_monitor=True, kill_data_sink=True)
 
     def status(self):
         """ Return the last known status of the request """
-        return self._status_listner.latest()
+        return self._status_listener.latest()
 
     def status_history(self) -> tuple[str]:
         """Return a tuple of the status history of the job"""
-        return self._status_listner.history()
+        return self._status_listener.history()
 
     def cancel(self, kill_status_monitor=False, kill_data_sink=True):
         """
@@ -336,58 +361,46 @@ class CaptureJob:  # feedline client end
         self._kill_workers(kill_status_monitor=kill_status_monitor, kill_data_sink=kill_data_sink)
         ctx = zmq.Context().instance()
         with ctx.socket(zmq.REQ) as s:
-            s.connect(self.feedline_server)
+            s.connect(self.request.server.command_url)
             s.send_pyobj(('abort', self.request.id))
             return s.recv_json()
 
     def _kill_workers(self, kill_status_monitor=True, kill_data_sink=True):
-        if kill_status_monitor and self._status_listner.is_alive():
+        if kill_status_monitor and self._status_listener.is_alive():
             try:
-                self._datasaver.kill()
+                self.datasink.kill()
             except zmq.ZMQError as e:
                 getLogger(__name__).warning(f'Caught {e} when telling data sink to terminate')
-            if self._status_listner.is_alive():
+            if self._status_listener.is_alive():
                 getLogger(__name__).warning(f'Status listener did not instantly terminate')
-        if kill_data_sink and self._datasaver.is_alive():
+        if kill_data_sink and self.datasink.is_alive():
             try:
-                self._datasaver.kill()
+                self.datasink.kill()
             except zmq.ZMQError as e:
                 getLogger(__name__).warning(f'Caught {e} when telling data sink to terminate')
-            if self._datasaver.is_alive():
+            if self.datasink.is_alive():
                 getLogger(__name__).warning(f'Data sink did not instantly terminate')
 
     def data(self, timeout=None):
-        return self._datasaver.data(timeout=timeout)
+        return self.datasink.data(timeout=timeout)
 
-    def start_listeners(self):
-        self._status_listner.start()
-        self._datasaver.start()
-        self._status_listner.ready()
-        self._datasaver.ready()
+    def submit(self, with_sink=False, with_status=True):
+        if with_status:
+            self._status_listener.start()
+            self._status_listener.ready()
 
-    def submit(self):
-        if self.request.feedline_server is None:
-            self.request.feedline_server = self.feedline_server
-        elif self.request.feedline_server != self.feedline_server:
-            raise ValueError('Job server and request server mismatch. Code has been profoundly abused!')
-        self.start_listeners()
+        if with_sink:
+            self.datasink.start()
+            self.datasink.ready()
+
         try:
-            self._submit()
+            ret = self.request.submit()
+            self.submitted = True
+            return ret
         except Exception as e:
-            self._status_listner.kill()
-            self._datasaver.kill()
+            self._status_listener.kill()
+            self.datasink.kill()
             raise e
-
-    def _submit(self):
-        ctx = zmq.Context().instance()
-        with ctx.socket(zmq.REQ) as s:
-            s.connect(self.feedline_server)
-            assert self.request.feedline_server == self.feedline_server
-            s.send_pyobj(('capture', self.request))
-            return s.recv_json()
-
-    def __del__(self):
-        self._kill_workers(kill_status_monitor=True, kill_data_sink=True)
 
 
 class PowerSweepJob:

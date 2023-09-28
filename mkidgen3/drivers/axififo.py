@@ -46,7 +46,7 @@ class AxisFIFO(DefaultIP):
 
     def rx(self):
         """Pull all the data out of the FIFO"""
-        if not self.register_map.ISR.RC:  # a recieve is complete
+        if not self.register_map.ISR.RC:  # a receive is complete
             return None
         self.register_map.ISR = 0xFFFFFFFF  # Write to clear reset done interrupt bits
         getLogger(__name__).debug(f'ISR at RX start: {repr(self.register_map.ISR)}')

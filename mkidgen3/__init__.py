@@ -3,7 +3,7 @@ from logging import getLogger
 try:
     import pynq
     from .drivers import *
-    from .dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
+    from .opfb import opfb_bin_number, opfb_bin_center, quantize_frequencies
     from .drivers.ddc import tone_increments
     from . import util
     from . import quirks

@@ -3,7 +3,7 @@ import scipy.special
 from logging import getLogger
 import logging
 from mkidgen3.gen2 import SweepFile, parse_lo
-from mkidgen3.dsp import quantize_frequencies
+from mkidgen3.opfb import quantize_frequencies
 
 DAC_REPLAY_SAMPLES=262144
 

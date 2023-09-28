@@ -7,6 +7,7 @@ N_IQ_GROUPS = 256
 
 PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
 
+
 def get_board_name():
     x = subprocess.run(['cat', '/proc/device-tree/chosen/pynq_board'], capture_output=True, text=True).stdout
     return x.strip().strip('\x00')
@@ -102,3 +103,27 @@ def check_description_for(description, kinds, check_version=False, force_dict=Fa
             ret[kind].append(k)
 
     return ret if force_dict or len(kinds)>1 else ret[kinds[0]]
+
+
+def print_plstatus():
+    from pynq import PL
+    print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
+
+
+class DummyOverlay:
+    class DummyBuffer(np.ndarray):
+        def free_buffer(self):
+            pass
+
+    class DummyCap:
+        @staticmethod
+        def capture(csize, *args, **kwargs):
+            n = csize * 2
+            return np.random.uniform(low=-10000, high=10000, size=n).astype(np.int16).view(DummyOverlay.DummyBuffer)
+
+        @staticmethod
+        def ready():
+            return True
+
+    def __init__(self, bitstream, *args, **kwargs):
+        self.capture = DummyOverlay.DummyCap()

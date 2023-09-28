@@ -5,9 +5,9 @@ from fpbinary import FpBinary
 from pynq import DefaultIP
 from pynq.mmio import MMIO
 from mkidgen3.fixedpoint import fp_factory
-from mkidgen3.dsp import opfb_bin_number, opfb_bin_center, quantize_frequencies
+from mkidgen3.opfb import opfb_bin_number, opfb_bin_center, quantize_frequencies
 import time
-import mkidgen3.dsp as dsp
+import mkidgen3.opfb as dsp
 from logging import getLogger
 def tone_increments(freq, quantize=True, **kwargs):
     """

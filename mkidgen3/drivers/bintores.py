@@ -1,5 +1,5 @@
 from pynq import DefaultIP
-from mkidgen3.dsp import opfb_bin_number
+from mkidgen3.opfb import opfb_bin_number
 
 
 class BinToResIP(DefaultIP):

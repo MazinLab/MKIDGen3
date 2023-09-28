@@ -498,7 +498,7 @@ class MCDMA(DefaultIP):
         super().__init__(description=description)
         self.bd_chains = None
 
-    def config_recieve(self, n_buffers=2, buffer_size_bytes=8192, channels=tuple(range(16))):
+    def config_receive(self, n_buffers=2, buffer_size_bytes=8192, channels=tuple(range(16))):
         """
         1. Enable the required channels. (can be also done after step 6).
         2. Program the CD registers of the channels. If the IP is configured for address_width > 32 (c_addr_width > 32),

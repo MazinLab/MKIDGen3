@@ -3,7 +3,7 @@ import numpy as np
 import time
 
 import mkidgen3.clocking
-import mkidgen3.dsp as dsp
+import mkidgen3.opfb as dsp
 from .drivers.ddc import tone_increments
 from . import util
 
@@ -114,11 +114,6 @@ def set_frequencies(freq, **kwargs):
     set_channels(freq)
     getLogger(__name__).info('setting ddc tones')
     configure_ddc(freq)
-
-
-def plstatus():
-    from pynq import PL
-    print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
 
 
 def enable_interrupts():

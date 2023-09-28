@@ -33,3 +33,34 @@ cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=
 cj.submit()
 x = cj.data(timeout=5)  #should be almost
 print(cj.status_history())
+
+#Start the capture of photons from an MKID array, assume FeedlineReadoutServers are running on all the boards
+feedline_server_urls = []
+data_server_urls = []
+status_server_urls = []
+
+#Generate a suitable FeedlineConfig for each server
+fc = FeedlineConfig() # TODO
+buff_duration_ms = 100
+jobs = []
+for a,b,c in zip(feedline_server_urls, data_server_urls, status_server_urls):
+    cr = CaptureRequest(buff_duration_ms, 'photons', fc, feedline_server=a)
+    jobs.append(CaptureJob(cr, a, b, c, submit=True))
+
+
+
+
+cap_data_urls = []
+from zmq.devices import ThreadDevice
+
+data_server_internal = 'inproc://cap_data.xpub'
+# Set up a proxy for routing all the capture requests
+dtd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+dtd.setsockopt_in(zmq.LINGER, 0)
+dtd.setsockopt_out(zmq.LINGER, 0)
+for url in cap_data_urls:
+    dtd.connect_in(url)
+dtd.bind_out(data_server_internal)
+dtd.daemon = True
+dtd.start()
+getLogger(__name__).info(f'Relaying all capture data from {cap_data_urls} to {data_server_internal}')
