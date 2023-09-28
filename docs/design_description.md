@@ -3,14 +3,29 @@
 ## Overview
 The MKIDGEN3 software facilitates using multiple hardware subsystems (RFSoC board, IF board) to set up and read out and MKID array. 
 The core functionality revolves around capturing data at various points in the FPGA DSP pipeline.
-Captures are facilitated by `capture requests`. 
+Captures are facilitated by `capture requests`.
+
+## Capture Requests
+
+
+## Array Setup Steps
+1. Run sweeps (power and freq.) to find res and drive power
+2. Process
+3. Rerun 1&2 with fixed freq to finialize optimal drive power
+4. Run IQ sweeps to find loop centers
+5. Process
+6. capture Optimal filter phase data
+7. Process
+8. capture phase data for thresholding
+9. Process
+10. ready to observe
 
 ## Definitions
 - active feedlines: a feedline which is intended to be used for observing and has the requisite calibration/setup information
 - observing: recording photon data on all active feedlines 
 - capture request: contains an id which is the hash of the capture settings
 
-Main Programs, and their objects:
+## Main Programs, and their objects:
 - Feedline Readout Server
   - FeedlineReadoutServer
     - FeedlineHardware
