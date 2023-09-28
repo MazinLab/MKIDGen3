@@ -5,8 +5,17 @@ The MKIDGEN3 software facilitates using multiple hardware subsystems (RFSoC boar
 The core functionality revolves around capturing data at various points in the FPGA DSP pipeline.
 Captures are facilitated by `capture requests`.
 
-## Capture Requests
+### Capture Requests
+Capture requests can target three possible locations:
+1. Setup / Engineering
+   2. ADC Capture
+   3. IQ Capture (Post-DDC, Pre-optimal filter)
+   4. Phase Capture (Post-optimal filter)
+2. Postage stamp (post optimal filter IQ timestreams for 8 pixels)
+3. Photon capture
 
+All three locations can run captures concurrently but the setup / engineering capture only supports
+one sub-location at a time.
 
 ## Array Setup Steps
 1. Run sweeps (power and freq.) to find res and drive power
