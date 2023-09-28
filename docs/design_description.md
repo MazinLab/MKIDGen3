@@ -17,6 +17,10 @@ Capture requests can target three possible locations:
 All three locations can run captures concurrently but the setup / engineering capture only supports
 one sub-location at a time.
 
+The FRS accepts capture requests and processes then in a loose priority order, executing requestes as they are 
+compatible with those previously received and running. Requestes may fail and abort at any time. Upon completion 
+(including failure) a single null data byte will be published. 
+
 ## Array Setup Steps
 1. Run sweeps (power and freq.) to find res and drive power
 2. Process
