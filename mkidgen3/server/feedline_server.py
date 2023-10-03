@@ -4,13 +4,13 @@ import time
 
 from logging import getLogger
 
-from mkidgen3.server.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineHardware
+from mkidgen3.server.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineHardware, DEFAULT_BIT_FILE
 
 import zmq
 import threading
 from datetime import datetime
 import argparse
-from feedline_objects import zpipe
+#from feedline_objects import zpipe
 
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
