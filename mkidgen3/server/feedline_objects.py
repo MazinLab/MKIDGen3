@@ -7,12 +7,12 @@ import logging
 from logging import getLogger
 from hashlib import md5
 from collections import defaultdict
-from pynq import Overlay
+#from pynq import Overlay
 
 from mkidgen3.mkidpynq import DummyOverlay
 from mkidgen3.funcs import *
 import mkidgen3.clocking
-import mkidgen3.drivers.rfdc
+#import mkidgen3.drivers.rfdc
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 
@@ -167,7 +167,7 @@ def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None
     if n_uniform_tones is not None:
         if n_uniform_tones not in (512, 1024, 2048):
             raise ValueError('Requested number of power sweep tones not supported. Allowed values are 512, 1024, 2048.')
-        frequencies = uniform_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)[::N_CHANNELS // n_uniform_tones]
+        frequencies = uniform_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
     frequencies = np.asarray(frequencies)
     return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
                             amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
@@ -413,6 +413,13 @@ class IFConfig(FLConfigMixin):
     _settings = ('lo', 'adc_attn', 'dac_attn')
 
     def __init__(self, lo=None, adc_attn=None, dac_attn=None, _hashed=None):
+        """
+        Args:
+            lo: lo position in MHz
+            adc_attn: output attenuation in dB. Max is 40.
+            dac_attn: input attenuation in dB. Max is 40.
+            _hashed:
+        """
         self._hashed = _hashed
         if self._hashed:
             return
