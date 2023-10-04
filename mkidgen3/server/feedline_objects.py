@@ -650,6 +650,13 @@ class CaptureAbortedException(Exception):
 
 class FRSClient:
     def __init__(self, url:str, command_port:int=10000, data_port:int=10001, status_port:int=10002):
+        """
+        Args:
+            url: ip address of rfsoc for ex: rfsoc4x2b.physics.ucsb.edu
+            command_port: port for feedline server commands
+            data_port: port for capture data server
+            status_port: port for status server
+        """
         self.url=url
         self.command_port = command_port
         self.data_port = data_port
