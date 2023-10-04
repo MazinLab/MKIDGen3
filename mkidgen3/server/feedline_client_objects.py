@@ -10,7 +10,7 @@ import os
 from hashlib import md5
 
 from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
-from .feedline_objects import zpipe, FeedlineConfig, CaptureRequest
+from .feedline_objects import FeedlineConfig, CaptureRequest
 from ..mkidpynq import PHOTON_DTYPE
 
 from typing import Tuple

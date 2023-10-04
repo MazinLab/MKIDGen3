@@ -4,7 +4,8 @@ import time
 
 from logging import getLogger
 
-from mkidgen3.server.feedline_objects import CaptureRequest, CaptureAbortedException, FeedlineHardware, DEFAULT_BIT_FILE
+from mkidgen3.server.feedline_objects import CaptureRequest, CaptureAbortedException
+from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 
 import zmq
 import threading
