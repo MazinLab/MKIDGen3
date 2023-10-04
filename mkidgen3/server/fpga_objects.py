@@ -6,7 +6,7 @@ from mkidgen3.mkidpynq import DummyOverlay
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_objects import FeedlineConfig, FeedlineConfigManager
 
-DEFAULT_BIT_FILE='/home/xilinx/jupyter_notebooks/gen3_top_power_test/gen3_top.bit'
+DEFAULT_BIT_FILE='/home/xilinx/gen3_top.bit'
 
 
 class FeedlineHardware:
