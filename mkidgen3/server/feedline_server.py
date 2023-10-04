@@ -42,7 +42,7 @@ class TapThread:
 
 
 class FeedlineReadoutServer:
-    def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard', ignore_version=False):
+    def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard', ignore_version=True):
         self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
                                          ignore_version=ignore_version, download=True, program_clock=True)
 

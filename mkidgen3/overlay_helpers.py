@@ -122,7 +122,7 @@ def enable_interrupts():
     _gen3_overlay.axi_intc_0.register_map.MER.ME = True
 
 
-def configure(bitstream, ignore_version=False, clocks=False, programming_key=False, download=True, mts=False):
+def configure(bitstream, ignore_version=True, clocks=False, programming_key=False, download=True, mts=False):
     import pynq
     import mkidgen3
 
