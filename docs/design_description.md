@@ -94,3 +94,26 @@ Recovery Procedure:
 - If a feedline goes down mid observing there are two choices:
   - Restart feedline with exact same settings, observing continues uninterrupted, photon capture IDs are the same
   - Recalibrate one or more feedlines: observing stops 
+
+## Usage Scenarios 
+
+Full array setup sans-gui
+1. Start global redis server
+2. start FL redis servers (optional)
+3. Start all FRSs
+4. Create some sort of PowerSweepEngine
+  - needs board to use (pull from redis by default or by explicit list)
+  - needs the power sweep settings
+  - needs processing method and config settings
+5. Tell engine to go
+6. Engine generates and submits capture jobs harvesting and storing the data
+  - handles hiccups with resume ability
+  - stores what settings it used into redis: state:last_powersweep:...
+7. once all data is recieved it processes the data per its config and stores the result 
+  - in redis: state:last_powersweep:result:...
+  - in a file at a location specified by the current configuration
+8. Create some sort of rotateloopsengine
+
+## Redis command, control, status schema
+state:fl#:....
+config:fl#...

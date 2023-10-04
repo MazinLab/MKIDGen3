@@ -9,6 +9,42 @@ from mkidgen3.funcs import *
 # the waveform coefficient magnitude. This data is used via machine learning or click-throughs to determine
 # the MKID resonator readout frequencies and powers.
 
+
+
+#> start FRS
+template_waveform=compute_waveform(random_phases, powers=ones, frequencies=uniform_comb)
+
+class Sweeper(Thread):
+    def __init__(self, server_url):
+        self.server_url=server_url
+    def run(self):
+        jobs=[]
+        for if_power in attenuations:
+            for LO_position in sweep_centers:
+                #make feedlien config from if_power and lo pos
+                fc = FeedlineConfig(...)
+
+                cr = CaptureRequest(n_sweep_samples, 'iq', fc)
+                cj = CaptureJob(cr, server_url, capture_data_server, submit=False)
+                cj.submit()
+                jobs.append(cj)
+        for j in jobs:
+            j.join()
+
+        self.powers, self.freqs = find_mkid_frequencies_and_powers(settings=[j.config for j in jobs],
+                                                         data=[j.data() for j in jobs])
+        self.rel_iqs = Neelay_IQ_Image_Optimization(self.powers, self.freqs)
+        del jobs
+
+sweepers=[Sweeper(server) in redis.get('status:feedlines:online')]
+
+for sweeper in sweepers:
+    sweeper.run()
+    sweeper.join()
+
+
+
+
 connect_to_if_board()
 template_waveform=compute_waveform(random_phases, powers=ones, frequencies=uniform_comb)
 play_waveform(template_waveform)
@@ -80,4 +116,3 @@ program_matched_filters(optimal_filters)
 threshold_traces = capture_phase(all_resonator_channels)
 thresholds, holdoffs = optimize_trigger(threshold_traces)
 program_trigger(thresholds, holdoffs)
-
