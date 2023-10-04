@@ -11,7 +11,7 @@ DEFAULT_BIT_FILE='/home/xilinx/gen3_top.bit'
 
 class FeedlineHardware:
     def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
-                 ignore_version=False, download=False, program_clock=True):
+                 ignore_version=True, download=False, program_clock=True):
 
         self.config_manager = FeedlineConfigManager()
         self._clock_source = clock_source
