@@ -1,6 +1,7 @@
 import zmq
 from mkidgen3.server.feedline_objects import CaptureRequest, FRSClient
-from mkidgen3.server.feedline_objects import IFConfig, DACConfig, PhotonPipeConfig, ChannelConfig, DDCConfig, FeedlineConfig
+from mkidgen3.server.feedline_objects import IFConfig, DACConfig, ADCConfig, PhotonPipeConfig, ChannelConfig, DDCConfig, FeedlineConfig
+from mkidgen3.server.feedline_client_objects import CaptureJob
 
 
 #ctx = zmq.Context.instance()
@@ -18,14 +19,16 @@ frs_client = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data
 
 if_config = IFConfig(lo=3000, adc_attn=20, dac_attn=20)
 dac_config = DACConfig(n_uniform_tones=512)
+adc_config = ADCConfig()
 
 frequencies = dac_config._waveform.freqs
 
 chan_config = ChannelConfig(frequencies)
 ddc_config = DDCConfig(tones=frequencies)
-pp_config = PhotonPipeConfig(chan_config, ddc_config)
+pp_config = PhotonPipeConfig(chan_config=chan_config, ddc_config=ddc_config)
 
-fl_config = FeedlineConfig(if_config, dac_config, pp_config)
+fl_config = FeedlineConfig(if_config=if_config, dac_config=dac_config, pp_config=pp_config, adc_config=adc_config)
 
 
-test_cr = CaptureRequest(1024, 'adc', fl_config, frs_client)
+cr = CaptureRequest(1024, 'adc', fl_config, frs_client)
+j = CaptureJob(cr)
