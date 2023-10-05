@@ -10,7 +10,7 @@ from . import util
 _gen3_overlay, _frequencies = [None] * 2
 
 
-def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg):
+def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, phases=None, **kwarg):
     """
     Configure the DAC replay table to output a waveform containing the specified frequencies.
 
@@ -52,14 +52,14 @@ def set_waveform(freq, amplitudes=None, attenuations=None, simple=False, **kwarg
     else:
         if attenuations is not None:
             dactable = daccomb(frequencies=freq, n_samples=n_samples, attenuations=attenuations,
-                               sample_rate=sample_rate, return_full=True)
+                               sample_rate=sample_rate, return_full=True, phases=phases)
             comb = dactable['comb']
         else:
             if amplitudes is None:
                 amplitudes = np.ones_like(freq)
 
             dactable = generate_dac_comb(frequencies=freq, n_samples=n_samples, sample_rate=sample_rate,
-                                         amplitudes=amplitudes)
+                                         amplitudes=amplitudes, phases=phases)
             comb = dactable['iq']
 
     getLogger(__name__).debug(f"Comb shape: {comb.shape}. \n"

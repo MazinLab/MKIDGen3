@@ -293,4 +293,4 @@ class ThreepartDDC(CenteringDDC):
         data[:, 1, :] = np.frombuffer(data2, dtype=np.uint32).reshape((256, 8))
         u32d = np.frombuffer(data, dtype=np.uint32)
         # mmio = MMIO(self.offsoffsetet, length=8 * 2048)
-        self.mmio.array[:] = u32d
+        self.mmio.array[:u32d.size] = u32d

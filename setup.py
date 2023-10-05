@@ -27,4 +27,8 @@ setuptools.setup(
         "Operating System :: POSIX",
         "Development Status :: 1 - Planning",
         "Intended Audience :: Science/Research"],
+    install_requires=[
+        'fpbinary',
+        'pyserial',
+    ]
 )
