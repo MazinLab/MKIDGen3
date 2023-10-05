@@ -8,7 +8,7 @@ from typing import List
 from logging import getLogger
 import os
 from hashlib import md5
-
+from mkidgen3.server.misc import zpipe
 from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 from .feedline_objects import FeedlineConfig, CaptureRequest
 from ..mkidpynq import PHOTON_DTYPE
@@ -22,8 +22,8 @@ class CaptureSink(threading.Thread):
             id, buffer_shape, source_url = req_nfo.id, req_nfo.buffer_shape, req_nfo.server.data_url
         else:
             id, buffer_shape, source_url = req_nfo
-        if isinstance(id, bytes):
-            id = id.decode()
+#        if isinstance(id, bytes):
+#            id = id.decode()
         super(CaptureSink, self).__init__(name=f'cap_id={id}')
         self._expected_buffer_shape = buffer_shape
         self.daemon = True
@@ -312,6 +312,11 @@ class StatusListener(threading.Thread):
 
 class CaptureJob:
     def __init__(self, request: CaptureRequest, submit=False):
+        """
+        Args:
+            request:
+            submit: tuple of bools (with sink?, with status?) or True or False
+        """
         self.request = request
         self.submitted = False
 
@@ -335,7 +340,7 @@ class CaptureJob:
 
         if submit:
             self.submit()
-        elif isinstance(tuple):
+        elif isinstance(submit, tuple):
             self.submit(**submit)
 
     def __del__(self):
