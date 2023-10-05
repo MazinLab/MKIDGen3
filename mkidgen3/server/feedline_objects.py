@@ -546,7 +546,8 @@ class FeedlineConfigManager:
 
         for config in self._config.values():
             for k, v in config:
-                setting_dict[k].update(v.settings_dict(unhasher_cache=self._cache, hashed=False))
+                if v is not None:
+                    setting_dict[k].update(v.settings_dict(unhasher_cache=self._cache, hashed=False))
         return FeedlineConfig(**setting_dict)
 
     def pop(self, id) -> bool:
