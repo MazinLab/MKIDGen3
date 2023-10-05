@@ -75,31 +75,31 @@ class FeedlineHardware:
         fl_setup = self.config_manager.add(id, config)
 
         # IF Board
-        if fl_setup.if_setup is not None:
-            getLogger(__name__).debug(f'Configure IF Board with {fl_setup.if_setup.settings_dict()}')
-            self._if_board.configure(**fl_setup.dac_setup.settings_dict())
+        if fl_setup.if_config is not None:
+            getLogger(__name__).debug(f'Configure IF Board with {fl_setup.if_config.settings_dict()}')
+            self._if_board.configure(**fl_setup.dac_config.settings_dict())
 
         # DAC
-        if fl_setup.dac_setup is not None:
-            getLogger(__name__).debug(f'Configure DAC with {fl_setup.dac_setup.settings_dict()}')
-            self._ol.dac_replay.configure(**fl_setup.dac_setup.settings_dict())
+        if fl_setup.dac_config is not None:
+            getLogger(__name__).debug(f'Configure DAC with {fl_setup.dac_config.settings_dict()}')
+            self._ol.dac_replay.configure(**fl_setup.dac_config.settings_dict())
 
         # ADC
-        if fl_setup.adc_setup is not None:
-            getLogger(__name__).debug(f'Configure ADC with {fl_setup.adc_setup.settings_dict()}')
+        if fl_setup.adc_config is not None:
+            getLogger(__name__).debug(f'Configure ADC with {fl_setup.adc_config.settings_dict()}')
             # self._ol.dac_replay.configure(**fl_setup.dac_setup.settings_dict())
 
         # Photon Pipe
-        if fl_setup.pp_setup is not None:
+        if fl_setup.pp_config is not None:
             # Channel assignments
-            if fl_setup.pp_setup.chan_config is not None:
-                self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.pp_setup.chan_config.settings_dict())
+            if fl_setup.pp_config.chan_config is not None:
+                self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.pp_config.chan_config.settings_dict())
             # DDC
-            if fl_setup.pp_setup.ddc_config is not None:
-                self._ol.photon_pipe.reschan.ddc.configure(**fl_setup.pp_setup.ddc_config.settings_dict())
+            if fl_setup.pp_config.ddc_config is not None:
+                self._ol.photon_pipe.reschan.ddc.configure(**fl_setup.pp_config.ddc_config.settings_dict())
             # Matched Filters
-            if fl_setup.pp_setup.filter_config is not None:
-                self._ol.photon_pipe.phasematch.configure(**fl_setup.pp_setup.filter_config.settings_dict())
+            if fl_setup.pp_config.filter_config is not None:
+                self._ol.photon_pipe.phasematch.configure(**fl_setup.pp_config.filter_config.settings_dict())
             # Matched Filters
-            if fl_setup.pp_setup.trig_config is not None:
-                self._ol.photon_pipe.phasematch.configure(**fl_setup.pp_setup.trig_config.settings_dict())
+            if fl_setup.pp_config.trig_config is not None:
+                self._ol.photon_pipe.phasematch.configure(**fl_setup.pp_config.trig_config.settings_dict())
