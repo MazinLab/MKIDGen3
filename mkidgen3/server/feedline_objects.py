@@ -264,13 +264,13 @@ class FLConfigMixin:
         return type(self)(_hashed=hash(self))
 
     def settings_dict(self, omit_none=True, hashed=False, unhasher_cache=None):
-        """Will not include settings that are None"""
+        """Will not include settings that are None so that default will be used"""
         if self._hashed and not hashed:
             try:
                 x = unhasher_cache[self._hashed]
             except (KeyError, TypeError):
                 raise ValueError('Hashed configs do not support unhashed settings '
-                                 'retrieval without an entry the unhasher_cache')
+                                 f'retrieval without an entry the unhasher_cache (offending hash {self._hashed}')
         else:
             x = self
         if hashed:
@@ -336,7 +336,7 @@ class FLMetaConfigMixin:
     def __hash__(self):
         def hasher(v):
             if v is None:
-                v = '___python_None'
+                v = '___python_None'  # we want None to hash to the same value always
             return md5(str(v).encode()).hexdigest()
 
         return int(hasher(tuple(sorted(((k, hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
@@ -352,11 +352,22 @@ class FLMetaConfigMixin:
         d = {k: v if v is None else v.settings_dict(hashed=True) for k, v in self}
         return type(self)(**d)
 
-    def settings_dict(self, hashed=False):
-        return {k: v if v is None else v.settings_dict(hashed=hashed) for k, v in self}
+    def settings_dict(self, hashed=False, unhasher_cache=None):
+        """return a dictionary of (key, value) pairs of setting, keys will use dot notation for nested flmetaconfigs
+        (nested.config.key, value)
+        """
+        return {k: v if v is None else v.settings_dict(omit_none=True, hashed=hashed, unhasher_cache=unhasher_cache)
+                for k, v in self}
 
-    def iter(self, hashed=True, unhashed=True):
-        """an iterator of config_key: value pairs"""
+    def iter(self, hashed=True, unhashed=True): # -> (str,FLConfigMixin|None):
+        """
+        a iterator of config_key: value pairs including any nested meta configs
+
+        nested meta config's config keys are yielded as key.child_key, note that nothing prevents a child
+        from also having meta config so.this.is.a.possible.key
+
+        for example 'pp_config.trig_config', TrigerConfig|None
+        """
         for k, v in self:
             if isinstance(v, FLMetaConfigMixin):
                 for a, b in v.iter(hashed=hashed, unhashed=unhashed):
@@ -531,15 +542,11 @@ class FeedlineConfigManager:
         Return a feedline configuration resulting from settings in the set, the config will not contain any hashed
         settings.
         """
-        setting_dict = defaultdict(lambda: defaultdict(dict))
+        setting_dict = defaultdict(lambda: dict)
 
         for config in self._config.values():
             for k, v in config:
-                if isinstance(v, FLMetaConfigMixin):
-                    for k2, v2 in v:
-                        setting_dict[k][k2].update(v2.settings_dict(unhasher_cache=self._cache))
-                else:
-                    setting_dict[k].update(v.settings_dict(unhasher_cache=self._cache))
+                setting_dict[k].update(v.settings_dict(unhasher_cache=self._cache, hashed=False))
         return FeedlineConfig(**setting_dict)
 
     def pop(self, id) -> bool:
@@ -869,5 +876,3 @@ class PowerSweepRequest:
         return [CaptureRequest(self.samples, FeedlineConfig(dac_setup=dacsetup,
                                if_config=IFConfig(lo=freq, adc_attn=adc_atten, dac_attn=dac_atten)))
                 for (adc_atten, dac_atten) in self.attens for freq in self.lo_centers]
-
-
