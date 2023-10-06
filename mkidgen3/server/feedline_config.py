@@ -313,7 +313,7 @@ class _FLMetaconfigMixin:
         skip_none = omit_none
         if _hashed:
             skip_none = False
-        return {k: v if v is None else v.settings_dict(omit_none=omit_none, hashed=_hashed,
+        return {k: v if v is None else v.settings_dict(omit_none=omit_none, _hashed=_hashed,
                                                        unhasher_cache=unhasher_cache)
                 for k, v in self if not (v is None and skip_none)}
 
