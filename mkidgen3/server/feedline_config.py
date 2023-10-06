@@ -421,7 +421,7 @@ class FilterConfig(_FLConfigMixin):
 class DACConfig(_FLConfigMixin):
     _settings = ('output_waveform', 'qmc_settings', 'fpgen')
 
-    def __init__(self, output_waveform=None, fpgen=None, qmc_settings=None, _hashed=None, **waveform_spec):
+    def __init__(self, output_waveform=None, qmc_settings=None, _hashed=None, **waveform_spec):
         self._hashed = _hashed
         if self._hashed:
             return
@@ -432,7 +432,7 @@ class DACConfig(_FLConfigMixin):
         waveform_spec['n_samples'] = 2 ** 19
         waveform_spec['sample_rate'] = 4.096e9
         self._waveform = WaveformFactory(**waveform_spec)
-        self.fpgen = self._waveform.fpgen
+        self.fpgen = self._waveform.fpgen if self is not None else None
         self.qmc_settings = qmc_settings
 
     @property
