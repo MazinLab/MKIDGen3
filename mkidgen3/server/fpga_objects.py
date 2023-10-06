@@ -4,7 +4,7 @@ from pynq import Overlay
 from logging import getLogger
 from mkidgen3.mkidpynq import DummyOverlay
 from mkidgen3.drivers.ifboard import IFBoard
-from mkidgen3.server.feedline_objects import FeedlineConfig, FeedlineConfigManager
+from mkidgen3.server.feedline_config import FeedlineConfig, FeedlineConfigManager
 
 DEFAULT_BIT_FILE='/home/xilinx/gen3_top.bit'
 

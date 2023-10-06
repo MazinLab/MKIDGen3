@@ -1,7 +1,7 @@
 import zmq
 import logging
 logging.basicConfig(level=logging.DEBUG)
-from mkidgen3.server.feedline_objects import DACConfig, PhotonPipeConfig, DEFAULT_BIT_FILE
+from mkidgen3.server.feedline_config import DACConfig, PhotonPipeConfig, DEFAULT_BIT_FILE
 from mkidgen3.server.feedline_client_objects import CaptureRequest, CaptureJob, FeedlineConfig
 
 

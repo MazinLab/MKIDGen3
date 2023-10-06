@@ -1,8 +1,7 @@
 import numpy as np
 
 
-
-class ChannelPixelMap:
+class PixelMap:
     """ A stub for the mapping of feedline and channel to pixel position
 
     map=PixelMap()
@@ -23,7 +22,7 @@ class ChannelPixelMap:
         return self._map[fl, channel]
 
 
-def example_map(n_feedlines, n_channels)->ChannelPixelMap:
+def example_map(n_feedlines, n_channels)->PixelMap:
     """
 
     Args:
@@ -33,4 +32,4 @@ def example_map(n_feedlines, n_channels)->ChannelPixelMap:
     Returns: An example map
 
     """
-    return ChannelPixelMap(np.arange(n_feedlines*n_channels, dtype=int).reshape((n_feedlines*n_channels))
+    return PixelMap(np.arange(n_feedlines*n_channels, dtype=int).reshape((n_feedlines*n_channels)))

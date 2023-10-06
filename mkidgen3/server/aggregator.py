@@ -1,33 +1,9 @@
-import numpy as np
-
 from .feedline_client_objects import *
 from zmq import *
+from .pixelmap import PixelMap
 
 MAX_PHOTON_PER_CR_SEND = 5000
 INSTRUMENT_PHOTON_TYPE = (('time', 'u32'), ('x', 'u32'), ('y', 'u32'), ('phase', 'u16'))
-
-
-class ChannelPixelMap:
-    """ A stub for the mapping of feedline and channel to pixel position
-
-    map=PixelMap()
-    map[fl, channel] -> array of xy for specified fl, channel
-    map[2d
-    """
-    def __init__(self, x):
-        """
-
-        Args:
-            x: an n_feedline x n_channels x 2 array where the last dimension is x and y
-            x[1,300] would then be the x,y of feedline 1 channel 300
-            finite elements must be unique (np.unique(x[np.isfinite(x)]).size==np.isfinite(x).sum())
-        """
-        assert np.unique(x[np.isfinite(x)]).size==np.isfinite(x).sum()
-        self._map = x
-
-    def __getitem__(self, fl, channel):
-        return self._map[fl, channel]
-
 
 class Gen3TableSaver:
     def __init__(self, file, size_hint=None):
@@ -55,7 +31,7 @@ class PhotonAggregator:
 
     Captures can die or be killed
     """
-    def __init__(self, time_offset, jobs: List[CaptureJob] or None, pixel_map:ChannelPixelMap):
+    def __init__(self, time_offset, jobs: List[CaptureJob] or None, pixel_map:PixelMap):
         self._time_offset = time_offset
         self._new_jobs = jobs
         self._map = pixel_map
