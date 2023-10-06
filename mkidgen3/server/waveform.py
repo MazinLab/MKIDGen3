@@ -23,7 +23,6 @@ class TabulatedWaveform(Waveform):
         self._fpgen = None
         self._sample_rate = sample_rate
 
-
 class FreqlistWaveform(Waveform):
     def __init__(self, frequencies=None, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
                  iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):

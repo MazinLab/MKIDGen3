@@ -1,3 +1,4 @@
+import logging
 from logging import getLogger
 import numpy as np
 import time
@@ -107,10 +108,22 @@ class DACTableAXIM(pynq.DefaultIP):
         return {'running': self.register_map.run and self.register_map.CTRL.AP_START,
                 'buffer': self._buffer.copy() if self._buffer is not None else None}
 
-    def configure(self, waveform_values=None, fpgen=None):
+    def configure(self, waveform=None):
+        """
+        Args:
+            waveform_values: complex values quantized to integer real and imaginary parts
+            max val, min val: [2**15-1, -2**15] corresponding to [1.0, -1.0] & [max dac V, min dac V]
+        Returns:
+
+        """
+        try:
+            waveform_values = waveform.output_waveform
+        except AttributeError:
+            getLogger(__name__).info('Interpreting waveform as array')
+            waveform_values = waveform
 
         if waveform_values is None:
             raise ValueError('waveform_values is None')
 
         self.replay(waveform_values, tlast=True, tlast_every=256, replay_len=None, start=True,
-                    fpgen=fpgen, stop_if_needed=True)
+                    fpgen=None, stop_if_needed=True)

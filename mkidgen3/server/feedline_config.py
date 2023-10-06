@@ -419,31 +419,32 @@ class FilterConfig(_FLConfigMixin):
 
 
 class DACConfig(_FLConfigMixin):
-    _settings = ('output_waveform', 'qmc_settings', 'fpgen')
+    _settings = ('waveform', 'qmc_settings')
 
-    def __init__(self, output_waveform=None, qmc_settings=None, _hashed=None, **waveform_spec):
+    def __init__(self, qmc_settings=None, _hashed=None, waveform=None):
+        """
+
+        Args:
+            qmc_settings:
+            _hashed:
+            waveform_values:
+            waveform_spec:
+            if waveform values and waveform_spec are both passed, they should be consistent
+            waveform values will take precedence.
+        """
         self._hashed = _hashed
         if self._hashed:
             return
-
         # TODO [optional] make hash use waveform_spec instead of output_waveform so that deferred computation isn't
         #  triggered by a request for the hash
-        waveform_spec['output_waveform'] = output_waveform
-        waveform_spec['n_samples'] = 2 ** 19
-        waveform_spec['sample_rate'] = 4.096e9
-        self._waveform = WaveformFactory(**waveform_spec)
-        self.fpgen = self._waveform.fpgen if self._waveform is not None else None
+        self.waveform = waveform
         self.qmc_settings = qmc_settings
 
     @property
-    def output_waveform(self):
-        """This is a property so that compute=False is respected"""
-        return self._waveform.output_waveform if self._waveform is not None else None
-
-    @property
     def default_channel_config(self)->ChannelConfig:
-        """A convenience method to get a ChannelConfig using all the waveform's frequencies"""
-        return ChannelConfig(frequencies=self._waveform.freqs)
+        """A convenience method to get a ChannelConfig using all the waveform's frequencies
+        default channel config is not available for tabulated waveforms."""
+        return ChannelConfig(frequencies=self.waveform.freqs)
 
 
 class PhotonPipeConfig(_FLMetaconfigMixin):
