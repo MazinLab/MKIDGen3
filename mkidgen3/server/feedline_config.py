@@ -438,7 +438,7 @@ class DACConfig(_FLConfigMixin):
     @property
     def output_waveform(self):
         """This is a property so that compute=False is respected"""
-        return self._waveform.output_waveform
+        return self._waveform.output_waveform if self._waveform is not None else None
 
     @property
     def default_channel_config(self)->ChannelConfig:
