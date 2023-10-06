@@ -2,7 +2,7 @@ import numpy as np
 
 from hashlib import md5
 from collections import defaultdict
-
+import copy
 from .waveform import WaveformFactory
 
 
@@ -85,6 +85,15 @@ class _FLConfigMixin:
         elif a != b:
             return False
         return True
+
+    def merge_with(self, other):
+        """Adopt the specified values of the other"""
+        assert isinstance(other, type(self)), 'other must be of the same type'
+        assert not self.is_hashed and not other.is_hashed, 'Hashed FLConfigs can not be merged'
+        for k in self._settings:
+            v = getattr(other, k)
+            if v is not None:
+                setattr(self, k, v)
 
     def compatible_with(self, other) -> bool:
         """
@@ -265,10 +274,16 @@ class _FLMetaconfigMixin:
         return int(hasher(tuple(sorted(((k, hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
     def __iter__(self):
-        for v in vars(self):
+        for v in sorted(vars(self)):
             if v.startswith('_'):
                 continue
             yield v, getattr(self, v)
+
+    def merge_with(self, other):
+        """Adopt the specified values of the other"""
+        assert isinstance(other, type(self)), 'other must be of the same type'
+        for (_,v1), (_,v2) in zip(self, other):
+            v1.merge_with(v2)
 
     @property
     def hashed_form(self):
@@ -332,32 +347,6 @@ class ADCConfig(_FLConfigMixin):
         if self._hashed:
             return
 
-
-class DACConfig(_FLConfigMixin):
-    _settings = ('output_waveform', 'qmc_settings', 'fpgen')
-
-    def __init__(self, output_waveform=None, fpgen=None, qmc_settings=None, _hashed=None, **waveform_spec):
-        self._hashed = _hashed
-        if self._hashed:
-            return
-
-        # TODO [optional] make hash use waveform_spec instead of output_waveform so that deferred computation isn't
-        # triggered by a request for the hash
-        waveform_spec['output_waveform'] = output_waveform
-        waveform_spec['n_samples'] = 2 ** 19
-        waveform_spec['sample_rate'] = 4.096e9
-        self._waveform = WaveformFactory(**waveform_spec)
-        self.fpgen = self._waveform.fpgen
-        self.qmc_settings = qmc_settings
-
-    @property
-    def output_waveform(self):
-        """This is a property so that compute=False is respected"""
-        return self._waveform.output_waveform
-
-    @property
-    def default_channel_config(self):
-        return ChannelConfig(frequencies=self._waveform.freqs)
 
 class IFConfig(_FLConfigMixin):
     _settings = ('lo', 'adc_attn', 'dac_attn')
@@ -429,6 +418,34 @@ class FilterConfig(_FLConfigMixin):
         self.coefficients = coefficients
 
 
+class DACConfig(_FLConfigMixin):
+    _settings = ('output_waveform', 'qmc_settings', 'fpgen')
+
+    def __init__(self, output_waveform=None, fpgen=None, qmc_settings=None, _hashed=None, **waveform_spec):
+        self._hashed = _hashed
+        if self._hashed:
+            return
+
+        # TODO [optional] make hash use waveform_spec instead of output_waveform so that deferred computation isn't
+        #  triggered by a request for the hash
+        waveform_spec['output_waveform'] = output_waveform
+        waveform_spec['n_samples'] = 2 ** 19
+        waveform_spec['sample_rate'] = 4.096e9
+        self._waveform = WaveformFactory(**waveform_spec)
+        self.fpgen = self._waveform.fpgen
+        self.qmc_settings = qmc_settings
+
+    @property
+    def output_waveform(self):
+        """This is a property so that compute=False is respected"""
+        return self._waveform.output_waveform
+
+    @property
+    def default_channel_config(self)->ChannelConfig:
+        """A convenience method to get a ChannelConfig using all the waveform's frequencies"""
+        return ChannelConfig(frequencies=self._waveform.freqs)
+
+
 class PhotonPipeConfig(_FLMetaconfigMixin):
     def __init__(self, chan_config: (dict, ChannelConfig) = None, ddc_config: (dict, DDCConfig) = None,
                  filter_config: (dict, FilterConfig) = None, trig_config: (dict, TriggerConfig) = None):
@@ -436,6 +453,11 @@ class PhotonPipeConfig(_FLMetaconfigMixin):
         self.ddc_config = DDCConfig(**ddc_config) if isinstance(ddc_config, dict) else ddc_config
         self.trig_config = TriggerConfig(**trig_config) if isinstance(trig_config, dict) else trig_config
         self.filter_config = FilterConfig(**filter_config) if isinstance(filter_config, dict) else filter_config
+
+    @staticmethod
+    def empty_config():
+        return PhotonPipeConfig(chan_config=ChannelConfig(), ddc_config=DDCConfig(), filter_config=FilterConfig(),
+                                trig_config=TriggerConfig())
 
     def __str__(self):
         return (f"PhotonPipe {hash(self)}:\n"
@@ -446,7 +468,10 @@ class PhotonPipeConfig(_FLMetaconfigMixin):
 
 
 class FeedlineConfig(_FLMetaconfigMixin):
-    """All attributes must be _FLConfigMixin"""
+    @staticmethod
+    def empty_config():
+        return FeedlineConfig(if_config=IFConfig(), dac_config=DACConfig(),
+                              pp_config=PhotonPipeConfig.empty_config(), adc_config=ADCConfig())
 
     def __init__(self, if_config: (dict, IFConfig) = None, dac_config: (DACConfig, dict) = None,
                  pp_config: (dict, PhotonPipeConfig) = None, adc_config: (dict, ADCConfig) = None):
@@ -485,24 +510,43 @@ class FeedlineConfigManager:
 
     def required(self) -> FeedlineConfig:
         """
-        Return the  feedline configuration that results from all FeedlineConfigs in the manager. The config will be
+        Return the feedline configuration built from all FeedlineConfigs in the manager. The config will be
         free of hashed settings but may not specify a requirement for many settings (i.e. they may be None)
+
         """
-        settings = defaultdict(lambda: dict)  # We need to build up a nested set of dicts to be used as kwargs
+        # This was the original approach and should be correct
+        # settings = defaultdict(lambda: defaultdict(dict))
+        # for config in self._config.values():
+        #     for k, v in config:
+        #         if isinstance(v, _FLMetaconfigMixin):
+        #             for k2, v2 in v:
+        #                 assert not isinstance(v2, _FLMetaconfigMixin)
+        #                 if v2 is not None:
+        #                     settings[k][k2].update(v2.settings_dict(unhasher_cache=self._cache,
+        #                                                             _hashed=False, omit_none=True))
+        #         elif v is not None:
+        #             settings[k].update(v.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True))
+        # return FeedlineConfig(**settings)
 
-        for config in self._config.values():  # iterate through all the FeedlineConfigs in the pot
-            specified_settings = config.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True)
-            # this is a dict (of dicts maybe of dicts... )
-            # we need to merge them all with update all the way down,
-            # the caveat is that if a FLConfig has a setting that is itself a dict
-            # it should be treated as a value and simple recursion does not allow us to know which it is
+        #This is a new, much cleaner approach
+        cfg = FeedlineConfig.empty_config()
+        for config in self._config.values():
+            # This adopts values specified in config (i.e. Nones are skipped). While it later configs set values are
+            # overwritten
+            cfg.merge_with(config)  # there is a potential concurrency issue here if the configs are being mutated
 
-            settings.update()
-            for k, v in config:
-                if v is None:
-                    continue
-                settings[k].update(v.settings_dict(unhasher_cache=self._cache, _hashed=False))
-        return FeedlineConfig(**settings)
+        return copy.deepcopy(cfg)  # ensure the result doesn't share data!
+
+        #Yet another approach
+        # settings = defaultdict(lambda: dict)  # We need to build up a nested set of dicts to be used as kwargs
+        # for config in self._config.values():  # iterate through all the FeedlineConfigs in the pot
+        #     specified_settings = config.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True)
+        #     # this is a dict (of dicts maybe of dicts... )
+        #     # we need to merge them all with update all the way down,
+        #     # the caveat is that if a FLConfig has a setting that is itself a dict
+        #     # it should be treated as a value and simple recursion does not allow us to know which it is
+        #     ....
+
 
     def pop(self, id) -> bool:
         """
