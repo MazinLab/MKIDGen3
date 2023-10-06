@@ -1,5 +1,5 @@
 import zmq
-from mkidgen3.server.feedline_config import IFConfig, DACConfig, ADCConfig, PhotonPipeConfig, ChannelConfig, DDCConfig, FeedlineConfig
+from mkidgen3.server.feedline_config import IFConfig, DACConfig, ADCConfig, PhotonPipeConfig, DDCConfig, FeedlineConfig
 from mkidgen3.server.feedline_client_objects import CaptureJob, FRSClient, CaptureRequest
 
 

@@ -10,10 +10,9 @@ from mkidgen3.server.misc import zpipe
 
 import zmq
 import threading
+import mkidgen3.server.feedline_config
 from datetime import datetime
 import argparse
-#from feedline_objects import zpipe
-
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
