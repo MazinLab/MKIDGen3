@@ -432,7 +432,7 @@ class DACConfig(_FLConfigMixin):
         waveform_spec['n_samples'] = 2 ** 19
         waveform_spec['sample_rate'] = 4.096e9
         self._waveform = WaveformFactory(**waveform_spec)
-        self.fpgen = self._waveform.fpgen if self is not None else None
+        self.fpgen = self._waveform.fpgen if self._waveform is not None else None
         self.qmc_settings = qmc_settings
 
     @property
