@@ -130,11 +130,12 @@ def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None
                     iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
     if output_waveform is not None:
         return TabulatedWaveform(tabulated_values=output_waveform, sample_rate=sample_rate)
-
     if n_uniform_tones is not None:
         if n_uniform_tones not in (512, 1024, 2048):
             raise ValueError('Requested number of power sweep tones not supported. Allowed values are 512, 1024, 2048.')
         frequencies = uniform_freqs(n_uniform_tones, bandwidth=SYSTEM_BANDWIDTH)
+    if frequencies is None:
+        return None
     frequencies = np.asarray(frequencies)
     return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
                             amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
