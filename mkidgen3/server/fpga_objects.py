@@ -77,7 +77,7 @@ class FeedlineHardware:
         # IF Board
         if fl_setup.if_config is not None:
             getLogger(__name__).debug(f'Configure IF Board with {fl_setup.if_config.settings_dict()}')
-            self._if_board.configure(**fl_setup.dac_config.settings_dict())
+            self._if_board.configure(**fl_setup.if_config.settings_dict())
 
         # DAC
         if fl_setup.dac_config is not None:
