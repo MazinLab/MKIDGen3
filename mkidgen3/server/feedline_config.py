@@ -474,8 +474,9 @@ class FeedlineConfig(_FLMetaconfigMixin):
         return FeedlineConfig(if_config=IFConfig(), dac_config=DACConfig(),
                               pp_config=PhotonPipeConfig.empty_config(), adc_config=ADCConfig())
 
-    def __init__(self, if_config: (dict, IFConfig) = None, dac_config: (DACConfig, dict) = None,
-                 pp_config: (dict, PhotonPipeConfig) = None, adc_config: (dict, ADCConfig) = None):
+    def __init__(self, if_config: (dict, IFConfig) = IFConfig(), dac_config: (DACConfig, dict) = DACConfig(),
+                 pp_config: (dict, PhotonPipeConfig) = PhotonPipeConfig.empty_config(),
+                 adc_config: (dict, ADCConfig) = ADCConfig()):
         self.if_config = IFConfig(**if_config) if isinstance(if_config, dict) else if_config
         self.dac_config = DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
         self.pp_config = PhotonPipeConfig(**pp_config) if isinstance(pp_config, dict) else pp_config
