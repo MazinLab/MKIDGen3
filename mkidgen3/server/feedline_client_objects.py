@@ -10,7 +10,7 @@ import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
 from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
-from .feedline_config import FeedlineConfig, DACConfig, IFConfig
+from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
 
 from typing import Tuple
@@ -624,13 +624,13 @@ class PowerSweepJob:
         self.use_cached = use_cached
 
     def generate_jobs(self, submit=False) -> List[CaptureJob]:
-        from .feedline_config import DACConfig, IFConfig
+        from .feedline_config import WaveformConfig, IFConfig
 
         feedline_server = 'tcp://localhost:8888'
         capture_data_server = 'tcp://localhost:8889'
         status_server = 'tcp://localhost:8890'
 
-        dacconfig = DACConfig(n_uniform_tones=1024)
+        dacconfig = WaveformConfig(n_uniform_tones=1024)
         dacconfig_hash = hash(dacconfig)
         jobs = []
         for adc_atten, dac_atten in self.attens:
@@ -683,7 +683,7 @@ class PowerSweepRequest:
         self.use_cached = use_cached
 
     def capture_requests(self):
-        dacsetup = DACConfig('power_sweep_comb', n_uniform_tones=self.ntones)
+        dacsetup = WaveformConfig('power_sweep_comb', n_uniform_tones=self.ntones)
         return [CaptureRequest(self.samples, FeedlineConfig(dac_setup=dacsetup,
                                                             if_config=IFConfig(lo=freq, adc_attn=adc_atten,
                                                                                dac_attn=dac_atten)))

@@ -1,7 +1,7 @@
 import zmq
 import logging
 logging.basicConfig(level=logging.DEBUG)
-from mkidgen3.server.feedline_config import DACConfig, PhotonPipeConfig, DEFAULT_BIT_FILE
+from mkidgen3.server.feedline_config import WaveformConfig, PhotonPipeConfig, DEFAULT_BIT_FILE
 from mkidgen3.server.feedline_client_objects import CaptureRequest, CaptureJob, FeedlineConfig
 
 
@@ -47,8 +47,8 @@ frequencies = []
 coefficients = []
 thresholds= []
 holdoffs = []
-fc = FeedlineConfig(dac_config=dict(frequencies=None, amplitudes=None, phases=None,
-                                    iq_ratios=None, phase_offsets=None, maximize_dynamic_range=True),
+fc = FeedlineConfig(waveform_config=dict(frequencies=None, amplitudes=None, phases=None,
+                                         iq_ratios=None, phase_offsets=None, maximize_dynamic_range=True),
                     pp_config=PhotonPipeConfig(chan_config=dict(frequencies=frequencies),
                                                ddc_config=dict(tones=None, loop_center=None,
                                                                phase_offset=None, center_relative=None, quantize=None),

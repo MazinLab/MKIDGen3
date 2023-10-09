@@ -1,5 +1,5 @@
 import zmq
-from mkidgen3.server.feedline_config import IFConfig, DACConfig, ADCConfig, PhotonPipeConfig, DDCConfig, FeedlineConfig
+from mkidgen3.server.feedline_config import IFConfig, WaveformConfig, ADCConfig, PhotonPipeConfig, DDCConfig, FeedlineConfig
 from mkidgen3.server.feedline_client_objects import CaptureJob, FRSClient, CaptureRequest
 from mkidgen3.server.waveform import WaveformFactory
 
@@ -20,15 +20,15 @@ frs_client = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data
 
 if_config = IFConfig(lo=3000, adc_attn=20, dac_attn=20)
 waveform = WaveformFactory(n_uniform_tones=512)
-dac_config = DACConfig(waveform=waveform)
+waveform_config = WaveformConfig(waveform=waveform)
 
 adc_config = ADCConfig()
 
-chan_config = dac_config.default_channel_config
+chan_config = waveform_config.default_channel_config
 ddc_config = DDCConfig(tones=chan_config.frequencies)
 pp_config = PhotonPipeConfig(chan_config=chan_config, ddc_config=ddc_config)
 
-fl_config = FeedlineConfig(if_config=if_config, dac_config=dac_config, pp_config=pp_config, adc_config=adc_config)
+fl_config = FeedlineConfig(if_config=if_config, waveform_config=waveform_config, pp_config=pp_config, adc_config=adc_config)
 
 
 cr = CaptureRequest(1024, 'adc', fl_config, frs_client)

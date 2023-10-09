@@ -340,12 +340,71 @@ class _FLMetaconfigMixin:
 
 
 class ADCConfig(_FLConfigMixin):
-    _settings = tuple()
+    _settings = ('mts_enable', 'qmc_gain')
 
-    def __init__(self, _hashed=None):
+    def __init__(self, mts_enable=None, qmc_gain: (float, float) | None = None, _hashed=None):
+        """
+        Args:
+            mts_enable: whether or not to enable MTS synchronization with the ADC Tiles and DAC Tiles
+            qmc_gain: tupe of gain settings for ADC0 and ADC1. 1.0 is no gain. Allowed values (0-2).
+            _hashed:
+        """
         self._hashed = _hashed
         if self._hashed:
             return
+        self.mts_enable = mts_enable
+        self.qmc_gain = qmc_gain
+
+
+class DACConfig(_FLConfigMixin):
+    _settings = ('mts_enable', 'qmc_gain')
+
+    def __init__(self, mts_enable=None, qmc_gain: (float, float) | None = None, _hashed=None):
+        """
+        Args:
+            mts_enable: whether or not to enable MTS synchronization with the DAC Tiles
+            qmc_gain: tupe of gain settings for ADC0 and ADC1. 1.0 is no gain. Allowed values (0-2).
+            _hashed:
+        """
+        self._hashed = _hashed
+        if self._hashed:
+            return
+        self.mts_enable = mts_enable
+        self.qmc_gain = qmc_gain
+
+
+class ClockingConfig(_FLConfigMixin):
+    _settings = ('programming_key', 'clock_source')
+
+    def __init__(self, programming_key: str | None=None, clock_source: str | None = None, _hashed=None):
+        """
+        Args:
+            mts_enable: whether or not to enable MTS synchronization with the DAC Tiles
+            qmc_gain: tupe of gain settings for ADC0 and ADC1. 1.0 is no gain. Allowed values (0-2).
+            _hashed:
+        """
+        self._hashed = _hashed
+        if self._hashed:
+            return
+        self.programming_key = programming_key
+        self.clock_source = clock_source
+
+
+class RFDCConfig(_FLMetaconfigMixin):
+    def __init__(self, dac_config: (dict, DACConfig) = DACConfig(), adc_config: (dict, ADCConfig) = ADCConfig(), clocking_config: (dict, ClockingConfig) = ClockingConfig()):
+        self.dac_config = DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
+        self.adc_config = ADCConfig(**adc_config) if isinstance(adc_config, dict) else adc_config
+        self.clocking_config = ClockingConfig(**clocking_config) if isinstance(clocking_config, dict) else clocking_config
+
+    @staticmethod
+    def empty_config():
+        return RFDCConfig(dac_config=DACConfig(), adc_config=ADCConfig(), clocking_config=ClockingConfig())
+
+    def __str__(self):
+        return (f"RFDC {hash(self)}:\n"
+                f"  DAC: {self.dac_config}\n"
+                f"  ADC: {self.adc_config}\n"
+                f"  Clocking: {self.clocking_config}")
 
 
 class IFConfig(_FLConfigMixin):
@@ -418,10 +477,10 @@ class FilterConfig(_FLConfigMixin):
         self.coefficients = coefficients
 
 
-class DACConfig(_FLConfigMixin):
-    _settings = ('waveform', 'qmc_settings')
+class WaveformConfig(_FLConfigMixin):
+    _settings = ('waveform',)
 
-    def __init__(self, qmc_settings=None, _hashed=None, waveform=None):
+    def __init__(self,  _hashed=None, waveform=None):
         """
 
         Args:
@@ -438,7 +497,6 @@ class DACConfig(_FLConfigMixin):
         # TODO [optional] make hash use waveform_spec instead of output_waveform so that deferred computation isn't
         #  triggered by a request for the hash
         self.waveform = waveform
-        self.qmc_settings = qmc_settings
 
     @property
     def default_channel_config(self)->ChannelConfig:
@@ -471,25 +529,27 @@ class PhotonPipeConfig(_FLMetaconfigMixin):
 class FeedlineConfig(_FLMetaconfigMixin):
     @staticmethod
     def empty_config():
-        return FeedlineConfig(if_config=IFConfig(), dac_config=DACConfig(),
-                              pp_config=PhotonPipeConfig.empty_config(), adc_config=ADCConfig())
+        return FeedlineConfig(rfdc_config=RFDCConfig(), if_config=IFConfig(), waveform_config=WaveformConfig(),
+                              pp_config=PhotonPipeConfig.empty_config())
 
-    def __init__(self, if_config: (dict, IFConfig) = IFConfig(), dac_config: (DACConfig, dict) = DACConfig(),
-                 pp_config: (dict, PhotonPipeConfig) = PhotonPipeConfig.empty_config(),
-                 adc_config: (dict, ADCConfig) = ADCConfig()):
+    def __init__(self, rfdc_config: (dict, RFDCConfig) = RFDCConfig().empty_config(),
+                 if_config: (dict, IFConfig) = IFConfig(),
+                 waveform_config: (WaveformConfig, dict) = WaveformConfig(),
+                 pp_config: (dict, PhotonPipeConfig) = PhotonPipeConfig.empty_config()):
+        self.rfdc_config = RFDCConfig(**rfdc_config) if isinstance(rfdc_config, dict) else rfdc_config
         self.if_config = IFConfig(**if_config) if isinstance(if_config, dict) else if_config
-        self.dac_config = DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
+        self.waveform_config = WaveformConfig(**waveform_config) if isinstance(waveform_config, dict) else waveform_config
         self.pp_config = PhotonPipeConfig(**pp_config) if isinstance(pp_config, dict) else pp_config
-        self.adc_config = ADCConfig(**adc_config) if isinstance(adc_config, dict) else adc_config
         # TODO to support captures of less than all groups we need to add a self.capture_setup which has group
         # settings for iq and phase
 
     def __str__(self):
+        rfdc = str(self.rfdc_config).replace('\n  ', '\n    ')
         pp = str(self.pp_config).replace('\n  ', '\n    ')
         return (f"FeedlineConfig {hash(self)}:\n"
+                f"  RFDC: {rfdc}\n"
                 f"  IF: {self.if_config}\n"
-                f"  DAC: {self.dac_config}\n"
-                f"  ADC: {self.adc_config}\n"
+                f"  WVFM: {self.waveform_config}\n"
                 f"  PP: {pp}")
 
 
