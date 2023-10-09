@@ -448,8 +448,8 @@ class DACConfig(_FLConfigMixin):
 
 
 class PhotonPipeConfig(_FLMetaconfigMixin):
-    def __init__(self, chan_config: (dict, ChannelConfig) = None, ddc_config: (dict, DDCConfig) = None,
-                 filter_config: (dict, FilterConfig) = None, trig_config: (dict, TriggerConfig) = None):
+    def __init__(self, chan_config: (dict, ChannelConfig) = ChannelConfig(), ddc_config: (dict, DDCConfig) = DDCConfig(),
+                 filter_config: (dict, FilterConfig) = FilterConfig(), trig_config: (dict, TriggerConfig) = TriggerConfig()):
         self.chan_config = ChannelConfig(**chan_config) if isinstance(chan_config, dict) else chan_config
         self.ddc_config = DDCConfig(**ddc_config) if isinstance(ddc_config, dict) else ddc_config
         self.trig_config = TriggerConfig(**trig_config) if isinstance(trig_config, dict) else trig_config
