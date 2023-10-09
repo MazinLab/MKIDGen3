@@ -73,11 +73,14 @@ def start_clocks(programming_key='', ref='file-defined'):
         elif programming_key == '5.000GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='500.0_MTS', lmx_freq='500.0_MTS')
         else:
+            getLogger(__name__).debug('No programming key specified, defaulting to lmk freq: 245.76 MHz, lmx freq: 409.6 MHz')
             xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=409.6)
         for lmk in xrfclk.lmk_devices:
             if ref == 'external':
+                getLogger(__name__).debug('setting lmk to use external 10 MHz reference')
                 xrfclk.xrfclk._write_LMK_regs([0x1470a], lmk)
             if ref == 'internal':
+                getLogger(__name__).debug('setting lmk to use internal 10 MHz reference')
                 xrfclk.xrfclk._write_LMK_regs([0x1471a], lmk)
 
     elif board_name == 'ZCU111':
