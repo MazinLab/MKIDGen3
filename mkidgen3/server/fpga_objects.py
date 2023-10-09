@@ -1,4 +1,5 @@
 import mkidgen3.clocking
+import mkidgen3 as g3
 import mkidgen3.drivers.rfdc
 from pynq import Overlay
 from logging import getLogger
@@ -10,13 +11,14 @@ DEFAULT_BIT_FILE='/home/xilinx/gen3_top.bit'
 
 
 class FeedlineHardware:
-    def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard',
-                 ignore_version=True, download=False, program_clock=True):
+    def __init__(self, bitstream, clock_source='4.096GSPS_MTS_dualloop', if_port='dev/ifboard', ignore_version=False,
+                 program_clock=True, mts=True, download=False):
 
         self.config_manager = FeedlineConfigManager()
         self._clock_source = clock_source
         try:
-            self._ol = Overlay(bitstream, download=download, ignore_version=ignore_version)
+            self._ol = g3.configure(bitstream, ignore_version=ignore_version, clocks=program_clock,
+                                    programming_key=clock_source, mts=mts, download=download)
         except RuntimeError as e:
             if 'No Devices Found' in str(e):
                 getLogger(__name__).warning('No PL device found, is BOARD set? This is expected on a laptop')
@@ -26,11 +28,12 @@ class FeedlineHardware:
 
         self._if_board = IFBoard(if_port, connect=False)
         self._ignore_version = ignore_version
-        if program_clock:
-            import mkidgen3.drivers.rfdc
-            mkidgen3.clocking.start_clocks(clock_source)
+#        if program_clock:
+#            import mkidgen3.drivers.rfdc
+#            mkidgen3.clocking.start_clocks(clock_source)
 
     def reset(self):
+        raise NotImplementedError('Reset settings not implemented')
         self._if_board.power_off(save_settings=False)
         mkidgen3.clocking.start_clocks(self._clock_source)
         self._ol = Overlay(self._ol.bitfile_name, ignore_version=self._ignore_version, download=True)

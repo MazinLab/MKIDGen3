@@ -41,9 +41,11 @@ class TapThread:
 
 
 class FeedlineReadoutServer:
-    def __init__(self, bitstream, clock_source="external_10mhz", if_port='dev/ifboard', ignore_version=True):
+    def __init__(self, bitstream, clock_source='4.096GSPS_MTS_dualloop', if_port='dev/ifboard', ignore_version=False,
+                 program_clock=True, mts=True, download=False):
         self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
-                                         ignore_version=ignore_version, download=True, program_clock=True)
+                                         ignore_version=ignore_version, program_clock=program_clock,
+                                         mts=mts, download=download)
 
         self._tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
         self._to_check = []
