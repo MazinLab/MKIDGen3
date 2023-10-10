@@ -6,29 +6,31 @@ import copy
 from .waveform import WaveformFactory
 
 
-def _hasher(v, pass_none=False):
-    """
-    Hash a value
-
-    Args:
-        v: the value to be hashed, the md5 hexdigest of the bytestring of v is used.
-        pass_none: If true None through without hashing, otherwise the string '___python_None' is used in its place.
-
-    Returns: The hash
-    """
-    if v is None and pass_none:
-        return None
-
-    try:
-        if v is None:
-            v = '___python_None'
-        return md5(str(v).encode()).hexdigest()
-    except TypeError:
-        return md5(v.tobytes()).hexdigest()
 
 
 class _FLConfigMixin:
     _settings = tuple()
+
+    @staticmethod
+    def _hasher(v, pass_none=False):
+        """
+        Hash a value
+
+        Args:
+            v: the value to be hashed, the md5 hexdigest of the bytestring of v is used.
+            pass_none: If true None through without hashing, otherwise the string '___python_None' is used in its place.
+
+        Returns: The hash
+        """
+        if v is None and pass_none:
+            return None
+
+        try:
+            if v is None:
+                v = '___python_None'
+            return md5(str(v).encode()).hexdigest()
+        except TypeError:
+            return md5(v.tobytes()).hexdigest()
 
     def __ge__(self, other):
         """ Returns true if self is at least as specified as other (i.e. other has = or more Nones)"""
@@ -133,7 +135,7 @@ class _FLConfigMixin:
     @property
     def _hash_data(self) -> tuple:
         """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
-        hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
+        hash_data = ((k, self._hasher(getattr(self, k), pass_none=True)) for k in self._settings)
         return tuple(sorted(hash_data, key=lambda x: x[0]))
 
     def __hash__(self):
@@ -146,7 +148,7 @@ class _FLConfigMixin:
         """
         if self.is_hashed:
             return self._hashed
-        return int(_hasher(self._hash_data), 16)
+        return int(self._hasher(self._hash_data), 16)
 
     def __str__(self):
         """Nicely format one's self"""
