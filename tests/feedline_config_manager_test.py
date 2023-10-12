@@ -8,11 +8,10 @@ cc1 = ChannelConfig()
 ddc1 = DDCConfig()
 fc1 = FilterConfig()
 tc1 = TriggerConfig()
-pp1 = PhotonPipeConfig(cc1, ddc1, fc1, tc1)
 adc1 = ADCConfig()
 dac1 = WaveformConfig(n_uniform_tones=512)
-x1 = FeedlineConfig(if1, dac1, pp1, adc_config=adc1)
-x1a = FeedlineConfig(if1a, dac1, pp1, adc_config=adc1)
+x1 = FeedlineConfig(if1, dac1, cc1, ddc1, fc1, tc1, adc_config=adc1)
+x1a = FeedlineConfig(if1a, dac1, cc1, ddc1, fc1, tc1, adc_config=adc1)
 
 m = FeedlineConfigManager()
 

@@ -344,7 +344,7 @@ class _FLMetaconfigMixin:
 class ADCConfig(_FLConfigMixin):
     _settings = ('mts_enable', 'qmc_gain')
 
-    def __init__(self, mts_enable=None, qmc_gain: (float, float) | None = None, _hashed=None):
+    def __init__(self, mts_enable=None, qmc_gain: (float, float) = None, _hashed=None):
         """
         Args:
             mts_enable: whether or not to enable MTS synchronization with the ADC Tiles and DAC Tiles
@@ -361,7 +361,7 @@ class ADCConfig(_FLConfigMixin):
 class DACConfig(_FLConfigMixin):
     _settings = ('mts_enable', 'qmc_gain')
 
-    def __init__(self, mts_enable=None, qmc_gain: (float, float) | None = None, _hashed=None):
+    def __init__(self, mts_enable=None, qmc_gain: (float, float) = None, _hashed=None):
         """
         Args:
             mts_enable: whether or not to enable MTS synchronization with the DAC Tiles
@@ -506,54 +506,40 @@ class WaveformConfig(_FLConfigMixin):
         default channel config is not available for tabulated waveforms."""
         return ChannelConfig(frequencies=self.waveform.freqs)
 
-
-class PhotonPipeConfig(_FLMetaconfigMixin):
-    def __init__(self, chan_config: (dict, ChannelConfig) = ChannelConfig(), ddc_config: (dict, DDCConfig) = DDCConfig(),
-                 filter_config: (dict, FilterConfig) = FilterConfig(), trig_config: (dict, TriggerConfig) = TriggerConfig()):
-        self.chan_config = ChannelConfig(**chan_config) if isinstance(chan_config, dict) else chan_config
-        self.ddc_config = DDCConfig(**ddc_config) if isinstance(ddc_config, dict) else ddc_config
-        self.trig_config = TriggerConfig(**trig_config) if isinstance(trig_config, dict) else trig_config
-        self.filter_config = FilterConfig(**filter_config) if isinstance(filter_config, dict) else filter_config
-
-    @staticmethod
-    def empty_config():
-        return PhotonPipeConfig(chan_config=ChannelConfig(), ddc_config=DDCConfig(), filter_config=FilterConfig(),
-                                trig_config=TriggerConfig())
-
-    def __str__(self):
-        return (f"PhotonPipe {hash(self)}:\n"
-                f"  Chan: {self.chan_config}\n"
-                f"  DDC: {self.ddc_config}\n"
-                f"  Filt: {self.filter_config}\n"
-                f"  Trig: {self.trig_config}")
-
-
 class FeedlineConfig(_FLMetaconfigMixin):
     @staticmethod
     def empty_config():
         return FeedlineConfig(rfdc_config=RFDCConfig(), if_config=IFConfig(), waveform_config=WaveformConfig(),
-                              pp_config=PhotonPipeConfig.empty_config())
+                              chan_config=ChannelConfig(), ddc_config=DDCConfig(), filter_config=FilterConfig(),
+                              trig_config=TriggerConfig())
 
-    def __init__(self, rfdc_config: (dict, RFDCConfig) = RFDCConfig().empty_config(),
-                 if_config: (dict, IFConfig) = IFConfig(),
-                 waveform_config: (WaveformConfig, dict) = WaveformConfig(),
-                 pp_config: (dict, PhotonPipeConfig) = PhotonPipeConfig.empty_config()):
+    def __init__(self, rfdc_config: (RFDCConfig, dict) = None,
+                 if_config: (IFConfig, dict) = None,
+                 waveform_config: (WaveformConfig, dict) = None,
+                 chan_config: (ChannelConfig, dict) = None,
+                 ddc_config: (DDCConfig, dict) = None,
+                 filter_config: (FilterConfig, dict) = None,
+                 trig_config: (TriggerConfig, dict) = None):
         self.rfdc_config = RFDCConfig(**rfdc_config) if isinstance(rfdc_config, dict) else rfdc_config
         self.if_config = IFConfig(**if_config) if isinstance(if_config, dict) else if_config
         self.waveform_config = WaveformConfig(**waveform_config) if isinstance(waveform_config, dict) else waveform_config
-        self.pp_config = PhotonPipeConfig(**pp_config) if isinstance(pp_config, dict) else pp_config
+        self.chan_config = ChannelConfig(**chan_config) if isinstance(chan_config, dict) else chan_config
+        self.ddc_config = DDCConfig(**ddc_config) if isinstance(ddc_config, dict) else ddc_config
+        self.filter_config = FilterConfig(**filter_config) if isinstance(filter_config, dict) else filter_config
+        self.trig_config = TriggerConfig(**trig_config) if isinstance(trig_config, dict) else trig_config
         # TODO to support captures of less than all groups we need to add a self.capture_setup which has group
         # settings for iq and phase
 
     def __str__(self):
         rfdc = str(self.rfdc_config).replace('\n  ', '\n    ')
-        pp = str(self.pp_config).replace('\n  ', '\n    ')
         return (f"FeedlineConfig {hash(self)}:\n"
                 f"  RFDC: {rfdc}\n"
                 f"  IF: {self.if_config}\n"
                 f"  WVFM: {self.waveform_config}\n"
-                f"  PP: {pp}")
-
+                f"  CC: {self.chan_config}\n"
+                f"  DDC: {self.ddc_config}\n"
+                f"  FC: {self.filter_config}\n"
+                f"  TC: {self.trig_config}")
 
 class FeedlineConfigManager:
     def __init__(self):
