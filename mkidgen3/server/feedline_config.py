@@ -6,8 +6,6 @@ import copy
 from .waveform import WaveformFactory
 
 
-
-
 class _FLConfigMixin:
     _settings = tuple()
 
@@ -284,7 +282,7 @@ class _FLMetaconfigMixin:
     def merge_with(self, other):
         """Adopt the specified values of the other"""
         assert isinstance(other, type(self)), 'other must be of the same type'
-        for (_,v1), (_,v2) in zip(self, other):
+        for (_, v1), (_, v2) in zip(self, other):
             v1.merge_with(v2)
 
     @property
@@ -341,48 +339,31 @@ class _FLMetaconfigMixin:
                     yield k, v
 
 
-class ADCConfig(_FLConfigMixin):
-    _settings = ('mts_enable', 'qmc_gain')
+class BitstreamConfig(_FLConfigMixin):
+    _settings = ('bitstream', 'ignore_version')
 
-    def __init__(self, mts_enable=None, qmc_gain: (float, float) = None, _hashed=None):
+    def __init__(self, bitstream: str | None = None, ignore_version: str | None = None, _hashed=None):
         """
         Args:
-            mts_enable: whether or not to enable MTS synchronization with the ADC Tiles and DAC Tiles
-            qmc_gain: tupe of gain settings for ADC0 and ADC1. 1.0 is no gain. Allowed values (0-2).
+            bitstream: bitstream file name (full path)
+            ignore_version: suppress errors related to differences in IP release verison and what driver expects
             _hashed:
         """
         self._hashed = _hashed
         if self._hashed:
             return
-        self.mts_enable = mts_enable
-        self.qmc_gain = qmc_gain
+        self.bitstream = bitstream
+        self.ignore_version = ignore_version
 
 
-class DACConfig(_FLConfigMixin):
-    _settings = ('mts_enable', 'qmc_gain')
-
-    def __init__(self, mts_enable=None, qmc_gain: (float, float) = None, _hashed=None):
-        """
-        Args:
-            mts_enable: whether or not to enable MTS synchronization with the DAC Tiles
-            qmc_gain: tupe of gain settings for ADC0 and ADC1. 1.0 is no gain. Allowed values (0-2).
-            _hashed:
-        """
-        self._hashed = _hashed
-        if self._hashed:
-            return
-        self.mts_enable = mts_enable
-        self.qmc_gain = qmc_gain
-
-
-class ClockingConfig(_FLConfigMixin):
+class RFDCClockingConfig(_FLConfigMixin):
     _settings = ('programming_key', 'clock_source')
 
-    def __init__(self, programming_key: str | None=None, clock_source: str | None = None, _hashed=None):
+    def __init__(self, programming_key: str | None = None, clock_source: str | None = None, _hashed=None):
         """
         Args:
-            mts_enable: whether or not to enable MTS synchronization with the DAC Tiles
-            qmc_gain: tupe of gain settings for ADC0 and ADC1. 1.0 is no gain. Allowed values (0-2).
+            programming_key: RFDC LMX / LMK programming files
+            clock_source: internal or external 10 MHz source #TODO: this should probably be made a bool
             _hashed:
         """
         self._hashed = _hashed
@@ -392,21 +373,21 @@ class ClockingConfig(_FLConfigMixin):
         self.clock_source = clock_source
 
 
-class RFDCConfig(_FLMetaconfigMixin):
-    def __init__(self, dac_config: (dict, DACConfig) = DACConfig(), adc_config: (dict, ADCConfig) = ADCConfig(), clocking_config: (dict, ClockingConfig) = ClockingConfig()):
-        self.dac_config = DACConfig(**dac_config) if isinstance(dac_config, dict) else dac_config
-        self.adc_config = ADCConfig(**adc_config) if isinstance(adc_config, dict) else adc_config
-        self.clocking_config = ClockingConfig(**clocking_config) if isinstance(clocking_config, dict) else clocking_config
+class RFDCConfig(_FLConfigMixin):
+    _settings = ('qmc', 'mts')
 
-    @staticmethod
-    def empty_config():
-        return RFDCConfig(dac_config=DACConfig(), adc_config=ADCConfig(), clocking_config=ClockingConfig())
-
-    def __str__(self):
-        return (f"RFDC {hash(self)}:\n"
-                f"  DAC: {self.dac_config}\n"
-                f"  ADC: {self.adc_config}\n"
-                f"  Clocking: {self.clocking_config}")
+    def __init__(self, qmc: (float, float, float, float) = None, mts: (bool, bool) = None, _hashed=None):
+        """
+        Args:
+            qmc: ADC and DAC QMC gain settings: (DAC0, DAC1, ADC0, ADC1) 1.0 is no change. Allowed values (0-2).
+            mts: whether mts enable for the DAC (1,0) the ADC and DAC (1,1) or neither (0,0).
+            _hashed:
+        """
+        self._hashed = _hashed
+        if self._hashed:
+            return
+        self.qmc = qmc
+        self.mts = mts
 
 
 class IFConfig(_FLConfigMixin):
@@ -482,7 +463,7 @@ class FilterConfig(_FLConfigMixin):
 class WaveformConfig(_FLConfigMixin):
     _settings = ('waveform',)
 
-    def __init__(self,  _hashed=None, waveform=None):
+    def __init__(self, _hashed=None, waveform=None):
         """
 
         Args:
@@ -501,45 +482,54 @@ class WaveformConfig(_FLConfigMixin):
         self.waveform = waveform
 
     @property
-    def default_channel_config(self)->ChannelConfig:
+    def default_channel_config(self) -> ChannelConfig:
         """A convenience method to get a ChannelConfig using all the waveform's frequencies
         default channel config is not available for tabulated waveforms."""
         return ChannelConfig(frequencies=self.waveform.freqs)
 
+
 class FeedlineConfig(_FLMetaconfigMixin):
     @staticmethod
     def empty_config():
-        return FeedlineConfig(rfdc_config=RFDCConfig(), if_config=IFConfig(), waveform_config=WaveformConfig(),
-                              chan_config=ChannelConfig(), ddc_config=DDCConfig(), filter_config=FilterConfig(),
-                              trig_config=TriggerConfig())
+        return FeedlineConfig(bitstream=BitstreamConfig(), rfdc_clk=RFDCClockingConfig(),
+                              rfdc=RFDCConfig(), if_board=IFConfig(),
+                              waveform=WaveformConfig(), chan=ChannelConfig(),
+                              ddc=DDCConfig(), filter=FilterConfig(),
+                              trig=TriggerConfig())
 
-    def __init__(self, rfdc_config: (RFDCConfig, dict) = None,
-                 if_config: (IFConfig, dict) = None,
-                 waveform_config: (WaveformConfig, dict) = None,
-                 chan_config: (ChannelConfig, dict) = None,
-                 ddc_config: (DDCConfig, dict) = None,
-                 filter_config: (FilterConfig, dict) = None,
-                 trig_config: (TriggerConfig, dict) = None):
-        self.rfdc_config = RFDCConfig(**rfdc_config) if isinstance(rfdc_config, dict) else rfdc_config
-        self.if_config = IFConfig(**if_config) if isinstance(if_config, dict) else if_config
-        self.waveform_config = WaveformConfig(**waveform_config) if isinstance(waveform_config, dict) else waveform_config
-        self.chan_config = ChannelConfig(**chan_config) if isinstance(chan_config, dict) else chan_config
-        self.ddc_config = DDCConfig(**ddc_config) if isinstance(ddc_config, dict) else ddc_config
-        self.filter_config = FilterConfig(**filter_config) if isinstance(filter_config, dict) else filter_config
-        self.trig_config = TriggerConfig(**trig_config) if isinstance(trig_config, dict) else trig_config
+    def __init__(self, bitstream: (BitstreamConfig, dict) = None,
+                 rfdc_clk: (RFDCClockingConfig, dict) = None,
+                 rfdc: (RFDCConfig, dict) = None,
+                 if_board: (IFConfig, dict) = None,
+                 waveform: (WaveformConfig, dict) = None,
+                 chan: (ChannelConfig, dict) = None,
+                 ddc: (DDCConfig, dict) = None,
+                 filter: (FilterConfig, dict) = None,
+                 trig: (TriggerConfig, dict) = None):
+        self.bitstream = BitstreamConfig(**rfdc) if isinstance(bitstream, dict) else bitstream
+        self.rfdc_clk = RFDCClockingConfig(**rfdc) if isinstance(rfdc_clk, dict) else rfdc_clk
+        self.rfdc = RFDCConfig(**rfdc) if isinstance(rfdc, dict) else rfdc
+        self.if_board = IFConfig(**if_board) if isinstance(if_board, dict) else if_board
+        self.waveform = WaveformConfig(**waveform) if isinstance(waveform, dict) else waveform
+        self.chan = ChannelConfig(**chan) if isinstance(chan, dict) else chan
+        self.ddc = DDCConfig(**ddc) if isinstance(ddc, dict) else ddc
+        self.filter = FilterConfig(**filter) if isinstance(filter, dict) else filter
+        self.trig = TriggerConfig(**trig) if isinstance(trig, dict) else trig
         # TODO to support captures of less than all groups we need to add a self.capture_setup which has group
         # settings for iq and phase
 
     def __str__(self):
-        rfdc = str(self.rfdc_config).replace('\n  ', '\n    ')
         return (f"FeedlineConfig {hash(self)}:\n"
-                f"  RFDC: {rfdc}\n"
-                f"  IF: {self.if_config}\n"
-                f"  WVFM: {self.waveform_config}\n"
-                f"  CC: {self.chan_config}\n"
-                f"  DDC: {self.ddc_config}\n"
-                f"  FC: {self.filter_config}\n"
-                f"  TC: {self.trig_config}")
+                f"  BIT: {self.bitstream}\n"
+                f"  CLK: {self.rfdc_clk}\n"
+                f"  RFDC: {self.rfdc}\n"
+                f"  IF: {self.if_board}\n"
+                f"  WVFM: {self.waveform}\n"
+                f"  CC: {self.chan}\n"
+                f"  DDC: {self.ddc}\n"
+                f"  FC: {self.filter}\n"
+                f"  TC: {self.trig}")
+
 
 class FeedlineConfigManager:
     def __init__(self):
@@ -578,7 +568,7 @@ class FeedlineConfigManager:
         #             settings[k].update(v.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True))
         # return FeedlineConfig(**settings)
 
-        #This is a new, much cleaner approach
+        # This is a new, much cleaner approach
         cfg = FeedlineConfig.empty_config()
         for config in self._config.values():
             # This adopts values specified in config (i.e. Nones are skipped). While it later configs set values are
@@ -587,7 +577,7 @@ class FeedlineConfigManager:
 
         return copy.deepcopy(cfg)  # ensure the result doesn't share data!
 
-        #Yet another approach
+        # Yet another approach
         # settings = defaultdict(lambda: dict)  # We need to build up a nested set of dicts to be used as kwargs
         # for config in self._config.values():  # iterate through all the FeedlineConfigs in the pot
         #     specified_settings = config.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True)
@@ -596,7 +586,6 @@ class FeedlineConfigManager:
         #     # the caveat is that if a FLConfig has a setting that is itself a dict
         #     # it should be treated as a value and simple recursion does not allow us to know which it is
         #     ....
-
 
     def pop(self, id) -> bool:
         """

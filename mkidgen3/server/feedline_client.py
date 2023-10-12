@@ -48,11 +48,15 @@ frequencies = []
 coefficients = []
 thresholds= []
 holdoffs = []
-fc = FeedlineConfig(waveform_config=dict(frequencies=None, amplitudes=None, phases=None, iq_ratios=None, phase_offsets=None, maximize_dynamic_range=True),
-                    chan_config=dict(frequencies=frequencies),
-                    ddc_config=dict(tones=None, loop_center=None, phase_offset=None, center_relative=None, quantize=None),
-                    filter_config=dict(coefficients=coefficients),
-                    trig_config=dict(thresholds=thresholds, holdoffs=holdoffs))
+fc = FeedlineConfig(bitstream=dict(bitstream=None, ignore_version=None),
+                    rfdc_clk=dict(programming_key=None, clock_source=None),
+                    rfdc=dict(qmc=None, mts=None),
+                    if_board=dict(lo=None, adc_atten=None, dac_atten=None),
+                    waveform=dict(frequencies=None, amplitudes=None, phases=None, iq_ratios=None, phase_offsets=None, maximize_dynamic_range=True),
+                    chan=dict(frequencies=frequencies),
+                    ddc=dict(tones=None, loop_center=None, phase_offset=None, center_relative=None, quantize=None),
+                    filter=dict(coefficients=coefficients),
+                    trig=dict(thresholds=thresholds, holdoffs=holdoffs))
 cr = CaptureRequest(1337, 'iq', fc)
 cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
 cj.submit()
