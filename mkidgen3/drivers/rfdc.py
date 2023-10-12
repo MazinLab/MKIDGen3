@@ -1,7 +1,7 @@
 from pynq import DefaultHierarchy
 from logging import getLogger
 
-from mkidgen3.clocking import start_clocks
+from mkidgen3.drivers.rfdcclock import configure
 from mkidgen3.mkidpynq import get_board_name
 
 def status():
@@ -48,7 +48,7 @@ class RFDCHierarchy(DefaultHierarchy):
             getLogger(__name__).info('RFDCHierarchy does not support switching ADCs')
 
     def start_clocks(self, external_10mhz=False):
-        start_clocks(external_10mhz)
+        configure(external_10mhz)
 
     def reset(self):
         self.rfdc.write(0x0004, 0x00000001)

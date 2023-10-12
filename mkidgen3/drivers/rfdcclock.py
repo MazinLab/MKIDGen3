@@ -3,6 +3,7 @@ import pkg_resources
 from logging import getLogger
 from mkidgen3.mkidpynq import get_board_name
 
+_clock_reference=None
 
 def _parse_ticspro(file):
     with open(file, 'r') as f:
@@ -49,12 +50,13 @@ def _patch_xrfclk_lmk():
             xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)
 
 
-def start_clocks(programming_key='', ref='file-defined'):
+def configure(programming_key='', ref='file-defined'):
     """
     - 'external_10mhz' pull LMK clock source from 10 MHz Ref (ZCU111 Only for now)
     - '4.096GSPS_MTS' MTS compatible with 4.096 GSPS Sampling Fequency (RFSoC4x2 Only)
     - '5.000GSPS_MTS' MTS compatible with 5.000 GSPS Sampling Frequency (RFSoC4x2 Only)
     """
+    global _clock_reference
     try:
         import xrfclk, xrfdc
     except ImportError:
@@ -91,3 +93,9 @@ def start_clocks(programming_key='', ref='file-defined'):
 
     else:
         raise ValueError('Unknown board name. Cannot proceed with clock programming.')
+
+    _clock_reference=ref
+
+
+def get_clock():
+    return _clock_reference

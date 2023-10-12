@@ -1,4 +1,4 @@
-import mkidgen3.clocking
+import mkidgen3.drivers.rfdcclock
 import mkidgen3 as g3
 import mkidgen3.drivers.rfdc
 from pynq import Overlay
@@ -30,12 +30,12 @@ class FeedlineHardware:
         self._ignore_version = ignore_version
 #        if program_clock:
 #            import mkidgen3.drivers.rfdc
-#            mkidgen3.clocking.start_clocks(clock_source)
+#            mkidgen3.clocking.configure(clock_source)
 
     def reset(self):
         raise NotImplementedError('Reset settings not implemented')
         self._if_board.power_off(save_settings=False)
-        mkidgen3.clocking.start_clocks(self._clock_source)
+        mkidgen3.drivers.rfdcclock.configure(self._clock_source)
         self._ol = Overlay(self._ol.bitfile_name, ignore_version=self._ignore_version, download=True)
         self._if_board.power_on()
 

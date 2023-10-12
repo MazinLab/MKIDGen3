@@ -2,9 +2,8 @@ from logging import getLogger
 import numpy as np
 import time
 
-import mkidgen3.clocking
+import mkidgen3.drivers.rfdcclock
 import mkidgen3.opfb as dsp
-from .drivers.ddc import tone_increments
 from . import util
 
 _gen3_overlay, _frequencies = [None] * 2
@@ -127,7 +126,7 @@ def configure(bitstream, ignore_version=True, clocks=False, programming_key=Fals
     import mkidgen3
 
     if clocks:
-        mkidgen3.clocking.start_clocks(programming_key=programming_key)
+        mkidgen3.drivers.rfdcclock.configure(programming_key=programming_key)
         time.sleep(0.5)  # allow clocks to stabilize before loading overlay
 
     global _gen3_overlay
