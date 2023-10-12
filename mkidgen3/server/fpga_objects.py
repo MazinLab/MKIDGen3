@@ -78,10 +78,24 @@ class FeedlineHardware:
         fl_setup = self.config_manager.add(id, config)
 
         # TODO: we need some sort of conditional apply for BitstreamConfig, RFDCClockingConfig, and RFDCConfig
+        # RFDC Clocking
+        if fl_setup.rfdc_clk is not None:
+            getLogger(__name__).debug(f'Requesting update to RFDC clocking configuration.')
+            #.configure?
+
+        # Bitstream
+        if fl_setup.bitstream is not None:
+            getLogger(__name__).debug(f'Requesting update to bitstream.')
+            #.configure?
+
+        # RFDC
+        if fl_setup.rfdc is not None:
+            getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
+            #.configure?
 
         # IF Board
         if fl_setup.if_board is not None:
-            getLogger(__name__).debug(f'Configure IF Board with {fl_setup.if_board.settings_dict()}')
+            getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             self._if_board.configure(**fl_setup.if_board.settings_dict())
 
         # DAC Replay
