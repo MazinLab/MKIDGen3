@@ -124,9 +124,8 @@ class FeedlineHardware:
         # RFDC
         if fl_setup.rfdc is not None:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
-            #.configure?
-            self._ol.rfdc.enable_mts(*fl_setup.rfdc.mts)
-            self._ol.rfdc.set_qmc(gain=fl_setup.rfdc.qmc_gain)
+            self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
+            self._ol.rfdc.set_qmc(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
         # IF Board
         if fl_setup.if_board is not None:
@@ -278,7 +277,7 @@ class FeedlineHardware:
         finally:
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
-            ol.photon_pipe_trigger_system.photon_maxi.stop_capture()
+            self._ol.photon_pipe_trigger_system.photon_maxi.stop_capture()
             stop.set()
             pipe.close()
             fountain.join()

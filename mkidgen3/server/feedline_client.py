@@ -50,7 +50,7 @@ thresholds= []
 holdoffs = []
 fc = FeedlineConfig(bitstream=dict(bitstream=None, ignore_version=None),
                     rfdc_clk=dict(programming_key=None, clock_source=None),
-                    rfdc=dict(qmc=None, mts=None),
+                    rfdc=dict(dac_mts=True, adc_mts=False, adc_gains=None, dac_gains=None),
                     if_board=dict(lo=None, adc_atten=None, dac_atten=None),
                     waveform=dict(frequencies=None, amplitudes=None, phases=None, iq_ratios=None, phase_offsets=None, maximize_dynamic_range=True),
                     chan=dict(frequencies=frequencies),

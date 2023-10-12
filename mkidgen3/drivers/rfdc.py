@@ -1,3 +1,5 @@
+import logging
+
 import pynq
 from pynq import DefaultHierarchy
 from logging import getLogger
@@ -231,25 +233,9 @@ class RFDCHierarchy(DefaultHierarchy):
             self.rfdc.mts_dac_config.Tiles = 0x0
             self.rfdc.mts_dac_config.SysRef_Enable = 0
 
-    def set_gain(self, gain=1.0, qmc_settings=None):
-        settings = {'EnableGain': 1, 'EnablePhase': 0, 'EventSource': 0, 'GainCorrectionFactor': gain,
-                    'OffsetCorrectionFactor': 0, 'PhaseCorrectionFactor': 0.0}
-
-        if qmc_settings is not None:
-            for k, v in settings.items():
-                settings[k] = qmc_settings.get(k, v)
-
-        import xrfdc
-
-        self.rfdc.dac_tiles[0].blocks[0].QMCSettings = settings
-        self.rfdc.dac_tiles[0].blocks[0].UpdateEvent(xrfdc.EVENT_QMC)
-        self.rfdc.dac_tiles[0].blocks[1].QMCSettings = settings
-        self.rfdc.dac_tiles[0].blocks[1].UpdateEvent(xrfdc.EVENT_QMC)
-
-        self.rfdc.dac_tiles[1].blocks[2].QMCSettings = settings
-        self.rfdc.dac_tiles[1].blocks[2].UpdateEvent(xrfdc.EVENT_QMC)
-        self.rfdc.dac_tiles[1].blocks[3].QMCSettings = settings
-        self.rfdc.dac_tiles[1].blocks[3].UpdateEvent(xrfdc.EVENT_QMC)
+    def set_gain(self, adc_gains=(1.0, 1.0), dac_gains=(1.0,1.0)):
+        getLogger(__name__).info('Pretending to set gain, not currently supported')
+        return
 
     def set_qmc(self, adc=None, dac=None, gain=0.0, offset=0, phase=0.0):
         """
@@ -263,6 +249,8 @@ class RFDCHierarchy(DefaultHierarchy):
 
         Example Usage: set_qmc(adc=(0,1), gain=1.5)
         """
+        getLogger(__name__).info('Pretending to set QMC, not currently supported')
+        return
 
         settings = {'EnableGain': 1 if gain else 0, 'EnablePhase': 1 if phase else 0, 'EventSource': 0,
                     'GainCorrectionFactor': gain, 'OffsetCorrectionFactor': offset, 'PhaseCorrectionFactor': phase}

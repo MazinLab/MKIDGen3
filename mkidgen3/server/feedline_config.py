@@ -374,20 +374,25 @@ class RFDCClockingConfig(_FLConfigMixin):
 
 
 class RFDCConfig(_FLConfigMixin):
-    _settings = ('qmc_gain', 'mts')
+    _settings = ('dac_mts', 'adc_mts', 'adc_gains', 'dac_gains')
 
-    def __init__(self, qmc_gain: (float, float, float, float) = None, mts: (bool, bool) = None, _hashed=None):
+    def __init__(self, dac_mts: bool | None = None, adc_mts: bool | None = None, adc_gains:  (float, float) = None,
+                 dac_gains: (bool, bool) = None, _hashed=None):
         """
         Args:
-            qmc_gain: ADC and DAC QMC gain settings: (DAC0, DAC1, ADC0, ADC1) 1.0 is no change. Allowed values (0-2).
-            mts: whether mts enable for the DAC (1,0) the ADC and DAC (1,1) or neither (0,0).
+            dac_mts: enable dac MTS
+            adc_mts:  enable adc MTS (also enables DAC MTS)
+            adc_gains: ADC0, ADC1. Allowed values 0-2.0
+            dac_gains: DAC0, DAC1. Allowed values 0-2.0
             _hashed:
         """
         self._hashed = _hashed
         if self._hashed:
             return
-        self.qmc_gain = qmc_gain
-        self.mts = mts
+        self.dac_mts = dac_mts
+        self.adc_mts = adc_mts
+        self.adc_gains = adc_gains
+        self.dac_gains = dac_gains
 
 
 class IFConfig(_FLConfigMixin):
