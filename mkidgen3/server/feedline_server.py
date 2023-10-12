@@ -4,7 +4,8 @@ import time
 
 from logging import getLogger
 
-from mkidgen3.server.feedline_client_objects import CaptureRequest, CaptureAbortedException
+from mkidgen3.server.feedline_client_objects import CaptureRequest
+from mkidgen3.server.feedline_config import RFDCConfig
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 from mkidgen3.server.misc import zpipe
 
@@ -45,7 +46,7 @@ class FeedlineReadoutServer:
                  program_clock=True, mts=True, download=False):
         self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
                                          ignore_version=ignore_version, program_clock=program_clock,
-                                         mts=mts, download=download)
+                                         rfdc=RFDCConfig(dac_mts=mts, adc_mts=False), download=download)
 
         self._tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
         self._to_check = []
@@ -270,8 +271,7 @@ class FeedlineReadoutServer:
         context = zmq.Context().instance()
         a, b = zpipe(context)
         cr.set_status('running', f'Started at UTC {datetime.utcnow()}', destablish=True)
-        t = threading.Thread(target=target, name=f"CapThread: {cr.id}",
-                             args=(b, cr, self.hardware), kwargs=dict(context=context))
+        t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, cr), kwargs=dict(context=context))
         t.start()
         self._tap_threads[cr.type] = TapThread(t, a, b, cr)
 

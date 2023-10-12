@@ -30,14 +30,14 @@ class FeedlineHardware:
             if_port:
             ignore_version:
             program_clock:
-            mts: Enable MTS. Cannot be enabled unless until overlay is downloaded.
+            rfdc: Enable MTS. Cannot be enabled unless until overlay is downloaded.
             download:
             clock_source:
         """
 
         self._default_bitstream = BitstreamConfig(bitstream=bitstream, ignore_version=ignore_version)
         self._default_rfdc_clocking = RFDCClockingConfig(programming_key=rfdcclock, clock_source=clock_source)
-        self._default_rfdc = RFDCConfig(qmc_gain=None, mts=(True, False))
+        self._default_rfdc = RFDCConfig(dac_mts=True, adc_mts=True) if rfdc is None else rfdc
 
         self.config_manager = FeedlineConfigManager()
 
