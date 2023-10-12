@@ -16,6 +16,9 @@ from ..mkidpynq import PHOTON_DTYPE
 from typing import Tuple
 
 
+class CaptureAbortedException(Exception):
+    pass
+
 class FRSClient:
     def __init__(self, url: str, command_port: int = 10000, data_port: int = 10001, status_port: int = 10002):
         """

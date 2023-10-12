@@ -342,7 +342,7 @@ class _FLMetaconfigMixin:
 class BitstreamConfig(_FLConfigMixin):
     _settings = ('bitstream', 'ignore_version')
 
-    def __init__(self, bitstream: str | None = None, ignore_version: str | None = None, _hashed=None):
+    def __init__(self, bitstream: str | None = None, ignore_version: bool | None = None, _hashed=None):
         """
         Args:
             bitstream: bitstream file name (full path)
@@ -374,19 +374,19 @@ class RFDCClockingConfig(_FLConfigMixin):
 
 
 class RFDCConfig(_FLConfigMixin):
-    _settings = ('qmc', 'mts')
+    _settings = ('qmc_gain', 'mts')
 
-    def __init__(self, qmc: (float, float, float, float) = None, mts: (bool, bool) = None, _hashed=None):
+    def __init__(self, qmc_gain: (float, float, float, float) = None, mts: (bool, bool) = None, _hashed=None):
         """
         Args:
-            qmc: ADC and DAC QMC gain settings: (DAC0, DAC1, ADC0, ADC1) 1.0 is no change. Allowed values (0-2).
+            qmc_gain: ADC and DAC QMC gain settings: (DAC0, DAC1, ADC0, ADC1) 1.0 is no change. Allowed values (0-2).
             mts: whether mts enable for the DAC (1,0) the ADC and DAC (1,1) or neither (0,0).
             _hashed:
         """
         self._hashed = _hashed
         if self._hashed:
             return
-        self.qmc = qmc
+        self.qmc_gain = qmc_gain
         self.mts = mts
 
 

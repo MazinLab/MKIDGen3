@@ -3,7 +3,8 @@ import pkg_resources
 from logging import getLogger
 from mkidgen3.mkidpynq import get_board_name
 
-_clock_reference=None
+_clock_reference = None
+_source = None
 
 def _parse_ticspro(file):
     with open(file, 'r') as f:
@@ -50,13 +51,24 @@ def _patch_xrfclk_lmk():
             xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)
 
 
-def configure(programming_key='', ref='file-defined'):
+def configure(programming_key: str | None = None, clock_source: str| None = None):
     """
-    - 'external_10mhz' pull LMK clock source from 10 MHz Ref (ZCU111 Only for now)
-    - '4.096GSPS_MTS' MTS compatible with 4.096 GSPS Sampling Fequency (RFSoC4x2 Only)
-    - '5.000GSPS_MTS' MTS compatible with 5.000 GSPS Sampling Frequency (RFSoC4x2 Only)
+
+    Args:
+        programming_key: Ignored on the ZCU111.
+            '4.096GSPS_MTS' MTS compatible with 4.096 GSPS Sampling Fequency (RFSoC4x2 Only)
+            '4.096GSPS_MTS_dualloop'
+            '5.000GSPS_MTS' MTS compatible with 5.000 GSPS Sampling Frequency (RFSoC4x2 Only)
+        clock_source: internal | external | None. External pulls LMK clock source from 10 MHz Ref
+
+    Returns: Nothing
+
     """
-    global _clock_reference
+    global _clock_reference, _source
+
+    programming_key = '' if programming_key is None else programming_key
+    clock_source = 'internal' if clock_source is None else clock_source
+
     try:
         import xrfclk, xrfdc
     except ImportError:
@@ -78,15 +90,15 @@ def configure(programming_key='', ref='file-defined'):
             getLogger(__name__).debug('No programming key specified, defaulting to lmk freq: 245.76 MHz, lmx freq: 409.6 MHz')
             xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=409.6)
         for lmk in xrfclk.lmk_devices:
-            if ref == 'external':
+            if clock_source == 'external':
                 getLogger(__name__).debug('setting lmk to use external 10 MHz reference')
                 xrfclk.xrfclk._write_LMK_regs([0x1470a], lmk)
-            if ref == 'internal':
+            if clock_source == 'internal':
                 getLogger(__name__).debug('setting lmk to use internal 10 MHz reference')
                 xrfclk.xrfclk._write_LMK_regs([0x1471a], lmk)
 
     elif board_name == 'ZCU111':
-        if programming_key == 'external_10mhz':
+        if clock_source == 'external':
             xrfclk.set_ref_clks(lmk_freq='122.88_viaext10M', lmx_freq=409.6)
         else:
             xrfclk.set_ref_clks(lmk_freq=122.88, lmx_freq=409.6)
@@ -94,8 +106,9 @@ def configure(programming_key='', ref='file-defined'):
     else:
         raise ValueError('Unknown board name. Cannot proceed with clock programming.')
 
-    _clock_reference=ref
+    _clock_reference = clock_source
+    _source = programming_key
 
 
 def get_clock():
-    return _clock_reference
+    return _source, _clock_reference

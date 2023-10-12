@@ -4,7 +4,7 @@ import time
 
 from logging import getLogger
 
-from mkidgen3.server.feedline_client_objects import CaptureRequest
+from mkidgen3.server.feedline_client_objects import CaptureRequest, CaptureAbortedException
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 from mkidgen3.server.misc import zpipe
 
@@ -69,193 +69,6 @@ class FeedlineReadoutServer:
 
     def _pending_captures(self):
         return tuple([cr.id for cr in self._checked+self._to_check])
-
-    @staticmethod
-    def plram_cap(pipe, cr: CaptureRequest, frhardware: FeedlineHardware, context=None):
-        """
-
-        Args:
-            pipe:
-            context:
-            cr: A CaptureRequest object
-            frhardware: A FeedlineHardware with the firmware bitstream loaded, assumed to be thread safe
-
-        Returns: None
-
-        """
-        ol = frhardware._ol
-        failmsg = ''
-        try:
-            assert cr.type == 'engineering', 'Incorrect capture request type'
-            assert ol.capture.ready(), 'Capture Subsystem is busy'
-        except AssertionError as e:
-            failmsg = str(e)
-
-        try:
-            cr.establish(context=context)
-        except zmq.ZMQError as e:
-            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
-
-        if failmsg:
-            getLogger(__name__).error(failmsg)
-            try:
-                cr.fail(failmsg)
-                cr.destablish()
-            except zmq.ZMQError as ez:
-                getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
-            return
-
-        nchunks = cr.size_bytes // CHUNKING_THRESHOLD
-        partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
-        chunks = [CHUNKING_THRESHOLD] * nchunks
-        if partial:
-            chunks.append(partial)
-
-        try:
-            for i, csize in enumerate(chunks):
-                try:
-                    abort = pipe.recv(zmq.NOBLOCK)
-                    raise CaptureAbortedException(abort)
-                except zmq.ZMQError as e:
-                    if e.errno != zmq.EAGAIN:
-                        raise
-                data = ol.capture.capture(csize, tap=cr.tap, wait=True)
-                cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
-                data.free_buffer()
-            cr.finish()
-        except CaptureAbortedException as e:
-            cr.abort(e)
-        except Exception as e:
-            getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            cr.fail(f'Aborted due to {e}', raise_exception=False)
-        finally:
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
-        pipe.close()
-
-    @staticmethod
-    def photon_cap(pipe: zmq.Socket, cr: CaptureRequest, frhardware: FeedlineHardware, context=None):
-        """
-        #TODO should this be a instance method of FeedlineHardware?
-        pipe: a zme pair pipe to detect abort
-        cr: the capture request
-        ol: the overlay
-        """
-        ol = frhardware._ol
-        failmsg = ''
-        photon_maxi = ol.photon_pipe.trigger_system.photon_maxi
-        try:
-            assert cr.type == 'photon', 'Incorrect capture request type'
-        except AssertionError as e:
-            failmsg = str(e)
-
-        try:
-            cr.establish(context=context)
-        except zmq.ZMQError as e:
-            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
-
-        if failmsg:
-            getLogger(__name__).error(failmsg)
-            try:
-                cr.fail(failmsg)
-                cr.destablish()
-            except zmq.ZMQError as ez:
-                getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
-            return
-
-        q, q_other = zpipe(zmq.Context.instance())
-        # q = queue.SimpleQueue()  #an alternative
-        fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=False)
-
-        def photon_sender(q: zmq.Socket, cr, unpack=False):
-            log = getLogger(__name__)
-            try:
-                while True:
-                    log.info(f'iter start')
-                    photons = q.recv_pyobj()
-                    log.info(f'received')
-                    if photons is None:
-                        cr.finish()
-                        break
-                    cr.send_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False)
-            except Exception as e:
-                cr.abort(f'Uncaught exception: {e}')
-                q.close()
-                raise e
-            log.info(f'done')
-
-        sender = threading.Thread(target=photon_sender, args=(q, cr))
-
-        try:
-            sender.start()
-            fountain.start()
-            photon_maxi.capture(buffer_time_ms=cr.nsamp)  # todo: add support for setting the latency via the request?
-            while not cr.completed:
-                try:
-                    abort = pipe.recv(zmq.NOBLOCK)
-                    raise CaptureAbortedException(abort)
-                except zmq.ZMQError as e:
-                    if e.errno != zmq.EAGAIN:
-                        raise
-        except CaptureAbortedException as e:
-            stop.set()  # sender will finish up the CR
-        except Exception as e:
-            getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            stop.set()
-            cr.fail(f'Failed due to {e}')
-        finally:
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
-            ol.photon_pipe_trigger_system.photon_maxi.stop_capture()
-            stop.set()
-            pipe.close()
-            fountain.join()
-            sender.join()
-            if isinstance(q, zmq.Socket):
-                q.close()
-
-    @staticmethod
-    def stamp_cap(pipe: zmq.Socket, context: zmq.Context, cr: CaptureRequest, frhardware:FeedlineHardware):
-        failmsg = ''
-        ol =  frhardware._ol
-        postage_maxi = ol.photon_pipe.trigger_system.postage_maxi
-        try:
-            assert cr.type == 'postage', 'Incorrect capture request type'
-            assert postage_maxi.register_map.AP_CTRL_AP_IDLE == 1, 'Postage MAXI is busy'
-        except AssertionError as e:
-            failmsg = str(e)
-
-        try:
-            cr.establish(context=context)
-        except zmq.ZMQError as e:
-            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
-
-        if failmsg:
-            getLogger(__name__).error(failmsg)
-            cr.fail(failmsg, raise_exception=False)
-            return
-
-        try:
-            postage_maxi.capture()
-            while not postage_maxi.interrupt.is_set():
-                try:
-                    abort = pipe.recv(zmq.NOBLOCK)
-                    raise CaptureAbortedException(abort)
-                except zmq.ZMQError as e:
-                    if e.errno != zmq.EAGAIN:
-                        raise
-                time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
-            cr.send_data(postage_maxi.get_postage(raw=False, scaled=True), copy=False)
-            cr.finish()
-        except CaptureAbortedException as e:
-            cr.abort(e, raise_exception=False)
-        except Exception as e:
-            getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            cr.fail(f'Failed due to {e}', raise_exception=False)
-        finally:
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
-            pipe.close()
 
     def _abort_all(self, join=False, reason='Abort all', raisezmqerror=True):
         for cr in self._checked + self._to_check:
@@ -344,8 +157,8 @@ class FeedlineReadoutServer:
         enqueued.
 
         Args:
-            zpipe: a pipe for receiving capture requests
-            conext: zmq.Context
+            pipe: a pipe for receiving capture requests
+            context: zmq.Context
 
         Returns: None
 
@@ -451,7 +264,8 @@ class FeedlineReadoutServer:
 
         """
         assert self._tap_threads.get(cr.type, None) is None, 'Only one TapThread per location may be created at a time'
-        cap_runners = {'engineering': self.plram_cap, 'photon': self.photon_cap, 'stamp': self.stamp_cap}
+        cap_runners = {'engineering': self.hardware.plram_cap, 'photon': self.hardware.photon_cap,
+                       'stamp': self.hardware.stamp_cap}
         target = cap_runners[cr.type]
         context = zmq.Context().instance()
         a, b = zpipe(context)
@@ -583,7 +397,3 @@ if __name__ == '__main__':
     thread.join()
     socket.close()
     context.term()
-
-
-class CaptureAbortedException(Exception):
-    pass
