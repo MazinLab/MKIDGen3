@@ -11,13 +11,11 @@ from mkidgen3.server.misc import zpipe
 import asyncio
 import zmq
 import threading
-import mkidgen3.server.feedline_config
+from mkidgen3.util import setup_logging
 from datetime import datetime
 import argparse
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
-
-CHUNKING_THRESHOLD = 1024 ** 2
 
 
 class TapThread:
@@ -333,7 +331,7 @@ def start_zmq_devices(cap_addr, stat_addr):
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
+    setup_logging('feedlinereadoutserver')
 
     args = parse_cl()
     context = zmq.Context.instance()

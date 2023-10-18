@@ -1,8 +1,8 @@
-import pkg_resources
-import os
-import yaml
 import logging.config
 import numpy as np
+import os
+import yaml
+import importlib.resources
 
 
 def buf2complex(b, free=True, unsigned=False, floating=True):
@@ -36,12 +36,12 @@ def set_anritsu(f):
 
 
 def setup_logging(name):
-    path = pkg_resources.resource_filename('mkidgen3', 'config/logging.yaml')
-    if os.path.exists(path):
-        with open(path, 'rt') as f:
-            config = yaml.safe_load(f.read())
-    else:
-        return
+    ref = importlib.resources.files('mkidgen3.config').joinpath('logging.yaml')
+    with importlib.resources.as_file(ref) as path:
+        if os.path.exists(path):
+            with open(path, 'rt') as f:
+                config = yaml.safe_load(f.read())
+
     # postprocess loggers dict
     # keys are program names values are either
     #   1) a level for the log of the program
@@ -63,7 +63,6 @@ def setup_logging(name):
         config['loggers'] = loggers
 
     logging.config.dictConfig(config)
-
     return logging.getLogger(name)
 
 
