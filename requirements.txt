@@ -2,3 +2,5 @@ fpbinary
 pyserial
 numpy
 pynq
+blosc2
+pyzmq
