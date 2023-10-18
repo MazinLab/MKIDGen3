@@ -143,7 +143,7 @@ class FeedlineHardware:
             self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.chan.settings_dict())
             # DDC
         if fl_setup.ddc is not None:
-            self._ol.photon_pipe.reschan.ddc.configure(**fl_setup.ddc.settings_dict())
+            self._ol.photon_pipe.reschan.ddccontrol_0.configure(**fl_setup.ddc.settings_dict())
             # Matched Filters
         if fl_setup.filter is not None:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.filter.settings_dict())
