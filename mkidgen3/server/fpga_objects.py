@@ -137,7 +137,7 @@ class FeedlineHardware:
         # DAC Replay
         if fl_setup.waveform is not None:
             getLogger(__name__).debug(f'Configure DAC with {fl_setup.waveform.settings_dict()}')
-            self._ol.dac_replay.configure(**fl_setup.waveform.settings_dict())
+            self._ol.dac_table.configure(**fl_setup.waveform.settings_dict())
 
         if fl_setup.chan is not None:
             self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.chan.settings_dict())
