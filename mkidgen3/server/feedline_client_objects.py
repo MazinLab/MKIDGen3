@@ -5,6 +5,7 @@ import numpy as np
 import zmq
 import blosc2
 from typing import List
+from npy_append_array import NpyAppendArray
 from logging import getLogger
 import os
 from hashlib import md5
@@ -54,7 +55,7 @@ class CaptureRequest:
     DATA_ENDPOINT = 'inproc://cap_data.xsub'
     FINAL_STATUSES = ('finished', 'aborted', 'failed')
 
-    def __init__(self, n, tap: str, feedline_config: FeedlineConfig, feedline_server: FRSClient):
+    def __init__(self, n, tap: str, feedline_config: FeedlineConfig, feedline_server: FRSClient, file:str=None):
         self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
         self.tap = tap  # maybe add some error handling here
@@ -63,9 +64,10 @@ class CaptureRequest:
         self._status_socket = None
         self._data_socket = None
         self._established = False
+        self.data_endpoint = file or type(self).DATA_ENDPOINT
 
     def __hash__(self):
-        return int(md5(str((hash(self.feedline_config), self.tap,
+        return int(md5(str((hash(self.feedline_config), self.tap, self.data_endpoint,
                             self.nsamp, self.server.command_url)).encode()).hexdigest(), 16)
 
     def __del__(self):
@@ -90,11 +92,19 @@ class CaptureRequest:
         return str(hash(self)).encode()
 
     def establish(self, context: zmq.Context = None):
+        """
+        Open up the outbound sockets for status and data. If data is going to a file, verify it ca be opened for writing and close it
+        """
         context = context or zmq.Context.instance()
         self._status_socket = context.socket(zmq.PUB)
         self._status_socket.connect(self.STATUS_ENDPOINT)
+        if self.data_endpoint.startswith('file://'):
+            try:
+                open(self.data_endpoint.lstrip('file://'),'w').close()
+            except IOError:
+                raise
         self._data_socket = context.socket(zmq.PUB)
-        self._data_socket.connect(self.DATA_ENDPOINT)
+        self._data_socket.connect(self.data_endpoint)
         self._send_status('established')
 
     def destablish(self):
@@ -146,11 +156,28 @@ class CaptureRequest:
                 raise ez
 
     def send_data(self, data, status='', copy=False):
-        if not self._data_socket or not self._status_socket:
-            raise RuntimeError('Establish must be called before send_data')
+        """
         # TODO ensure we are being smart about pointers and buffer access vs copys
-
         # TODO how do we ship the various data formats?
+        Args:
+            data: the data to be shipped
+            status: a status update
+            copy: copy the array first
+
+        Returns: None
+
+        """
+
+        if not self._status_socket:
+            raise RuntimeError('Status socket is not established.')
+        if self.data_endpoint.startswith('file:\\'):
+            with NpyAppendArray(self.data_endpoint.lstrip('file:\\'), delete_if_exists=False) as x:
+                x.append(data)
+            self._send_status('capturing', status)
+            return
+        elif not self._data_socket:
+            raise RuntimeError('Data socket is not established.')
+
         if not isinstance(data, np.ndarray):
             data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
         elif copy:
