@@ -1,3 +1,4 @@
+import asyncio
 import copy
 
 import mkidgen3.drivers.rfdcclock
@@ -49,7 +50,7 @@ class FeedlineHardware:
             self._ol = pynq.Overlay(self._default_bitstream.bitstream,
                                     ignore_version=self._default_bitstream.ignore_version, download=download)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
-
+            # asyncio.get_event_loop()
             if download:
                 self._ol.rfdc.enable_mts(*self._default_rfdc.mts)
 
@@ -123,7 +124,7 @@ class FeedlineHardware:
         if fl_setup.rfdc is not None:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
             self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
-            self._ol.rfdc.set_qmc(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
+            self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
         # IF Board
         if fl_setup.if_board is not None:
@@ -161,12 +162,23 @@ class FeedlineHardware:
         Returns: None
 
         """
+        try:
+            aio_eloop = asyncio.get_running_loop()
+        except RuntimeError:
+            aio_eloop = asyncio.new_event_loop()
+            t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
+            # t.start()
+        asyncio.set_event_loop(aio_eloop)
+        # assert aio_eloop.is_running()
+
         failmsg = ''
         try:
             assert cr.type == 'engineering', 'Incorrect capture request type'
             assert self._ol.capture.ready(), 'Capture Subsystem is busy'
         except AssertionError as e:
             failmsg = str(e)
+        except AttributeError as e:
+            failmsg = f'Something is fundamentally wrong. Check your bitstream. ({str(e)})'
 
         try:
             cr.establish(context=context)
@@ -176,14 +188,16 @@ class FeedlineHardware:
         if failmsg:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
+            aio_eloop.close()
             return
+
         CHUNKING_THRESHOLD = 256*1024**3
         nchunks = cr.size_bytes // CHUNKING_THRESHOLD
         partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
         chunks = [CHUNKING_THRESHOLD] * nchunks
         if partial:
             chunks.append(partial)
-
+        getLogger(__name__).debug(f'Beginning plram capture loop of {enumerate(chunks)} chunck(s) at {cr.tap}')
         try:
             for i, csize in enumerate(chunks):
                 try:
@@ -205,6 +219,7 @@ class FeedlineHardware:
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
         pipe.close()
+        aio_eloop.close()
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
         """

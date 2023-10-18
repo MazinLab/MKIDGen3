@@ -8,7 +8,7 @@ from mkidgen3.server.feedline_client_objects import CaptureRequest
 from mkidgen3.server.feedline_config import RFDCConfig
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 from mkidgen3.server.misc import zpipe
-
+import asyncio
 import zmq
 import threading
 import mkidgen3.server.feedline_config
@@ -112,7 +112,7 @@ class FeedlineReadoutServer:
     def create_capture_handler(self, start=True, daemon=False, context: zmq.Context = None):
         self._cap_pipe, cap_pipe_thread = zpipe(context or zmq.Context.instance())
 
-        thread = threading.Thread(name='CaptureHandler', target=self._main, args=(cap_pipe_thread,),
+        thread = threading.Thread(name='FRS Capture Request Handler', target=self._main, args=(cap_pipe_thread,),
                                   kwargs={'context': context}, daemon=daemon)
         if start:
             thread.start()
@@ -165,6 +165,15 @@ class FeedlineReadoutServer:
 
         """
         context = context or zmq.Context().instance()
+
+
+        try:
+            aio_eloop = asyncio.get_running_loop()
+        except RuntimeError:
+            aio_eloop = asyncio.new_event_loop()
+            t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
+            # t.start()
+        asyncio.set_event_loop(aio_eloop)
 
         getLogger(__name__).info('Main thread starting')
         while True:
@@ -250,9 +259,9 @@ class FeedlineReadoutServer:
 
             self.start_tap_thread(cr)
 
-        getLogger(__name__).info('Capture thread exiting')
+        aio_eloop.close()
         pipe.close()
-        context.term()
+        getLogger(__name__).info('Capture thread exiting')
 
     def start_tap_thread(self, cr):
         """
