@@ -176,7 +176,7 @@ class FeedlineHardware:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
             return
-
+        CHUNKING_THRESHOLD = 256*1024**3
         nchunks = cr.size_bytes // CHUNKING_THRESHOLD
         partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
         chunks = [CHUNKING_THRESHOLD] * nchunks

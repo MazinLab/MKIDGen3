@@ -10,11 +10,11 @@ from mkidgen3.server.waveform import WaveformFactory
 # cap data 8889
 # cap status 9000
 
-feedline_server = 'tcp://rfsoc4x2b.physics.ucsb.edu:8888'
-capture_data_server = 'tcp://rfsoc4x2b.physics.ucsb.edu:8889'
-status_server = 'tcp://rfsoc4x2b.physics.ucsb.edu:8890'
+feedline_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8888'
+capture_data_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8889'
+status_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8890'
 
-frs = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
+frs = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 
 bitstream = BitstreamConfig(bitstream='/home/xilinx/gen3_top.bit', ignore_version=True)
 rfdc_clk = RFDCClockingConfig(programming_key='4.096GSPS_MTS_dualloop', clock_source=None) # clock source should default to external 10 MHz

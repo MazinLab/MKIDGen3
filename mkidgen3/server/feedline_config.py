@@ -88,6 +88,8 @@ class _FLConfigMixin:
 
     def merge_with(self, other):
         """Adopt the specified values of the other"""
+        if other is None:
+            return
         assert isinstance(other, type(self)), 'other must be of the same type'
         assert not self.is_hashed and not other.is_hashed, 'Hashed FLConfigs can not be merged'
         for k in self._settings:
@@ -281,6 +283,8 @@ class _FLMetaconfigMixin:
 
     def merge_with(self, other):
         """Adopt the specified values of the other"""
+        if other is None:
+            return
         assert isinstance(other, type(self)), 'other must be of the same type'
         for (_, v1), (_, v2) in zip(self, other):
             v1.merge_with(v2)
