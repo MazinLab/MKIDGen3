@@ -117,9 +117,7 @@ class FeedlineHardware:
                 x = copy.deepcopy(self._default_bitstream)
                 x.merge_with(fl_setup.bitstream)
 
-            self._if_board.power_off(save_settings=False)
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
-            self._if_board.power_on()
 
         # RFDC
         if fl_setup.rfdc is not None:
@@ -130,7 +128,10 @@ class FeedlineHardware:
         # IF Board
         if fl_setup.if_board is not None:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
-            self._if_board.configure(**fl_setup.if_board.settings_dict())
+            try:
+                self._if_board.configure(**fl_setup.if_board.settings_dict())
+            except Exception as e:
+                getLogger(__name__).warning(f"Unable to connect to IF board: {e}, proceeding without IF board.")
 
         # DAC Replay
         if fl_setup.waveform is not None:
