@@ -65,6 +65,9 @@ class FreqlistWaveform(Waveform):
         if compute:
             self.output_waveform
 
+    def __str__(self):
+        return f'FreqlistWaveform: TODO Info here'
+
     @property
     def _values(self):
         if self.__values is None:
