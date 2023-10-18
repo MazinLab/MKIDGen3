@@ -72,8 +72,9 @@ class SerialDevice:
             getLogger(__name__).debug(f"port {self.port} connection established")
             return True
         except (serial.SerialException, IOError) as e:
-            getLogger(__name__).error(f"Connecting to port {self.port} failed: {e}, will attempt disconnect.")
-            self.disconnect()
+            getLogger(__name__).error(f"Connecting to port {self.port} failed: {str(e)}, will attempt disconnect.")
+            if self.ser is not None:
+                self.disconnect()
             if raise_errors:
                 raise e
             return False

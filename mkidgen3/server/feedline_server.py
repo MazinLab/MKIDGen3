@@ -296,8 +296,8 @@ def parse_cl():
     parser.add_argument('-b', '--bitstream', dest='bitstream', action='store', required=False, type=str,
                         help='bitstream file',
                         default=DEFAULT_BIT_FILE)
-    parser.add_argument('--if', dest='if_board', action='store', required=False, type=str,
-                        help='IF Board device', default='/dev/if_board')
+    parser.add_argument('--if', dest='ifboard', action='store', required=False, type=str,
+                        help='IF Board device', default='/dev/ifboard')
     parser.add_argument('--iv', dest='ignore_fpga_driver_version', action='store_true', required=False,
                         help='Ignore FPGA driver version checks', default=False)
     return parser.parse_args()
@@ -337,7 +337,7 @@ if __name__ == '__main__':
     context = zmq.Context.instance()
     context.linger = 0
 
-    fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.if_board,
+    fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.ifboard,
                          ignore_version=args.ignore_fpga_driver_version)
 
     # Set up proxies for routing all the capture data and status
