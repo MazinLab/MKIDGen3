@@ -69,9 +69,15 @@ class FeedlineReadoutServer:
     def _pending_captures(self):
         return tuple([cr.id for cr in self._checked+self._to_check])
 
-    def _abort_all(self, join=False, reason='Abort all', raisezmqerror=True):
-        for cr in self._checked + self._to_check:
+    def _abort_all(self, join=False, reason='Abort all', raisezmqerror=True, also:tuple|list|CaptureRequest=tuple()):
+        toabort=self._checked + self._to_check
+        if isinstance(also, CaptureRequest):
+            also = [also]
+        toabort.extend(also)
+        for cr in toabort:
+            cr.establish()
             cr.abort(reason)  # signal that captures will never happen
+            cr.destablish()
         self._checked, self._to_check = [], []
         # stop any running tap threads
         for tt in (tt for tt in self._tap_threads.values() if tt is not None):
@@ -164,7 +170,6 @@ class FeedlineReadoutServer:
         """
         context = context or zmq.Context().instance()
 
-
         try:
             aio_eloop = asyncio.get_running_loop()
         except RuntimeError:
@@ -252,7 +257,7 @@ class FeedlineReadoutServer:
                 self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
                 getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
-                self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False)
+                self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False, also=cr)
                 break
 
             self.start_tap_thread(cr)
