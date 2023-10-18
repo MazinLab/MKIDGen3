@@ -95,6 +95,9 @@ class CaptureRequest:
         """
         Open up the outbound sockets for status and data. If data is going to a file, verify it ca be opened for writing and close it
         """
+        if self._status_socket is not None or self._data_socket is not None:
+            getLogger(__name__).warning(f'{self} already established')
+            return
         context = context or zmq.Context.instance()
         self._status_socket = context.socket(zmq.PUB)
         self._status_socket.connect(self.STATUS_ENDPOINT)
