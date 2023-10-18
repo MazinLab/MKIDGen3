@@ -48,7 +48,7 @@ class FeedlineHardware:
         try:
             self._ol = pynq.Overlay(self._default_bitstream.bitstream,
                                     ignore_version=self._default_bitstream.ignore_version, download=download)
-            mkidgen3.quirks.Overlay.post_configure()
+            mkidgen3.quirks.Overlay(self._ol).post_configure()
 
             if download:
                 self._ol.rfdc.enable_mts(*self._default_rfdc.mts)
@@ -149,14 +149,13 @@ class FeedlineHardware:
         if fl_setup.trig is not None:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.trig.settings_dict())
 
-    def plram_cap(self, CHUNKING_THRESHOLD, pipe, cr: CaptureRequest, context=None):
+    def plram_cap(self, pipe, cr: CaptureRequest, context=None):
         """
 
         Args:
-            pipe:
+            pipe: An inproc
             context:
             cr: A CaptureRequest object
-            frhardware: A FeedlineHardware with the firmware bitstream loaded, assumed to be thread safe
 
         Returns: None
 
@@ -285,7 +284,7 @@ class FeedlineHardware:
             if isinstance(q, zmq.Socket):
                 q.close()
 
-    def stamp_cap(self, pipe: zmq.Socket, context: zmq.Context, cr: CaptureRequest):
+    def stamp_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context=None):
         failmsg = ''
         postage_maxi = self._ol.photon_pipe.trigger_system.postage_maxi
         try:
