@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="feedline_server_remote" type="PythonConfigurationType" factoryName="Python">
+  <configuration default="false" name="FRSRFSoCb" type="PythonConfigurationType" factoryName="Python">
     <module name="MKIDGen3" />
     <option name="INTERPRETER_OPTIONS" value="" />
     <option name="PARENT_ENVS" value="true" />
@@ -9,7 +9,7 @@
       <env name="XILINX_XRT" value="/usr" />
     </envs>
     <option name="SDK_HOME" value="sftp://xilinx@rfsoc4x2b.physics.ucsb.edu:22/usr/local/share/pynq-venv/bin/python" />
-    <option name="SDK_NAME" value="Remote Python 3.10.4 (sftp://xilinx@rfsoc4x2b.physics.ucsb.edu:22/usr/local/share/pynq-venv/bin/python)" />
+    <option name="SDK_NAME" value="RFSoC b 3.10.4" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/mkidgen3/server" />
     <option name="IS_MODULE_SDK" value="false" />
     <option name="ADD_CONTENT_ROOTS" value="false" />
