@@ -185,7 +185,8 @@ class IFBoard(SerialDevice):
 
         Raises IOError on com failure, ValueError on invalid value or setting failure.
         """
-        current = [self.attens[v] for v in ('dac1', 'dac2', 'adc1', 'adc2')]
+        attens = self.attens
+        current = [attens[v] for v in ('dac1', 'dac2', 'adc1', 'adc2')]
 
         if not isinstance(input_attens, (tuple, list)):
             x = min(input_attens, 2 * MAX_IN_ATTEN)
