@@ -48,6 +48,9 @@ class SerialDevice:
         """
         pass
 
+    def connected(self):
+        return True if self.ser is not None and self.ser.isOpen() else False
+
     def connect(self, reconnect=False, raise_errors=True):
         """
         Connect to a serial port. If reconnect is True, closes the port first and then tries to reopen it. First asks
@@ -64,15 +67,16 @@ class SerialDevice:
         except Exception:
             pass
 
-        getLogger(__name__).debug(f"Connecting to {self.port} at {self.baudrate}")
+        log=getLogger(__name__).getChild('io')
+        log.debug(f"Connecting to {self.port} at {self.baudrate}")
         try:
             self._preconnect()
             self.ser = serial.Serial(port=self.port, baudrate=self.baudrate, timeout=self.timeout)
             self._postconnect()
-            getLogger(__name__).debug(f"port {self.port} connection established")
+            log.debug(f"port {self.port} connection established")
             return True
         except (serial.SerialException, IOError) as e:
-            getLogger(__name__).error(f"Connecting to port {self.port} failed: {str(e)}, will attempt disconnect.")
+            log.error(f"Connecting to port {self.port} failed: {str(e)}, will attempt disconnect.")
             if self.ser is not None:
                 self.disconnect()
             if raise_errors:
@@ -89,7 +93,7 @@ class SerialDevice:
             self.ser.close()
             self.ser = None
         except Exception as e:
-            getLogger(__name__).info(f"Exception during disconnect: {e}")
+            getLogger(__name__).getChild('io').info(f"Exception during disconnect: {e}")
 
     def format_msg(self, msg: str):
         """Subclass may implement to apply hardware specific formatting"""
@@ -155,6 +159,10 @@ class IFBoard(SerialDevice):
         self.rebooted = None
         if connect:
             self.connect(raise_errors=False)
+
+    def __str__(self):
+        con= 'Connected' if self.connected() else 'Disconnected'
+        return f'{self.port}@{self.baudrate} ({con})'
 
     def set_lo(self, freq_mhz, fractional: bool = True, full_calibration=True, g2_mode=False):
         try:
@@ -290,6 +298,7 @@ class IFBoard(SerialDevice):
         pass
 
     def configure(self, lo=None, dac_attn=None, adc_attn=None):
+        getLogger(__name__).info(f'Configuring {self} to lo={lo} DAC Atten:{dac_attn} ADC Atten: {adc_attn}')
         self.power_on()
         self.set_lo(lo)
         self.set_attens(dac_attn, adc_attn)
