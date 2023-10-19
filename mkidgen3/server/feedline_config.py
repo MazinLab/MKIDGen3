@@ -542,6 +542,7 @@ class FeedlineConfigManager:
     def __init__(self):
         self._config = {}
         self._cache = {}
+        self._current = FeedlineConfig()
 
     def learn(self, config: FeedlineConfig):
         """Commit configuration info to memory for later use, hashed configurations do not add to knowledge"""
@@ -631,8 +632,9 @@ class FeedlineConfigManager:
         if self.unlearned_hashes(config):
             raise ValueError('Config contains unlearned hashes')
 
-        old = self.required()
-        if not old.compatible_with(config):
+        required = self.required()
+        old = self._current
+        if not required.compatible_with(config):
             raise ValueError('Proposed settings not compatible with required settings')
         self._config[id] = config
         new = self.required()
@@ -657,4 +659,7 @@ class FeedlineConfigManager:
                 setattr(new, k, None)
             else:
                 setattr(new, k, ov.deltafy(v))
+
+        self._current.merge_with(new)
+
         return new
