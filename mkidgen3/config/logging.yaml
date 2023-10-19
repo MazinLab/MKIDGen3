@@ -2,6 +2,7 @@ loggers:
   feedlinereadoutserver:
     pynq: INFO
     mkidgen3: DEBUG
+    mkidgen3.drivers.ifboard.io: INFO
     "":
       handlers: [ default ]
       level: WARNING

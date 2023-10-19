@@ -333,13 +333,13 @@ class StreamCaptureSink(CaptureSink):
     def _finalize_data(self):
         # raw adc data is i0q0 i1q1 int16
         size = len(self._buf) / 2  # n int16
-        n = size // np.prod(self._expected_buffer_shape[1:])
+        n = int(size // np.prod(self._expected_buffer_shape[1:]))
         shape = (min(n, self._expected_buffer_shape[0]),) + self._expected_buffer_shape[1:]
         if n > self._expected_buffer_shape[0]:
             getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}')
         elif n < self._expected_buffer_shape[0]:
             getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}')
-        # TODO this would technically be a memory leak if we captured more data
+        # TODO this might technically be a memory leak if we captured more data
         self.result = np.frombuffer(self._buf, count=np.prod(shape, dtype=int), dtype=np.int16).reshape(shape).squeeze()
 
 
