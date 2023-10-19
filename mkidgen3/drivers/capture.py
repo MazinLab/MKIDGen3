@@ -266,6 +266,20 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.len = n
         self.axis2mm.start(continuous=False, increment=True)
 
+    def is_ready(self):
+        return self.axis2mm.ready
+
+    def capture(self, n, tap):
+        if tap in (self.IQ_MAP):
+            return self.capture_iq(n,tap_location=tap,duration=False, groups='all')
+        elif tap in self.PHASE_MAP:
+            return self.capture_phase(n, tap_location=tap, duration=False, groups='all')
+        elif tap=='adc':
+            return self.capture_adc(n, complex=False, sleep=True, use_interrupt=False, duration=False)
+        else:
+            valid = ('adc',)+tuple(self.IQ_MAP.keys())+tuple(self.PHASE_MAP.keys())
+            raise ValueError(f'{tap} is not a valid capture location from {valid}')
+
     def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP

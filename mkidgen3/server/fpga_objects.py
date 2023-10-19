@@ -119,6 +119,7 @@ class FeedlineHardware:
                 x.merge_with(fl_setup.bitstream)
 
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
+            mkidgen3.quirks.Overlay(self._ol).post_configure()
 
         # RFDC
         if fl_setup.rfdc is not None:
@@ -174,7 +175,7 @@ class FeedlineHardware:
         failmsg = ''
         try:
             assert cr.type == 'engineering', 'Incorrect capture request type'
-            assert self._ol.capture.ready(), 'Capture Subsystem is busy'
+            assert self._ol.capture.is_ready(), 'Capture Subsystem is busy'
         except AssertionError as e:
             failmsg = str(e)
         except AttributeError as e:
@@ -206,7 +207,7 @@ class FeedlineHardware:
                 except zmq.ZMQError as e:
                     if e.errno != zmq.EAGAIN:
                         raise
-                data = self._ol.capture.capture(csize, tap=cr.tap, wait=True)
+                data = self._ol.capture.capture(csize, cr.tap)
                 cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
                 data.free_buffer()
             cr.finish()
