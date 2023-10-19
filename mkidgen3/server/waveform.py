@@ -23,6 +23,9 @@ class TabulatedWaveform(Waveform):
         self._fpgen = None
         self._sample_rate = sample_rate
 
+    def __str__(self):
+        return f'TabulatedWaveform with fpgen {self._fpgen}'
+
 class FreqlistWaveform(Waveform):
     def __init__(self, frequencies=None, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
                  iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
@@ -66,7 +69,16 @@ class FreqlistWaveform(Waveform):
             self.output_waveform
 
     def __str__(self):
-        return f'FreqlistWaveform: TODO Info here'
+        preview_dict = {'freqs':self.freqs, 'amps':self.amps, 'phases': self.phases,
+                        'iq_ratios': self.iq_ratios, 'phase_offsets': self.phase_offsets,
+                        'quant_error': self.quant_error}
+        for key, value  in preview_dict.items():
+            if value is None or (value.size < 3):
+                preview_dict[key] = value
+            else:
+                preview_dict[key] = value[:3]
+
+        return f'FreqlistWaveform:\n{preview_dict}'
 
     @property
     def _values(self):
