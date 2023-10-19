@@ -46,6 +46,8 @@ class FRSClient:
     def status_url(self):
         return f'tcp://{self.url}:{self.status_port}'
 
+    def __str__(self):
+        return f'FRS@{self.url}:{self.command_port}'
 
 class CaptureRequest:
     """
@@ -193,7 +195,7 @@ class CaptureRequest:
         if not self._status_socket:
             raise RuntimeError('No status_socket connection available')
         update = f'{status}:{message}'
-        getLogger(__name__).debug(f'Published status update {self.id}: "{update}"')
+        getLogger(__name__).debug(f'Published status update for {self}: "{update}"')
         self._last_status = (status, message)
         self._status_socket.send_multipart([self.id, update.encode()])
 
@@ -510,10 +512,10 @@ class StatusListener(threading.Thread):
                         time.sleep(.1)  # play nice
                         continue
                     id, update = sock.recv_multipart()
-                    assert id == self.id
+                    assert id == self.id or not self.id
                     update = update.decode()
                     self._status_messages.append(update)
-                    getLogger(__name__).debug(f'Status update for {self.id}: {update}')
+                    getLogger(__name__).debug(f'Status update for {id}: {update}')
                     if self.is_final_status_message(update):
                         break
         except zmq.ZMQError as e:
