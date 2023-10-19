@@ -108,7 +108,7 @@ class SerialDevice:
                 self.connect()
             try:
                 msg = self.format_msg(msg)
-                getLogger(__name__).debug(f"Sending '{msg}'")
+                getLogger(__name__).getChild('io').debug(f"Sending '{msg}'")
                 self.ser.write(msg)
                 resp, success = self.receive()
                 if not success:
@@ -137,7 +137,7 @@ class SerialDevice:
                     if lines[-1].endswith('?\r\n') or lines[-1].endswith(':\r\n'):
                         more = False
                 response = ''.join(lines)
-                getLogger(__name__).debug(f"Read {escape_nline_creturn(response)} from {self.name}")
+                getLogger(__name__).getChild('io').debug(f"Read {escape_nline_creturn(response)} from {self.name}")
                 return response.strip()[:-1], response.endswith(':\r\n')
             except (IOError, serial.SerialException) as e:
                 self.disconnect()
