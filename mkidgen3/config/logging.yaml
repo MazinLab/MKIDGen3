@@ -1,6 +1,13 @@
 loggers:
   feedlinereadoutserver:
-    werkzeug: ERROR
+    pynq: INFO
+    mkidgen3: DEBUG
+    "":
+      handlers: [ default ]
+      level: WARNING
+      propagate: False
+    __main__: DEBUG
+  feedlineclient:
     pynq: INFO
     mkidgen3: DEBUG
     "":
@@ -33,5 +40,5 @@ formatters:
   brieffmt:
     format: '%(message)s'
   default:
-    format: '%(asctime)s %(name)s:%(levelname)-8s (%(module)s:%(threadName)s) %(message)s'
+    format: '%(asctime)s %(name)s:%(levelname)-8s (%(threadName)s) %(message)s'
     datefmt: '%H:%M:%S'

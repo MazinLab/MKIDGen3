@@ -1,16 +1,14 @@
 import zmq
 from mkidgen3.server.feedline_config import IFConfig, BitstreamConfig, RFDCClockingConfig, RFDCConfig, WaveformConfig, ChannelConfig, DDCConfig, FeedlineConfig
-from mkidgen3.server.feedline_client_objects import CaptureJob, FRSClient, CaptureRequest
+from mkidgen3.server.feedline_client_objects import CaptureJob, FRSClient, CaptureRequest,StatusListener
 from mkidgen3.server.waveform import WaveformFactory
 from mkidgen3.opfb import opfb_bin_number
 import numpy as np
-
+from mkidgen3.util import setup_logging
+setup_logging('feedlineclient')
 # ctx = zmq.Context.instance()
 # ctx.linger = 0
 
-# cap command default 8888
-# cap data 8889
-# cap status 9000
 
 feedline_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8888'
 capture_data_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8889'
@@ -47,8 +45,10 @@ ddc_tones[:freqs.size]=freqs
 ddc = DDCConfig(tones=ddc_tones)
 
 # Feedline Config
-fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc, if_board=if_board, waveform=waveform, chan=chan, ddc=ddc)
+fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
+                    if_board=if_board, waveform=waveform, chan=chan, ddc=ddc)
 
-cr = CaptureRequest(1024, 'adc', fc, frsa)
+gsm = StatusListener(b'', frsb.status_url)
+cr = CaptureRequest(1024, 'adc', fc, frsb)
 j = CaptureJob(cr)
-j.submit(True, True)
+# j.submit(True, True)
