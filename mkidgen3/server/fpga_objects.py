@@ -209,7 +209,7 @@ class FeedlineHardware:
                         raise
                 data = self._ol.capture.capture(csize, cr.tap)
                 cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
-                data.free_buffer()
+                data.freebuffer()
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e)

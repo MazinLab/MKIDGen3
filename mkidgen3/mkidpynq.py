@@ -112,7 +112,7 @@ def print_plstatus():
 
 class DummyOverlay:
     class DummyBuffer(np.ndarray):
-        def free_buffer(self):
+        def freebuffer(self):
             pass
 
     class DummyCap:
