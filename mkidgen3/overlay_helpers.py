@@ -133,7 +133,7 @@ def configure(bitstream, ignore_version=True, clocks=False, programming_key=Fals
     ol = _gen3_overlay = mkidgen3._gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
     getLogger(__name__).info(f"PL Bitfile: {pynq.PL.bitfile_name} ({ol.timestamp})  Loaded: {ol.is_loaded()}")
 
-    mkidgen3.quirks.Overlay.post_configure()
+    mkidgen3.quirks.Overlay(ol).post_configure()
 
     if mts:
         assert download, "Enable MTS after downloading the bitstream with ol.rfdc.enable_mts()"
