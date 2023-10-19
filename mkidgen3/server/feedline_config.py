@@ -542,7 +542,7 @@ class FeedlineConfigManager:
     def __init__(self):
         self._config = {}
         self._cache = {}
-        self._current = FeedlineConfig()
+        self._current = FeedlineConfig.empty_config()
 
     def learn(self, config: FeedlineConfig):
         """Commit configuration info to memory for later use, hashed configurations do not add to knowledge"""

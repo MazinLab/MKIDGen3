@@ -89,7 +89,9 @@ class PhasematchDriver(pynq.DefaultHierarchy):
                 time.sleep(.1)
             self.load_coeff(res, coeff_sets[res], vet=True, force_commit=False)
 
-    def configure(self, coefficients):
+    def configure(self, coefficients=None):
+        if coefficients is None:
+            return
         getLogger(__name__).info(f'Configuring phasematch with {coefficients}')
         if isinstance(coefficients, str) and coefficients == 'unity':
             coefficients = np.zeros((2048, 30), dtype=np.int16)

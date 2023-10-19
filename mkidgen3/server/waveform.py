@@ -68,6 +68,9 @@ class FreqlistWaveform(Waveform):
         if compute:
             self.output_waveform
 
+    def __repr__(self):
+        return f'<{str(self)}>'
+
     def __str__(self):
         preview_dict = {'freqs':self.freqs, 'amps':self.amps, 'phases': self.phases,
                         'iq_ratios': self.iq_ratios, 'phase_offsets': self.phase_offsets,
@@ -78,7 +81,7 @@ class FreqlistWaveform(Waveform):
             else:
                 preview_dict[key] = value[:3]
 
-        return f'FreqlistWaveform:\n{preview_dict}'
+        return f'FreqlistWaveform: {preview_dict}'
 
     @property
     def _values(self):
