@@ -1,34 +1,34 @@
 import numpy as np
-
 from hashlib import md5
-from collections import defaultdict
 import copy
-from .waveform import WaveformFactory
+
+
+def _hasher(v, pass_none=False):
+    """
+    Hash a value
+
+    Args:
+        v: the value to be hashed, the md5 hexdigest of the bytestring of v is used. .tobytes() will be used if
+        present otherwise str().encode() is used. hash() is called on _FLConfigMixin or _FLMetaonfigMixin objects.
+        pass_none: If true, None is passed through without hashing, otherwise the string '___python_None' is
+        used in its place.
+
+    Returns: The hash
+    """
+    if v is None:
+        return None if pass_none else md5(str('___python_None').encode()).hexdigest()
+    elif isinstance(v, (_FLConfigMixin, _FLMetaconfigMixin)):
+        return hash(v)
+    else:
+        try:
+            v = v.tobytes()
+        except AttributeError:
+            v = str(v).encode()
+        return md5(v).hexdigest()
 
 
 class _FLConfigMixin:
     _settings = tuple()
-
-    @staticmethod
-    def _hasher(v, pass_none=False):
-        """
-        Hash a value
-
-        Args:
-            v: the value to be hashed, the md5 hexdigest of the bytestring of v is used.
-            pass_none: If true None through without hashing, otherwise the string '___python_None' is used in its place.
-
-        Returns: The hash
-        """
-        if v is None and pass_none:
-            return None
-
-        try:
-            if v is None:
-                v = '___python_None'
-            return md5(str(v).encode()).hexdigest()
-        except TypeError:
-            return md5(v.tobytes()).hexdigest()
 
     def __ge__(self, other):
         """ Returns true if self is at least as specified as other (i.e. other has = or more Nones)"""
@@ -135,7 +135,7 @@ class _FLConfigMixin:
     @property
     def _hash_data(self) -> tuple:
         """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
-        hash_data = ((k, self._hasher(getattr(self, k), pass_none=True)) for k in self._settings)
+        hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
         return tuple(sorted(hash_data, key=lambda x: x[0]))
 
     def __hash__(self):
@@ -148,7 +148,7 @@ class _FLConfigMixin:
         """
         if self.is_hashed:
             return self._hashed
-        return int(self._hasher(self._hash_data), 16)
+        return int(_hasher(self._hash_data), 16)
 
     def __str__(self):
         """Nicely format one's self"""
@@ -268,12 +268,7 @@ class _FLMetaconfigMixin:
         return True
 
     def __hash__(self):
-        def hasher(v):
-            if v is None:
-                v = '___python_None'  # we want None to hash to the same value always
-            return md5(str(v).encode()).hexdigest()
-
-        return int(hasher(tuple(sorted(((k, hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
+        return int(_hasher(tuple(sorted(((k, _hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
     def __iter__(self):
         for v in sorted(vars(self)):
@@ -380,7 +375,7 @@ class RFDCClockingConfig(_FLConfigMixin):
 class RFDCConfig(_FLConfigMixin):
     _settings = ('dac_mts', 'adc_mts', 'adc_gains', 'dac_gains')
 
-    def __init__(self, dac_mts: bool | None = None, adc_mts: bool | None = None, adc_gains:  (float, float) = None,
+    def __init__(self, dac_mts: bool | None = None, adc_mts: bool | None = None, adc_gains: (float, float) = None,
                  dac_gains: (bool, bool) = None, _hashed=None):
         """
         Args:
@@ -528,16 +523,19 @@ class FeedlineConfig(_FLMetaconfigMixin):
         # settings for iq and phase
 
     def __str__(self):
+        def nonestr(x, name):
+            return f'{name}: None' if x is None else f'{x}'.replace('\n','\n  ')
+
         return (f"FeedlineConfig {hash(self)}:\n"
-                f"  BIT: {self.bitstream}\n"
-                f"  CLK: {self.rfdc_clk}\n"
-                f"  RFDC: {self.rfdc}\n"
-                f"  IF: {self.if_board}\n"
-                f"  WVFM: {self.waveform}\n"
-                f"  CC: {self.chan}\n"
-                f"  DDC: {self.ddc}\n"
-                f"  FC: {self.filter}\n"
-                f"  TC: {self.trig}")
+                f"  {nonestr(self.bitstream, 'BitstreamConfig')}\n"
+                f"  {nonestr(self.rfdc_clk, 'RFDCClockingConfig')}\n"
+                f"  {nonestr(self.rfdc, 'RFDCConfig')}\n"
+                f"  {nonestr(self.if_board, 'IFConfig')}\n"
+                f"  {nonestr(self.waveform, 'WaveformConfig')}\n"
+                f"  {nonestr(self.chan, 'ChannelConfig')}\n"
+                f"  {nonestr(self.ddc, 'DDCConfig')}\n"
+                f"  {nonestr(self.filter, 'FilterConfig')}\n"
+                f"  {nonestr(self.trig, 'TriggerConfig')}")
 
 
 class FeedlineConfigManager:

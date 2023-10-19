@@ -254,7 +254,7 @@ class CaptureSink(threading.Thread):
         self.data_source = source_url
         self.result = None
         self._pipe = zpipe(zmq.Context.instance())
-        self._buf = None
+        self._buf = []
         self.socket = None
         if start:
             self.start()
@@ -264,8 +264,6 @@ class CaptureSink(threading.Thread):
         self._pipe[0].close()
 
     def _accumulate_data(self, d):
-        if self._buf is None:
-            self._buf = []
         self._buf.append(d)
 
     def _finish_accumulation(self):
