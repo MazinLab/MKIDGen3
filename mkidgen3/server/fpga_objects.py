@@ -192,13 +192,13 @@ class FeedlineHardware:
             aio_eloop.close()
             return
 
-        CHUNKING_THRESHOLD = 256*1024**3
+        CHUNKING_THRESHOLD = 256*1024**2
         nchunks = cr.size_bytes // CHUNKING_THRESHOLD
         partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
-        chunks = [CHUNKING_THRESHOLD] * nchunks
+        chunks = [CHUNKING_THRESHOLD//4] * nchunks
         if partial:
-            chunks.append(partial)
-        getLogger(__name__).debug(f'Beginning plram capture loop of {enumerate(chunks)} chunck(s) at {cr.tap}')
+            chunks.append(partial//4)  #4 bytes per sample
+        getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunck(s) at {cr.tap}')
         try:
             for i, csize in enumerate(chunks):
                 try:
