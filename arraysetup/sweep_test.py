@@ -30,7 +30,7 @@ rfdc = RFDCConfig(dac_mts=True, adc_mts=False, adc_gains=None, dac_gains=None)
 if_board = IFConfig(lo=3000, adc_attn=20, dac_attn=20)
 
 # DAC Config
-waveform_vals = WaveformFactory(n_uniform_tones=512)
+waveform_vals = WaveformFactory(frequencies=[1006e6])
 waveform = WaveformConfig(waveform=waveform_vals)
 freqs = waveform.waveform.freqs
 
