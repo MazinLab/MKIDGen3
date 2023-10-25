@@ -7,6 +7,7 @@ import blosc2
 from typing import List
 from npy_append_array import NpyAppendArray
 from logging import getLogger
+from datetime import datetime
 import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
@@ -72,8 +73,21 @@ class CaptureRequest:
         return int(md5(str((hash(self.feedline_config), self.tap, self.data_endpoint,
                             self.nsamp, self.server.command_url)).encode()).hexdigest(), 16)
 
+    # def __enter__(self):
+    #     self.establish()
+    #
+    # def __exit__(self, exc_type, exc_val, exc_tb):
+    #     if isinstance(exc_type, zmq.error.ContextTerminated):
+    #         self._data_socket=None
+    #         self._status_socket=None
+    #     else:
+    #         self.destablish()
+
     def __del__(self):
-        self.destablish()
+        try:
+            self.destablish()
+        except zmq.error.ContextTerminated:
+            pass
 
     def __str__(self):
         return f'CapReq {self.server}:{self.tap} {str(hash(self))}'
@@ -141,7 +155,7 @@ class CaptureRequest:
             return
         try:
             self._data_socket.send_multipart([self.id, b''])
-            self._send_status('finished')
+            self._send_status('finished', f'Finished at UTC {datetime.utcnow()}')
             self.destablish()
         except zmq.ZMQError as ez:
             getLogger(__name__).warning(f'Failed to send finished message {self} due to {ez}')
@@ -187,9 +201,20 @@ class CaptureRequest:
             data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
         elif copy:
             data = np.array(data)
-
-        self._data_socket.send_multipart([self.id, blosc2.compress(data)], copy=False)
+        times = []
+        times.append(time.time())
+        compressed = blosc2.compress(data)
+        times.append(time.time())
+        lend=len(compressed)/1024**2
+        times.append(time.time())
         self._send_status('capturing', status)
+        times.append(time.time())
+        tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=True)
+        times.append(time.time())
+        getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
+                                           (np.diff(times) * 1000).astype(int))))
+        getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {100*lend/(data.nbytes/1024**2):.1f}')
+        return tracker
 
     def _send_status(self, status, message=''):
         if not self._status_socket:
@@ -542,7 +567,7 @@ class CaptureJob:
         self.submitted = False
 
         self._status_listener = StatusListener(request.id, request.server.status_url,
-                                               initial_state='CREATED', start=False)
+                                               initial_state='created', start=False)
 
         if request.tap == 'adc':
             datasink = ADCCaptureSink

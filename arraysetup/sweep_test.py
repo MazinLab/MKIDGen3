@@ -10,9 +10,6 @@ setup_logging('feedlineclient')
 # ctx.linger = 0
 
 
-feedline_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8888'
-capture_data_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8889'
-status_server = 'tcp://mkidrfsoc4x2.physics.ucsb.edu:8890'
 
 frsa = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
@@ -33,7 +30,7 @@ if_board = IFConfig(lo=3000, adc_attn=20, dac_attn=20)
 waveform_vals = WaveformFactory(frequencies=[1006e6])
 waveform = WaveformConfig(waveform=waveform_vals)
 freqs = waveform.waveform.freqs
-
+waveform.waveform.output_waveform
 # Bin2Res Config
 bins = np.zeros(2048, dtype=int)
 bins[:freqs.size] = opfb_bin_number(freqs, ssr_raw_order=True)
@@ -48,7 +45,7 @@ ddc = DDCConfig(tones=ddc_tones)
 fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     if_board=if_board, waveform=waveform, chan=chan, ddc=ddc)
 
-gsm = StatusListener(b'', frsb.status_url)
-cr = CaptureRequest(1024, 'adc', fc, frsb)
+# gsm = StatusListener(b'', frsb.status_url)
+cr = CaptureRequest(1024**3//4, 'adc', fc, frsa)
 j = CaptureJob(cr)
-# j.submit(True, True)
+j.submit(True, True)

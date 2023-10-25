@@ -167,7 +167,7 @@ class FeedlineHardware:
             aio_eloop = asyncio.get_running_loop()
         except RuntimeError:
             aio_eloop = asyncio.new_event_loop()
-            t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
+            # t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
             # t.start()
         asyncio.set_event_loop(aio_eloop)
         # assert aio_eloop.is_running()
@@ -199,17 +199,27 @@ class FeedlineHardware:
         if partial:
             chunks.append(partial//4)  #4 bytes per sample
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunck(s) at {cr.tap}')
+        import numpy as np
         try:
             for i, csize in enumerate(chunks):
+                times=[]
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
                     raise CaptureAbortedException(abort)
                 except zmq.ZMQError as e:
                     if e.errno != zmq.EAGAIN:
                         raise
+                times.append(time.time())
                 data = self._ol.capture.capture(csize, cr.tap)
-                cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
+                times.append(time.time())
+                tracker=cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
+                times.append(time.time())
+                tracker.wait()
+                times.append(time.time())
                 data.freebuffer()
+                times.append(time.time())
+                getLogger(__name__).debug(list(zip(('Cap','Send','Track'),
+                                                   (np.diff(times)*1000).astype(int))))
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e)
@@ -217,9 +227,11 @@ class FeedlineHardware:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
             cr.fail(f'Aborted due to {e}', raise_exception=False)
         finally:
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
-        pipe.close()
+            cr.destablish()
+        try:
+            pipe.close()
+        except zmq.ZMQError:
+            pass
         aio_eloop.close()
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):

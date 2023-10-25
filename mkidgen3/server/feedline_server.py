@@ -28,8 +28,7 @@ class TapThread:
     def abort(self):
         try:
             # Abort the thread, not the request, the thread will handle the abort of the request if necessary!
-            # TODO add support for reason?
-            self.pipe.send('abort')  # TODO what happens to pipe when thread ends?
+            self.pipe.send(b'abort')  # TODO what happens to pipe when thread ends?
         except zmq.ZMQError:
             getLogger(__name__).critical(f'Error sending abort to worker thread {self.thread}')
             raise
@@ -116,7 +115,7 @@ class FeedlineReadoutServer:
     def create_capture_handler(self, start=True, daemon=False, context: zmq.Context = None):
         self._cap_pipe, cap_pipe_thread = zpipe(context or zmq.Context.instance())
 
-        thread = threading.Thread(name='FRS Capture Request Handler', target=self._main, args=(cap_pipe_thread,),
+        thread = threading.Thread(name='FRS CR Handler', target=self._main, args=(cap_pipe_thread,),
                                   kwargs={'context': context}, daemon=daemon)
         if start:
             thread.start()
@@ -263,7 +262,10 @@ class FeedlineReadoutServer:
             self.start_tap_thread(cr)
 
         aio_eloop.close()
-        pipe.close()
+        try:
+            pipe.close()
+        except zmq.error.ContextTerminated:
+            pass
         getLogger(__name__).info('Capture thread exiting')
 
     def start_tap_thread(self, cr):
@@ -340,7 +342,7 @@ if __name__ == '__main__':
 
     args = parse_cl()
     context = zmq.Context.instance()
-    context.linger = 0
+    context.linger = 1
 
     fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.ifboard,
                          ignore_version=args.ignore_fpga_driver_version)
