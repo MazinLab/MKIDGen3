@@ -413,7 +413,7 @@ if __name__ == '__main__':
 
         elif cmd == 'capture':
             fr.capture(arg)
-            socket.pyobj({'resp': 'OK', 'code': 0})
+            socket.send_pyobj({'resp': 'OK', 'code': 0})
 
     thread.join()
     socket.close()
