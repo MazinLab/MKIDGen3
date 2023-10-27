@@ -54,6 +54,13 @@ class FRSClient:
     def __str__(self):
         return f'FRS@{self.url}:{self.command_port}'
 
+    def bequiet(self):
+        ctx = zmq.Context().instance()
+        with ctx.socket(zmq.REQ) as s:
+            s.connect(self.command_url)
+            s.send_pyobj(('bequiet', ''))
+            return s.recv_json()
+
 
 class CaptureRequest:
     """

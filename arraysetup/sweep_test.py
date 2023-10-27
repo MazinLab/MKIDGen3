@@ -24,10 +24,10 @@ rfdc_clk = RFDCClockingConfig(programming_key='4.096GSPS_MTS_dualloop', clock_so
 rfdc = RFDCConfig(dac_mts=True, adc_mts=False, adc_gains=None, dac_gains=None)
 
 # IF Config
-if_board = IFConfig(lo=3000, adc_attn=20, dac_attn=20)
+if_board = IFConfig(lo=6000, adc_attn=10, dac_attn=50)
 
 # DAC Config
-waveform_vals = WaveformFactory(frequencies=[1006e6])
+waveform_vals = WaveformFactory(frequencies=[100e6])
 waveform = WaveformConfig(waveform=waveform_vals)
 freqs = waveform.waveform.freqs
 waveform.waveform.output_waveform
@@ -50,5 +50,7 @@ cr = CaptureRequest(3*1024**3//4, 'adc', fc, frsa, file='file:///home/xilinx/whe
 cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/iq1024MiB.npz')
 cr = CaptureRequest(1024**3//2//2048, 'phase', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/phase1024MiB.npz')
 cr = CaptureRequest(3024**3//2//2048, 'phase', fc, frsa)
+cr = CaptureRequest(2**19, 'adc', fc, frsb)
+
 j = CaptureJob(cr)
 j.submit(True, True)
