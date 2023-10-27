@@ -18,24 +18,30 @@ COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
 
 class TapThread:
-    def __init__(self, thread: threading.Thread, pipe, other_pipe, request):
+    def __init__(self, target, cr:CaptureRequest):
+        context = zmq.Context().instance()
+        a, b = zpipe(context)
+        t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, cr), kwargs=dict(context=context))
+        t.start()
         self.thread = thread
-        self.request = request
-        self.pipe = pipe
-        self._other_pipe = other_pipe
+        self.request = cr
+        self._pipe = a
+        self._other_pipe = b
 
     def abort(self):
         try:
             # Abort the thread, not the request, the thread will handle the abort of the request if necessary!
-            self.pipe.send(b'abort')  # TODO what happens to pipe when thread ends?
+            self._pipe.send(b'abort')
         except zmq.ZMQError:
             getLogger(__name__).critical(f'Error sending abort to worker thread {self.thread}')
             raise
 
     def __del__(self):
-        self.pipe.close()
-        self._other_pipe.close()
-
+        try:
+            self._pipe.close()
+            self._other_pipe.close()
+        except zmq.error.ContextTerminated:
+            pass
 
 class FeedlineReadoutServer:
     def __init__(self, bitstream, clock_source='4.096GSPS_MTS_dualloop', if_port='dev/ifboard', ignore_version=False,
@@ -141,7 +147,7 @@ class FeedlineReadoutServer:
         # for each finished capture thread remove its settings from the requirements pot and cleanup
 
         if bool(complete):  # need to check up to the size of the queue if anything finished
-            # TODO technically if what finished didn't change the effective settings we might not need to but
+            # if the effective settings didn't change on completion we don't need to recheck stuff
             #  ignore this optimization for now
             self._to_check.extend(self._checked)
             self._checked = []
@@ -281,12 +287,11 @@ class FeedlineReadoutServer:
         cap_runners = {'engineering': self.hardware.plram_cap, 'photon': self.hardware.photon_cap,
                        'stamp': self.hardware.stamp_cap}
         target = cap_runners[cr.type]
-        context = zmq.Context().instance()
-        a, b = zpipe(context)
+
+
         cr.set_status('running', f'Started at UTC {datetime.utcnow()}', destablish=True)
-        t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, cr), kwargs=dict(context=context))
-        t.start()
-        self._tap_threads[cr.type] = TapThread(t, a, b, cr)
+
+        self._tap_threads[cr.type] = TapThread(target, cr)
 
 
 def parse_cl():

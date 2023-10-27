@@ -194,7 +194,6 @@ class FeedlineHardware:
             aio_eloop.close()
             return
 
-        CHUNKING_THRESHOLD = 256*1024**2
         capture_atom_bytes = cr.dwid*cr.nchan
         chunking_thresh = determine_max_chunk('pl', demands=None)
         nchunks = cr.size_bytes // CHUNKING_THRESHOLD
@@ -246,10 +245,8 @@ class FeedlineHardware:
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
         """
-        #TODO should this be a instance method of FeedlineHardware?
-        pipe: a zme pair pipe to detect abort
+        pipe: a zmq pair pipe to detect abort
         cr: the capture request
-        ol: the overlay
         """
         failmsg = ''
         photon_maxi = self._ol.photon_pipe.trigger_system.photon_maxi
@@ -298,7 +295,7 @@ class FeedlineHardware:
         try:
             sender.start()
             fountain.start()
-            photon_maxi.capture(buffer_time_ms=cr.nsamp)  # todo: add support for setting the latency via the request?
+            photon_maxi.capture(buffer_time_ms=cr.nsamp)
             while not cr.completed:
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)

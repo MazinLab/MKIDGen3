@@ -152,7 +152,8 @@ class CaptureRequest:
 
     def destablish(self):
         try:
-            self._status_socket.close()  # TODO do we need to wait to make sure any previous sends get sent
+            # NB the context or socket's linger setting determines how long any pending messages have to get sent off
+            self._status_socket.close()
             self._status_socket = None
         except AttributeError:
             pass
@@ -206,17 +207,26 @@ class CaptureRequest:
 
     def send_data(self, data, status='', copy=False, compress=True):
         """
-        # TODO ensure we are being smart about pointers and buffer access vs copys
-        # TODO how do we ship the various data formats?
+        Send a (chunk) of data out. By default data is published as a blosc2 compressed array with the
+        capture id as the subscription key. CaptureRequests created with a file destination  will be saved as
+        uncompressed npy data, appended on successive calls, no data will be published.
+
+        Data is shipped in the (compressed) format it is given.
+
+        Do not call this function from multiple threads.
+        Call .establish() in the calling thread before calling this function or after calling destablish()
+
+        This function is intended to be zero-copy, is as of 10/27/23 and should be maintained as such.
+
         Args:
-            data: the data to be shipped
-            status: a status update
-            copy: copy the array first
+            data: a array of data to send out
+            status: (optional) a status update message to send out
+            copy: copy the array first, you probably don't want this
+            compress: compress the data with blosc2, ignored for file destinations.
 
-        Returns: None
-
+        Returns: None | zmq.MessageTracker A MessageTracker is returned if copying or the destination is a file. A
+        segfault may occur if the data is deallocated prior to the messagetracker being done.
         """
-
         if not self._status_socket:
             raise RuntimeError('Status socket is not established.')
         if self.data_endpoint.startswith('file://'):
@@ -228,10 +238,7 @@ class CaptureRequest:
             raise RuntimeError('Data socket is not established.')
 
         getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        if not isinstance(data, np.ndarray):
-            data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
-        elif copy:
-            data = np.array(data)
+        data = np.array(data) if copy else data
         times = []
         times.append(time.time())
         getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
@@ -243,7 +250,7 @@ class CaptureRequest:
         getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         self._send_status('capturing', status)
         times.append(time.time())
-        tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=True)
+        tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
         times.append(time.time())
         getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
                                            (np.diff(times) * 1000).astype(int))))
@@ -386,7 +393,7 @@ class CaptureSink(threading.Thread):
         return self.result
 
     def ready(self):
-        self._pipe[0].recv()  # TODO verify that this line blocks
+        self._pipe[0].recv() # block until a byte arrives
 
 
 class StreamCaptureSink(CaptureSink):
