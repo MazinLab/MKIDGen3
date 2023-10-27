@@ -93,7 +93,6 @@ def opfb_bin_frequencies(bins, resolution, Fs=4.096e9, M=4096, OS=2, left_snip=1
 
     Outputs:
     - Returns an array of frequency values in Hz for the given OPFB bin. """
-    # TODO Don't compute all the centers only to subscript
     try:
         len(bins)
     except TypeError:
@@ -111,6 +110,31 @@ def opfb_bin_center(bins, Fs=4.096e9, M=4096, ssr_order=True):
     except TypeError:
         bins = [bins]
     bins = np.asarray(bins).astype(int)
-    # TODO Don't compute all the centers only to subscript
     f=(Fs / M) * np.linspace(-M / 2, M / 2 - 1, M)
     return np.fft.fftshift(f)[bins] if ssr_order else f[bins]
+
+
+def do_fixed_point_pfb(fpcomb, fpcoeff, n_convert=None, truncate=True):
+    """Set truncate to false to preserve the full output bitwidth. Truncation is done with FpBinary defaults."""
+    n_total_packets = fpcomb.size // 2048 // 2 - 16 if n_convert is None else n_convert
+    fft_block = np.zeros((n_total_packets+1, 256, 16), dtype=np.complex64)
+    for i in range(0, n_total_packets, 2):  # each packet of ADC samples, 128 new things to a lane 2 packets to feed all channels
+        lane_out = np.zeros((2, 256, 16), dtype=np.complex64)
+        for l in range(16):
+            fresh = np.array([fpcoeff[l, :, 7 - c_i] * fpcomb[i + 2 * c_i:i + 2 * c_i + 2, l::16, :].reshape(256, 2).T
+                              for c_i in range(8)]).sum(axis=0)
+            delay = np.roll(np.array(
+                [fpcoeff[l, :, 7 - c_i] * fpcomb[1 + i + 2 * c_i:1 + i + 2 * c_i + 2, l::16, :].reshape(256, 2).T
+                 for c_i in range(8)]).sum(axis=0), 128, axis=1)
+            # Sum the multiplies are roll the delayed samples
+            if truncate:
+                outformat = (-9, sum(fpcomb.flat[0].format) + 9)
+                conv = lambda a: np.array(list(map(lambda x: float(x.resize(outformat)), a)))
+                lane_out[0, :, l] = conv(fresh[0]) + conv(fresh[1]) * 1j
+                lane_out[1, :, l] = conv(delay[0]) + conv(delay[1]) * 1j
+            else:
+                lane_out[0, :, l] = fresh[0].astype(float) + fresh[1].astype(float) * 1j
+                lane_out[1, :, l] = delay[0].astype(float) + delay[1].astype(float) * 1j
+        fft_block[i] = lane_out[0]
+        fft_block[i + 1] = lane_out[1]
+    return fft_block

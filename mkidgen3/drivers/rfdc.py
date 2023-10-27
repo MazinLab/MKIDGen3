@@ -68,7 +68,7 @@ class RFDCHierarchy(DefaultHierarchy):
     @property
     def active_adc(self):
         if self.switch is None:
-            return 'Switching not supported. Please add driver introspection to determine active adc'  # TODO
+            return 'Switching not supported. Please add driver introspection to determine active adc'
         if self.switch.is_disabled():
             return 'none'
         elif self.switch.driver_for() & 1:

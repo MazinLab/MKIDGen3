@@ -90,22 +90,21 @@ class DACTableAXIM(pynq.DefaultIP):
             self.register_map.CTRL.AP_START = 1
 
     def stop(self):
-        # Note the dac still outputs stuff (harmonics of last bunnfer)
+        # Note the dac still outputs stuff (harmonics of last buffer)
         # Need to load URAM with zeros if you want it to be quiet (see quiet)
         self.register_map.run = False
 
     def quiet(self):
         """Replay 0s"""
         self.replay(np.zeros(16, dtype=np.complex64), tlast=False, replay_len=16, stop_if_needed=True)
+        self.stop()
 
-    def start(self):
-        # TODO probably need to check for the case where not idle and run = False (axis stall to completion)
-        if self._buffer is None:
-            raise RuntimeError('Must call replay first to configure the core')
-        self.register_map.CTRL.AP_START = 1
-
-    def status(self):
-        return {'running': self.register_map.run and self.register_map.CTRL.AP_START,
+    def status(self)->dict:
+        """
+        Generate a dictionary with whether the core is running and a copy of the current buffer
+        Returns: dict with keys running and buffer
+        """
+        return {'running': self.register_map.run.run and self.register_map.CTRL.AP_START,
                 'buffer': self._buffer.copy() if self._buffer is not None else None}
 
     def configure(self, waveform=None):
@@ -113,8 +112,7 @@ class DACTableAXIM(pynq.DefaultIP):
         Args:
             waveform_values: complex values quantized to integer real and imaginary parts
             max val, min val: [2**15-1, -2**15] corresponding to [1.0, -1.0] & [max dac V, min dac V]
-        Returns:
-
+        Returns: None
         """
         try:
             waveform_values = waveform.output_waveform

@@ -3,10 +3,9 @@ from logging import getLogger
 from pynq import DefaultIP
 import numpy as np
 
-#TODO enhance with cutthrough support
-
 
 class AxisFIFO(DefaultIP):
+    """Support for an AXI FIFO without cut-through support, could be enhanced"""
     bindto = ['xilinx.com:ip:axi_fifo_mm_s:4.2']
 
     def __init__(self, description):

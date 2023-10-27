@@ -202,8 +202,8 @@ class CaptureHierarchy(DefaultHierarchy):
         iqs.sort(key=lambda x: x[1])
         for k, v in iqs:
             if self.filter_iq.get(k, None):
-                self.SOURCE_MAP[k] = v+base
-                pbase = v+base
+                self.SOURCE_MAP[k] = v + base
+                pbase = v + base
 
         ph = list(self.PHASE_MAP.items())
         ph.sort(key=lambda x: x[1])
@@ -271,13 +271,13 @@ class CaptureHierarchy(DefaultHierarchy):
 
     def capture(self, n, tap):
         if tap in (self.IQ_MAP):
-            return self.capture_iq(n,tap_location=tap,duration=False, groups='all')
+            return self.capture_iq(n, tap_location=tap, duration=False, groups='all')
         elif tap in self.PHASE_MAP:
             return self.capture_phase(n, tap_location=tap, duration=False, groups='all')
-        elif tap=='adc':
+        elif tap == 'adc':
             return self.capture_adc(n, complex=False, sleep=True, use_interrupt=False, duration=False)
         else:
-            valid = ('adc',)+tuple(self.IQ_MAP.keys())+tuple(self.PHASE_MAP.keys())
+            valid = ('adc',) + tuple(self.IQ_MAP.keys()) + tuple(self.PHASE_MAP.keys())
             raise ValueError(f'{tap} is not a valid capture location from {valid}')
 
     def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
@@ -444,6 +444,7 @@ class CaptureHierarchy(DefaultHierarchy):
         x.freebuffer()
         riq = riq[..., 0] + riq[..., 1] * 1j
         return riq, phase
+
 
 class _AXIS2MM:
     @property

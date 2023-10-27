@@ -1,18 +1,19 @@
 import json
-import logging
 from logging import getLogger
 import threading
 import serial
 from typing import Tuple, List
 import numpy as np
+import time
 
 MAX_OUT_ATTEN = 31.75  # dB
 MAX_IN_ATTEN = 31.75  # dB
-MAX_ATTN_RESOLUTION = 0.25  # dB
+IF_ATTN_STEP = 0.25  # dB IF attenuator step size (minimum dB attenuation step, limited by a single attenuator)
 
-def escape_nline_creturn(string):
+
+def _escape_nline_creturn(x):
     """Escape \n and \r in a string"""
-    return string.replace('\n', '\\n').replace('\r', '\\r')
+    return x.replace('\n', '\\n').replace('\r', '\\r')
 
 
 class SerialDevice:
@@ -153,7 +154,7 @@ class SerialDevice:
                     if lines[-1].endswith('?\r\n') or lines[-1].endswith(':\r\n'):
                         more = False
                 response = ''.join(lines)
-                getLogger(__name__).getChild('io').debug(f"Read {escape_nline_creturn(response)} from {self.name}")
+                getLogger(__name__).getChild('io').debug(f"Read {_escape_nline_creturn(response)} from {self.name}")
                 return response.strip()[:-1], response.endswith(':\r\n')
             except (IOError, serial.SerialException) as e:
                 self.disconnect()
@@ -176,14 +177,14 @@ class IFBoard(SerialDevice):
         con= 'Connected' if self.connected() else 'Disconnected'
         return f'{self.port}@{self.baudrate} ({con})'
 
-
     def settle(self, timeout=None):
         """
         Wait for the IF board to be fully settled
         Returns: None
         """
-        #TODO
-        pass
+        #   TODO Ensure that the ifboard is stable and running before return
+        # Per Aled/Jenny 150us is the maximum settling time
+        time.sleep(.000150)
 
     def set_lo(self, freq_mhz, fractional: bool = True, full_calibration=True, g2_mode=False):
         try:
@@ -239,8 +240,8 @@ class IFBoard(SerialDevice):
         if len(output_attens) != 2:
             raise ValueError('Incorrect number of output attenuations')
 
-        if (((np.asarray(input_attens) % MAX_ATTN_RESOLUTION).any() != 0) or ((np.asarray(output_attens) % MAX_ATTN_RESOLUTION).any() != 0)).any():
-            getLogger(__name__).warning(f'Exact attenuation not achievable. Clipping value to nearest {MAX_ATTN_RESOLUTION} dB. Check status() for exact value.')
+        if (((np.asarray(input_attens) % IF_ATTN_STEP).any() != 0) or ((np.asarray(output_attens) % IF_ATTN_STEP).any() != 0)).any():
+            getLogger(__name__).warning(f'Exact attenuation not achievable. Clipping value to nearest {IF_ATTN_STEP} dB. Check status() for exact value.')
 
         new = output_attens + input_attens
         try:

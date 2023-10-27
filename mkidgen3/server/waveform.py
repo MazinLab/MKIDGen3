@@ -1,6 +1,9 @@
 from mkidgen3.funcs import *
 import logging
 
+from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH
+
+
 class Waveform:
     @property
     def output_waveform(self):

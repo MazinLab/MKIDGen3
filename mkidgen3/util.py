@@ -28,13 +28,6 @@ def buf2complex(b, free=True, unsigned=False, floating=True):
     return x
 
 
-def set_anritsu(f):
-    """NB make sure Anritsu server is running"""
-    import requests
-    r = requests.get(f'http://skynet.physics.ucsb.edu:51111/loset/{f}')
-    return r.json()
-
-
 def setup_logging(name):
     ref = importlib.resources.files('mkidgen3.config').joinpath('logging.yaml')
     with importlib.resources.as_file(ref) as path:

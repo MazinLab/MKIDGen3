@@ -40,7 +40,6 @@ def test_data(ncycles=10, MIN_FREQ_HZ=4096e6,  MAX_FREQ_HZ =8191e6, NUM_RES = 20
         addable[last_add_ndx] += NUM_RES-(total_added[last_add_ndx]+freqs.size)  # in case we would add a few too many
         addable[last_add_ndx+1:]=0
         bincount[::-1] += addable
-        #TODO properly add frequencies
         freqs = np.concatenate((freqs, [MAX_FREQ_HZ]*(NUM_RES-freqs.size)))
 
 
@@ -68,5 +67,3 @@ if __name__=='__main__':
 
     with open('/Users/one/Desktop/res_in_bin.dat','w') as f:
         f.writelines(['{}\n'.format(n) for n in td.bincount])
-
-

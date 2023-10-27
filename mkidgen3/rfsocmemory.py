@@ -1,7 +1,6 @@
 import psutil
 
-PL_TOTAL_BYTES = 4 * 1024 ** 3
-SYSTEM_OVERHEAD_BYTES = 768 * 1024 ** 2
+from mkidgen3.system_parameters import PL_TOTAL_BYTES, SYSTEM_OVERHEAD_BYTES
 
 
 def memfree_mib():

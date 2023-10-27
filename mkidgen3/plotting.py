@@ -65,7 +65,7 @@ def adc_timeseries(data, timerange=(None, None), fs=4.096e9, ax=None, **kwargs):
         plt.sca(ax)
 
     n = data.shape[0]  # total samples
-    tvec = np.linspace(0, n / fs, n) * 1e9  # time vector [nano seconds]  TODO only generate used samples
+    tvec = np.linspace(0, n / fs, n) * 1e9  # time vector [nano seconds]
     sl = slice(*timerange)  # plt slice
     plt.plot(tvec[sl], data.real[sl], color='#34D576', linewidth=6)
     plt.plot(tvec[sl], data.real[sl], "o", color='#346B76', linewidth=8)

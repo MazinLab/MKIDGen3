@@ -11,7 +11,8 @@ from datetime import datetime
 import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
-from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
+from mkidgen3.funcs import compute_lo_steps
+from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
