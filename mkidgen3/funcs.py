@@ -4,6 +4,7 @@ from mkidgen3.util import ensure_array_or_scalar
 DAC_MAX_OUTPUT_DBM = 1  # [dBm] see Xilinx DS926
 DAC_MAX_INT = 8191  # see Xilinx docs
 ADC_DAC_INTERFACE_WORD_LENGTH = 16  # bits see Xilinx docs
+ADC_MAX_VOLTAGE = #TODO figure this out see
 DAC_RESOLUTION = 14  # bits
 DAC_LUT_SIZE = 2 ** 19  # values
 DAC_SAMPLE_RATE = 4.096e9  # GSPS
@@ -12,6 +13,10 @@ N_CHANNELS = 2048  # Number of DDC (resonator) channels
 SYSTEM_BANDWIDTH = 4.096e9  # Hz Full readout bandwidth
 OS = 2  # OPFB Overlap factor
 IF_ATTN_STEP = 0.25  # dB IF attenuator step size TODO: is this combined??
+
+def convert_adc_raw_to_mv(raw_data: np.ndarray,
+                          adc_interface_word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
+                          adc_max_v=)
 
 
 def db2lin(values, mode='voltage'):

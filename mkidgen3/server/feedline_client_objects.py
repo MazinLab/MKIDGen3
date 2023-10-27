@@ -15,6 +15,7 @@ from mkidgen3.funcs import SYSTEM_BANDWIDTH, compute_lo_steps
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
+from functools import cached_property
 
 from typing import Tuple
 
@@ -580,6 +581,37 @@ class StatusListener(threading.Thread):
 
     def ready(self):
         self._pipe[0].recv()  # TODO make this line block
+
+
+class ADCCaptureData:
+    """
+    Formats raw ADC capture data to complex floats.
+    """
+    def __init__(self, raw_data):
+        """
+        ADC data captured by an ADC capture request
+        Args:
+            raw_data: raw data captured by adc capture
+        """
+        self.raw_data = raw_data
+
+    @cached_property
+    def data(self):
+        return (self.raw_data[:, 0] + 1j * self.raw_data[:, 1])/(2**15-1)
+
+
+
+
+class IQCaptureData:
+    def __init__(self, raw_data):
+        self.raw_data = raw_data
+        #TODO format data
+
+
+class PostageCaptureData:
+    def __init__(self, raw_data):
+        self.raw_data = raw_data
+        #TODO format data
 
 
 class CaptureJob:
