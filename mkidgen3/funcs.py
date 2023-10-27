@@ -1,6 +1,6 @@
 import numpy as np
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_LUT_SIZE, N_CHANNELS, \
-    SYSTEM_BANDWIDTH, IF_ATTN_STEP, ADC_MAX_V
+    SYSTEM_BANDWIDTH, IF_ATTN_STEP, ADC_MAX_V, PHASE_FRACTIONAL_BITS
 from mkidgen3.util import ensure_array_or_scalar
 
 
@@ -16,10 +16,10 @@ def convert_adc_raw_to_mv(raw_data: np.ndarray,
     Returns:
 
     """
-    return adc_max_v * (raw_data / (2**(adc_interface_word_length - 1) - 1)) * 1e6
+    return adc_max_v * (raw_data / (2 ** (adc_interface_word_length - 1) - 1)) * 1e6
 
 
-def convert_raw_iq_to_unit(raw_data: np.ndarray, adc_interface_word_length=ADC_DAC_INTERFACE_WORD_LENGTH):
+def raw_iq_to_unit(raw_data: np.ndarray, adc_interface_word_length=ADC_DAC_INTERFACE_WORD_LENGTH):
     """
     Args:
         raw_data: integer data
@@ -28,8 +28,23 @@ def convert_raw_iq_to_unit(raw_data: np.ndarray, adc_interface_word_length=ADC_D
     Returns:
         complex iq data on the IQ unit circle
     """
-    return raw_data / (2**(adc_interface_word_length - 1) - 1)
+    return raw_data / (2 ** (adc_interface_word_length - 1) - 1)
 
+
+def raw_phase_to_radian(raw_data: np.ndarray, phase_fractional_bits=PHASE_FRACTIONAL_BITS, scaled=True):
+    """
+    Args:
+        raw_data: integer data fixed point
+        phase_fractional_bits: fractional bits in the phase data
+
+    Returns:
+        phase data in radians or scaled radians (±pi, not 0 to 2pi)
+    """
+    x = raw_data.astype(float)
+    x[:] /= (2 ** phase_fractional_bits - 1)
+    if not scaled:
+        x[:] *= np.pi
+    return x
 
 
 def db2lin(values, mode='voltage'):
@@ -178,7 +193,7 @@ def uniform_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
         Full channelizer bandwidth (ADC Nyquist bandwidth) in Hz
     Returns a comb with one frequency per DDC channel, evenly spaced in the bandwidth.
     """
-    return np.linspace(-n_channels/2, n_channels/2 - 1, n_channels)* (bandwidth / n_channels)
+    return np.linspace(-n_channels / 2, n_channels / 2 - 1, n_channels) * (bandwidth / n_channels)
 
 
 def est_loop_centers(iq):

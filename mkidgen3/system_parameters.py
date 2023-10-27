@@ -13,7 +13,7 @@ N_OPFB_CHANNELS = 4096  # Number of OPFB channels
 N_CHANNELS = 2048  # Number of DDC (resonator) channels
 SYSTEM_BANDWIDTH = 4.096e9  # Hz Full readout bandwidth
 OS = 2  # OPFB Overlap factor
-
+PHASE_FRACTIONAL_BITS = 14  #cordic output is 16 bits, signed, 3 integer, 14 fractional
 PL_TOTAL_BYTES = 4 * 1024 ** 3
 SYSTEM_OVERHEAD_BYTES = 768 * 1024 ** 2
 
