@@ -182,7 +182,6 @@ class IFBoard(SerialDevice):
         Wait for the IF board to be fully settled
         Returns: None
         """
-        #   TODO Ensure that the ifboard is stable and running before return
         # Per Aled/Jenny 150us is the maximum settling time
         time.sleep(.000150)
 

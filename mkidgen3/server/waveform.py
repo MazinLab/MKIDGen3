@@ -29,6 +29,7 @@ class TabulatedWaveform(Waveform):
     def __str__(self):
         return f'TabulatedWaveform with fpgen {self._fpgen}'
 
+
 class FreqlistWaveform(Waveform):
     def __init__(self, frequencies=None, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
                  iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
@@ -41,7 +42,6 @@ class FreqlistWaveform(Waveform):
             phases (float): list/array of phases, one per frequency in [0, 2*np.pi). If None, generates random phases using input seed.
             iq_ratios (float): list of ratios for IQ values used to help minimize image tones in band.
                        Allowed values between 0 and 1. If None, 50:50 ratio (all ones) is assumed.
-                      TODO: what does this actually do and how does it work
             phase_offsets (float): list/array of phase offsets in [0, 2*np.pi)
             seed (int): random seed to seed phase randomization process
 
@@ -75,10 +75,10 @@ class FreqlistWaveform(Waveform):
         return f'<{str(self)}>'
 
     def __str__(self):
-        preview_dict = {'freqs':self.freqs, 'amps':self.amps, 'phases': self.phases,
+        preview_dict = {'freqs': self.freqs, 'amps': self.amps, 'phases': self.phases,
                         'iq_ratios': self.iq_ratios, 'phase_offsets': self.phase_offsets,
                         'quant_error': self.quant_error}
-        for key, value  in preview_dict.items():
+        for key, value in preview_dict.items():
             if value is None or (value.size < 3):
                 preview_dict[key] = value
             else:

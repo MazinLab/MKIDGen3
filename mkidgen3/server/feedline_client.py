@@ -69,7 +69,7 @@ data_server_urls = []
 status_server_urls = []
 
 #Generate a suitable FeedlineConfig for each server
-fc = FeedlineConfig() # TODO
+fc = FeedlineConfig()
 buff_duration_ms = 100
 jobs = []
 for a,b,c in zip(feedline_server_urls, data_server_urls, status_server_urls):
