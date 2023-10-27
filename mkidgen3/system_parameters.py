@@ -12,7 +12,9 @@ OS = 2  # OPFB Overlap factor
 PL_TOTAL_BYTES = 4 * 1024 ** 3
 SYSTEM_OVERHEAD_BYTES = 768 * 1024 ** 2
 
-ADC_MAX_VOLTAGE = 1.2 #TODO figure this out see
+# per DS926 Table RF-ADC Electrical Characteristics for ZU2xDR Devices
+# (https://docs.xilinx.com/r/en-US/ds926-zynq-ultrascale-plus-rfsoc/RF-ADC-Electrical-Characteristics)
+ADC_MAX_VOLTAGE = 0.22360679774997896  # 0.5/np.sqrt(5) per p.
 
 
 from mkidgen3.drivers.ifboard import MAX_IN_ATTEN, IF_ATTN_STEP, MAX_OUT_ATTEN
