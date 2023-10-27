@@ -59,7 +59,7 @@ class FRSClient:
         with ctx.socket(zmq.REQ) as s:
             s.connect(self.command_url)
             s.send_pyobj(('bequiet', ''))
-            return s.recv_json()
+            return s.recv_pyobj()
 
 
 class CaptureRequest:
@@ -121,7 +121,7 @@ class CaptureRequest:
         with ctx.socket(zmq.REQ) as s:
             s.connect(self.server.command_url)
             s.send_pyobj(('capture', self))
-            return s.recv_json()
+            return s.recv_pyobj()
 
     @property
     def type(self):
@@ -692,7 +692,7 @@ class CaptureJob:
         with ctx.socket(zmq.REQ) as s:
             s.connect(self.request.server.command_url)
             s.send_pyobj(('abort', self.request.id))
-            return s.recv_json()
+            return s.recv_pyobj()
 
     def _kill_workers(self, kill_status_monitor=True, kill_data_sink=True):
         if kill_status_monitor and self._status_listener.is_alive():
