@@ -196,6 +196,7 @@ class FeedlineHardware:
 
         capture_atom_bytes = cr.dwid*cr.nchan
         chunking_thresh = determine_max_chunk('pl', demands=None)
+        CHUNKING_THRESHOLD = 3*1024**3
         nchunks = cr.size_bytes // CHUNKING_THRESHOLD
         partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
         chunks = [CHUNKING_THRESHOLD//capture_atom_bytes] * nchunks
