@@ -11,7 +11,7 @@ from datetime import datetime
 import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
-from mkidgen3.funcs import compute_lo_steps
+from mkidgen3.funcs import compute_lo_steps, convert_adc_raw_to_mv, convert_raw_iq_to_unit
 from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
@@ -586,7 +586,7 @@ class StatusListener(threading.Thread):
 
 class ADCCaptureData:
     """
-    Formats raw ADC capture data to complex floats.
+    Formats raw ADC capture data to complex floats representing mV at the ADC input SMA.
     """
     def __init__(self, raw_data):
         """
@@ -598,21 +598,26 @@ class ADCCaptureData:
 
     @cached_property
     def data(self):
-        return (self.raw_data[:, 0] + 1j * self.raw_data[:, 1])/(2**15-1)
-
-
+        return convert_adc_raw_to_mv(self.raw_data[:, 0] + 1j * self.raw_data[:, 1])
 
 
 class IQCaptureData:
+    """
+    Formats raw IQ capture data to complex floats between +/- 1.
+    """
     def __init__(self, raw_data):
         self.raw_data = raw_data
-        #TODO format data
+
+    @cached_property
+    def data(self):
+        return convert_raw_iq_to_unit(self.raw_data[..., 0] + self.raw_data[..., 1] * 1j)
 
 
 class PostageCaptureData:
     def __init__(self, raw_data):
         self.raw_data = raw_data
         #TODO format data
+        pass
 
 
 class CaptureJob:

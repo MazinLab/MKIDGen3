@@ -1,12 +1,35 @@
 import numpy as np
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_LUT_SIZE, N_CHANNELS, \
-    SYSTEM_BANDWIDTH, IF_ATTN_STEP
+    SYSTEM_BANDWIDTH, IF_ATTN_STEP, ADC_MAX_V
 from mkidgen3.util import ensure_array_or_scalar
+
 
 def convert_adc_raw_to_mv(raw_data: np.ndarray,
                           adc_interface_word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
-                          adc_max_v=None):
-    pass
+                          adc_max_v=ADC_MAX_V):
+    """
+    Args:
+        raw_data: integer data
+        adc_interface_word_length: max adc int word length
+        adc_max_v: max adc v at the SMA input
+
+    Returns:
+
+    """
+    return adc_max_v * (raw_data / (2**(adc_interface_word_length - 1) - 1)) * 1e6
+
+
+def convert_raw_iq_to_unit(raw_data: np.ndarray, adc_interface_word_length=ADC_DAC_INTERFACE_WORD_LENGTH):
+    """
+    Args:
+        raw_data: integer data
+        adc_interface_word_length: max adc int word length
+
+    Returns:
+        complex iq data on the IQ unit circle
+    """
+    return raw_data / (2**(adc_interface_word_length - 1) - 1)
+
 
 
 def db2lin(values, mode='voltage'):
