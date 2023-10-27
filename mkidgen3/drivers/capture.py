@@ -312,7 +312,7 @@ class CaptureHierarchy(DefaultHierarchy):
         datarate_mbps = 32 * 512 * n_groups / 256
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Capturing {datavolume_mb:.1f} MB of data @ {datarate_mbps:.1f} MBps. "
+        msg = (f"Capturing {datavolume_mb:.1f} MiB of data @ {datarate_mbps:.1f} MiBps. "
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 

@@ -46,6 +46,9 @@ fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     if_board=if_board, waveform=waveform, chan=chan, ddc=ddc)
 
 # gsm = StatusListener(b'', frsb.status_url)
-cr = CaptureRequest(1024**3//4, 'adc', fc, frsa)
+cr = CaptureRequest(3*1024**3//4, 'adc', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/adc3096MiB.npz')
+cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/iq1024MiB.npz')
+cr = CaptureRequest(1024**3//2//2048, 'phase', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/phase1024MiB.npz')
+cr = CaptureRequest(3024**3//2//2048, 'phase', fc, frsa)
 j = CaptureJob(cr)
 j.submit(True, True)

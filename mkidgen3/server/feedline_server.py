@@ -341,11 +341,12 @@ if __name__ == '__main__':
     setup_logging('feedlinereadoutserver')
 
     args = parse_cl()
+
     context = zmq.Context.instance()
     context.linger = 1
 
     fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.ifboard,
-                         ignore_version=args.ignore_fpga_driver_version)
+                               ignore_version=args.ignore_fpga_driver_version)
 
     # Set up proxies for routing all the capture data and status
     cap_addr = f'tcp://*:{args.capture_port}'
@@ -357,9 +358,11 @@ if __name__ == '__main__':
     cmd_addr = f"tcp://*:{command_port}"
     socket = context.socket(zmq.REP)
     socket.bind(cmd_addr)
-    getLogger(__name__).info(f'Accepting commands on {cmd_addr}')
 
-    thread = fr.create_capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
+    # Start up the main thread
+    thread = fr.create_capture_handler(context=context, start=True, daemon=False)
+
+    getLogger(__name__).info(f'Accepting commands on {cmd_addr}')
 
     while True:
         try:

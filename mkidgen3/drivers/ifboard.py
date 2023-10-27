@@ -44,7 +44,7 @@ class SerialDevice:
     def _predisconnect(self):
         """
         Override to perform an action immediately prior to disconnection.
-        Function should raise IOError if the serial device should not be opened.
+        Function should raise IOError in the event of any error.
         """
         pass
 
@@ -91,9 +91,9 @@ class SerialDevice:
         try:
             self._predisconnect()
             self.ser.close()
-            self.ser = None
         except Exception as e:
             getLogger(__name__).getChild('io').info(f"Exception during disconnect: {e}")
+        self.ser = None
 
     def format_msg(self, msg: str):
         """Subclass may implement to apply hardware specific formatting"""
@@ -103,9 +103,21 @@ class SerialDevice:
 
     def send(self, msg: str, connect=True):
         """
-        Send a message to a serial port. If connect is True, try to connect to the serial port before sending the
-        message. Formats message according to the class's format_msg function before attempting to write to serial port.
-        If IOError or SerialException occurs, first disconnect from the serial port, then log and raise the error.
+        Send a message to  the serial device and get a response, optionally connecting as needed.
+        Formats message according to `self.format_msg()` function before sending.
+
+        Serial/IO errors will be raised. An IOError will be raised if the device does not indicate success.
+
+        In the event of an IOError, disconnect from the port before logging and raising the error.
+
+        Args:
+            msg: the message to send
+            connect: Try to connect before sending, if not set an attempt to send will raise an IOError
+
+        Returns: the response from the board, possibly ''
+
+        Raises: IOError in the event of a failure.
+
         """
         with self._rlock:
             if connect:
@@ -163,6 +175,15 @@ class IFBoard(SerialDevice):
     def __str__(self):
         con= 'Connected' if self.connected() else 'Disconnected'
         return f'{self.port}@{self.baudrate} ({con})'
+
+
+    def settle(self, timeout=None):
+        """
+        Wait for the IF board to be fully settled
+        Returns: None
+        """
+        #TODO
+        pass
 
     def set_lo(self, freq_mhz, fractional: bool = True, full_calibration=True, g2_mode=False):
         try:

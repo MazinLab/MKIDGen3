@@ -1,8 +1,7 @@
 import asyncio
 import copy
-
+from mkidgen3.rfsocmemory import determine_max_chunk, memfree_mib
 import mkidgen3.drivers.rfdcclock
-import mkidgen3 as g3
 import mkidgen3.drivers.rfdc
 from pynq import Overlay
 from logging import getLogger
@@ -152,6 +151,9 @@ class FeedlineHardware:
         if fl_setup.trig is not None:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.trig.settings_dict())
 
+        if fl_setup.if_board is not None:
+            self._if_board.settle()
+
     def plram_cap(self, pipe, cr: CaptureRequest, context=None):
         """
 
@@ -193,12 +195,14 @@ class FeedlineHardware:
             return
 
         CHUNKING_THRESHOLD = 256*1024**2
+        capture_atom_bytes = cr.dwid*cr.nchan
+        chunking_thresh = determine_max_chunk('pl', demands=None)
         nchunks = cr.size_bytes // CHUNKING_THRESHOLD
         partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
-        chunks = [CHUNKING_THRESHOLD//4] * nchunks
+        chunks = [CHUNKING_THRESHOLD//capture_atom_bytes] * nchunks
         if partial:
-            chunks.append(partial//4)  #4 bytes per sample
-        getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunck(s) at {cr.tap}')
+            chunks.append(partial//capture_atom_bytes)
+        getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
         import numpy as np
         try:
             for i, csize in enumerate(chunks):
@@ -210,14 +214,20 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
                 times.append(time.time())
+                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data = self._ol.capture.capture(csize, cr.tap)
                 times.append(time.time())
+                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 tracker=cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
                 times.append(time.time())
-                tracker.wait()
+                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                if tracker:
+                    tracker.wait()
                 times.append(time.time())
+                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data.freebuffer()
                 times.append(time.time())
+                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 getLogger(__name__).debug(list(zip(('Cap','Send','Track'),
                                                    (np.diff(times)*1000).astype(int))))
             cr.finish()
