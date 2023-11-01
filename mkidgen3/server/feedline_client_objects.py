@@ -58,7 +58,7 @@ class FRSClient:
         ctx = zmq.Context().instance()
         with ctx.socket(zmq.REQ) as s:
             s.connect(self.command_url)
-            s.send_pyobj(('bequiet', ''))
+            s.send_pyobj(('bequiet', {}))
             return s.recv_pyobj()
 
 
