@@ -221,10 +221,13 @@ class CaptureRequest:
         Args:
             data: a array of data to send out
             status: (optional) a status update message to send out
-            copy: copy the array first, you probably don't want this
+            copy: copy the array first, you probably don't want this. copying the array then freeing the
+            underlying buffer causes segfaults with the pycharm debugger. Be aware that the property
+            zmq.COPY_THRESHOLD will case messages to be copied even if copy is False if the message size
+            is less than the threshold.
             compress: compress the data with blosc2, ignored for file destinations.
 
-        Returns: None | zmq.MessageTracker A MessageTracker is returned if copying or the destination is a file. A
+        Returns: None | zmq.MessageTracker None is returned if copying or the destination is a file. A
         segfault may occur if the data is deallocated prior to the messagetracker being done.
         """
         if not self._status_socket:
@@ -238,7 +241,7 @@ class CaptureRequest:
             raise RuntimeError('Data socket is not established.')
 
         getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        data = np.array(data) if copy else data
+        data = np.array(data.tolist()) if copy else data
         times = []
         times.append(time.time())
         getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
@@ -380,7 +383,7 @@ class CaptureSink(threading.Thread):
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
-            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.shape} '
+            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
                                      f'{self.result.dtype}: {self.result}')
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')

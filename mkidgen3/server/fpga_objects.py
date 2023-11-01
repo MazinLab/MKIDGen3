@@ -16,12 +16,13 @@ import threading
 import pynq
 import time
 
-DEFAULT_BIT_FILE='/home/xilinx/gen3_top.bit'
+DEFAULT_BIT_FILE = '/home/xilinx/gen3_top.bit'
 
 
 class FeedlineHardware:
-    def __init__(self, bitstream=DEFAULT_BIT_FILE, rfdcclock='4.096GSPS_MTS_dualloop', if_port='dev/ifboard', ignore_version=False,
-                 program_clock=True, rfdc: RFDCConfig| None =None, download=False, clock_source='external'):
+    def __init__(self, bitstream=DEFAULT_BIT_FILE, rfdcclock='4.096GSPS_MTS_dualloop', if_port='dev/ifboard',
+                 ignore_version=False,
+                 program_clock=True, rfdc: RFDCConfig | None = None, download=False, clock_source='external'):
         """
 
         Args:
@@ -194,19 +195,19 @@ class FeedlineHardware:
             aio_eloop.close()
             return
 
-        capture_atom_bytes = cr.dwid*cr.nchan
+        capture_atom_bytes = cr.dwid * cr.nchan
         chunking_thresh = determine_max_chunk('pl', demands=None)
-        CHUNKING_THRESHOLD = 3*1024**3
+        CHUNKING_THRESHOLD = 3 * 1024 ** 3
         nchunks = cr.size_bytes // CHUNKING_THRESHOLD
         partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
-        chunks = [CHUNKING_THRESHOLD//capture_atom_bytes] * nchunks
+        chunks = [CHUNKING_THRESHOLD // capture_atom_bytes] * nchunks
         if partial:
-            chunks.append(partial//capture_atom_bytes)
+            chunks.append(partial // capture_atom_bytes)
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
         import numpy as np
         try:
             for i, csize in enumerate(chunks):
-                times=[]
+                times = []
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
                     raise CaptureAbortedException(abort)
@@ -218,18 +219,21 @@ class FeedlineHardware:
                 data = self._ol.capture.capture(csize, cr.tap)
                 times.append(time.time())
                 getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                tracker=cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
+                zmqtmp=zmq.COPY_THRESHOLD
+                zmq.COPY_THRESHOLD = 0
+                tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
                 times.append(time.time())
                 getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                if tracker:
+                if tracker is not None:
                     tracker.wait()
+                zmq.COPY_THRESHOLD = zmqtmp
                 times.append(time.time())
                 getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data.freebuffer()
                 times.append(time.time())
                 getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                getLogger(__name__).debug(list(zip(('Cap','Send','Track'),
-                                                   (np.diff(times)*1000).astype(int))))
+                getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
+                                                   (np.diff(times) * 1000).astype(int))))
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e)
@@ -321,7 +325,7 @@ class FeedlineHardware:
             if isinstance(q, zmq.Socket):
                 q.close()
 
-    def stamp_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context=None):
+    def stamp_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
         failmsg = ''
         postage_maxi = self._ol.photon_pipe.trigger_system.postage_maxi
         try:
