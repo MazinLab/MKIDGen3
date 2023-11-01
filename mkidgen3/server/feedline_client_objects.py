@@ -11,7 +11,7 @@ from datetime import datetime
 import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
-from mkidgen3.funcs import compute_lo_steps, convert_adc_raw_to_mv, convert_raw_iq_to_unit
+from mkidgen3.funcs import compute_lo_steps, convert_adc_raw_to_mv, raw_iq_to_unit, raw_phase_to_radian
 from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
@@ -411,15 +411,21 @@ class StreamCaptureSink(CaptureSink):
 
 
 class ADCCaptureSink(StreamCaptureSink):
-    pass
+    def _finalize_data(self):
+        super()._finalize_data()
+        self.result = ADCCaptureData(self.result)
 
 
 class IQCaptureSink(StreamCaptureSink):
-    pass
+    def _finalize_data(self):
+        super()._finalize_data()
+        self.result = IQCaptureData(self.result)
 
 
 class PhaseCaptureSink(StreamCaptureSink):
-    pass
+    def _finalize_data(self):
+        super()._finalize_data()
+        self.result = PhaseCaptureData(self.result)
 
 
 class SimplePhotonSink(CaptureSink):
@@ -529,7 +535,7 @@ class PostageCaptureSink(CaptureSink):
         #  ids (nevents uint16 array or res cahnnels),
         #  events (nevents x 127 x2 of iq da
         ids, iqs = pickle.loads(self._buf)
-        self.result = ids, iqs
+        self.result = ids, IQCaptureData(iqs)
 
 
 class StatusListener(threading.Thread):
@@ -608,11 +614,11 @@ class ADCCaptureData:
         Args:
             raw_data: raw data captured by adc capture
         """
-        self.raw_data = raw_data
+        self.raw = raw_data
 
     @cached_property
     def data(self):
-        return convert_adc_raw_to_mv(self.raw_data[:, 0] + 1j * self.raw_data[:, 1])
+        return convert_adc_raw_to_mv(self.raw[:, 0] + 1j * self.raw[:, 1])
 
 
 class IQCaptureData:
@@ -620,18 +626,28 @@ class IQCaptureData:
     Formats raw IQ capture data to complex floats between +/- 1.
     """
     def __init__(self, raw_data):
-        self.raw_data = raw_data
+        self.raw = raw_data
 
     @cached_property
     def data(self):
-        return convert_raw_iq_to_unit(self.raw_data[..., 0] + self.raw_data[..., 1] * 1j)
+        return raw_iq_to_unit(self.raw[..., 0] + self.raw[..., 1] * 1j)
 
+
+class PhaseCaptureData:
+    def __init__(self, data):
+        self.raw = data
+
+    @cached_property
+    def data(self):
+        return raw_phase_to_radian(self.raw, scaled=False)
 
 class PostageCaptureData:
     def __init__(self, raw_data):
-        self.raw_data = raw_data
-        #TODO format data
-        pass
+        self.raw = raw_data
+
+    @cached_property
+    def data(self):
+        return raw_iq_to_unit(self.raw)
 
 
 class CaptureJob:
