@@ -50,7 +50,7 @@ cr = CaptureRequest(3*1024**3//4, 'adc', fc, frsa, file='file:///home/xilinx/whe
 cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/iq1024MiB.npz')
 cr = CaptureRequest(1024**3//2//2048, 'phase', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/phase1024MiB.npz')
 cr = CaptureRequest(3024**3//2//2048, 'phase', fc, frsa)
-cr = CaptureRequest(2**19, 'adc', fc, frsb)
+cr = CaptureRequest(2**19, 'adc', fc, frsa)
 
 j = CaptureJob(cr)
 j.submit(True, True)
