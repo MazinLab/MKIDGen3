@@ -240,17 +240,17 @@ class CaptureRequest:
         elif not self._data_socket:
             raise RuntimeError('Data socket is not established.')
 
-        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         data = np.array(data.tolist()) if copy else data
         times = []
         times.append(time.time())
-        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         compressed = blosc2.compress(data) if compress else data
         times.append(time.time())
-        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         lend = len(compressed) / 1024 ** 2
         times.append(time.time())
-        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         self._send_status('capturing', status)
         times.append(time.time())
         tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
@@ -258,7 +258,7 @@ class CaptureRequest:
         getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
                                            (np.diff(times) * 1000).astype(int))))
         getLogger(__name__).debug(
-            f'Sending {lend:.1f} MiB, compressed to {100 * lend / (data.nbytes / 1024 ** 2):.1f} %')
+            f'Sending {lend:.1f} MiB, compressed to {100 * lend / (data.nbytes / 1024 ** 2):.1f}%')
         return tracker
 
     def _send_status(self, status, message=''):
@@ -384,7 +384,7 @@ class CaptureSink(threading.Thread):
             self._finish_accumulation()
             self._finalize_data()
             getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
-                                     f'{self.result.dtype}: {self.result}')
+                                     f'{self.result.data.dtype}: {self.result}')
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
         finally:
