@@ -215,23 +215,23 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
                 times.append(time.time())
-                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+#                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data = self._ol.capture.capture(csize, cr.tap)
                 times.append(time.time())
-                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+#                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 zmqtmp=zmq.COPY_THRESHOLD
                 zmq.COPY_THRESHOLD = 0
                 tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
                 times.append(time.time())
-                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+ #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 if tracker is not None:
                     tracker.wait()
                 zmq.COPY_THRESHOLD = zmqtmp
                 times.append(time.time())
-                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+  #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data.freebuffer()
                 times.append(time.time())
-                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+  #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
                                                    (np.diff(times) * 1000).astype(int))))
             cr.finish()
