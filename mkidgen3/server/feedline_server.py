@@ -22,11 +22,11 @@ class TapThread:
         context = zmq.Context().instance()
         a, b = zpipe(context)
         t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, cr), kwargs=dict(context=context))
-        t.start()
-        self.thread = thread
+        self.thread = t
         self.request = cr
         self._pipe = a
         self._other_pipe = b
+        t.start()
 
     def abort(self):
         try:
