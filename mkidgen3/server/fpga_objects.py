@@ -93,6 +93,9 @@ class FeedlineHardware:
             self._if_board.power_off(save_settings=False)
 
     def config_compatible_with(self, config: FeedlineConfig):
+        # can we do
+        # return self.config_manager.required().compatible_with(config)
+        # instead?
         return self.config_manager.required() < config
 
     def derequire_config(self, id):
@@ -103,7 +106,19 @@ class FeedlineHardware:
             return False
 
     def apply_config(self, id, config: FeedlineConfig):
-        """Takes and applies a config to the hardware, updates and tracks the effective set of settings"""
+        """
+
+        Args:
+            id: an identifier to associate with the config, identifiers should be unique to each config.
+            config: a feedline config to apply, only updates will actually be sent to hardware
+
+        Returns: None
+
+        Raises: ValueError may be raised if a non-unique ID is used. ValueError will be raised if the config is not
+        compatible with currently required configs or it contains settings that are hashed and
+        have not been seen before.
+
+        """
 
         # Add the config to the pot and get the effective config
         fl_setup = self.config_manager.add(id, config)
@@ -121,13 +136,11 @@ class FeedlineHardware:
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
 
-        # RFDC
         if fl_setup.rfdc is not None:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
             self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
-        # IF Board
         if fl_setup.if_board is not None:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             try:
@@ -135,20 +148,19 @@ class FeedlineHardware:
             except Exception as e:
                 getLogger(__name__).warning(f"Unable to connect to IF board: {e}, proceeding without IF board.")
 
-        # DAC Replay
         if fl_setup.waveform is not None:
             getLogger(__name__).debug(f'Configure DAC with {fl_setup.waveform.settings_dict()}')
             self._ol.dac_table.configure(**fl_setup.waveform.settings_dict())
 
         if fl_setup.chan is not None:
             self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.chan.settings_dict())
-            # DDC
+
         if fl_setup.ddc is not None:
             self._ol.photon_pipe.reschan.ddccontrol_0.configure(**fl_setup.ddc.settings_dict())
-            # Matched Filters
+
         if fl_setup.filter is not None:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.filter.settings_dict())
-            # Matched Filters
+
         if fl_setup.trig is not None:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.trig.settings_dict())
 
