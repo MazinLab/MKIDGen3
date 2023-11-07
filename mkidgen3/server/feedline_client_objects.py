@@ -583,7 +583,17 @@ class PostageCaptureSink(CaptureSink):
         # get_postage returns:
         #  ids (nevents uint16 array or res cahnnels),
         #  events (nevents x 127 x2 of iq da
-        ids, iqs = pickle.loads(self._buf)
+        self.result = [], None
+        if not self._buf:
+            getLogger(__name__).debug('Finalizing, empty capture')
+            return
+
+        try:
+            ids, iqs = pickle.loads(self._buf)
+        except EOFError:
+            getLogger(__name__).error('Capture data corrupt')
+            return
+
         self.result = ids, IQCaptureData(iqs)
 
 
