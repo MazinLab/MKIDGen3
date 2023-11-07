@@ -75,6 +75,31 @@ class _FLConfigMixin:
     def __gt__(self, other):
         return self.__ge__(other) and not self == other
 
+    def __bool__(self):
+        """ True iff not empty i.e. specifies config settings """
+        return not self.empty()
+
+    def __hash__(self):
+        """
+        Return a hash of the config, the same settings will always return the same hash.
+
+        A hashed config has the same hash as an unhashed config.
+
+        A setting set to None is different than one set to a value.
+        """
+        if self.is_hashed:
+            return self._hashed
+        return int(_hasher(self._hash_data), 16)
+
+    def __str__(self):
+        """Nicely format one's self"""
+        name = self.__class__.__name__
+        if self._hashed:
+            return f"{name}: {hash(self)} (hashed)"
+        else:
+            return (f"{name}: {hash(self)}\n"
+                    f"  {self.settings_dict()}")
+
     @staticmethod
     def _hashdata_vals_equal(a, b) -> bool:
         """Compare settings values for equality"""
@@ -85,6 +110,12 @@ class _FLConfigMixin:
         elif a != b:
             return False
         return True
+
+    @property
+    def _hash_data(self) -> tuple:
+        """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
+        hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
+        return tuple(sorted(hash_data, key=lambda x: x[0]))
 
     def merge_with(self, other):
         """Adopt the specified values of the other"""
@@ -133,7 +164,13 @@ class _FLConfigMixin:
                 sv = getattr(self, k)
                 ov = getattr(other, k)
                 if ov is not None:
-                    if sv != ov:
+                    if sv is None:
+                        d[k] = ov
+                        continue
+                    if isinstance(ov, np.ndarray):
+                        if not (sv==ov).all():
+                            d[k] = ov
+                    elif sv != ov:
                         d[k] = ov
         return type(self)(**d)
 
@@ -146,33 +183,6 @@ class _FLConfigMixin:
     @property
     def is_hashed(self) -> bool:
         return self._hashed is not None
-
-    @property
-    def _hash_data(self) -> tuple:
-        """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
-        hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
-        return tuple(sorted(hash_data, key=lambda x: x[0]))
-
-    def __hash__(self):
-        """
-        Return a hash of the config, the same settings will always return the same hash.
-
-        A hashed config has the same hash as an unhashed config.
-
-        A setting set to None is different than one set to a value.
-        """
-        if self.is_hashed:
-            return self._hashed
-        return int(_hasher(self._hash_data), 16)
-
-    def __str__(self):
-        """Nicely format one's self"""
-        name = self.__class__.__name__
-        if self._hashed:
-            return f"{name}: {hash(self)} (hashed)"
-        else:
-            return (f"{name}: {hash(self)}\n"
-                    f"  {self.settings_dict()}")
 
     @property
     def hashed_form(self):
@@ -301,6 +311,19 @@ class _FLMetaconfigMixin:
     def __hash__(self):
         return int(_hasher(tuple(sorted(((k, _hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
+    def __bool__(self):
+        """ True iff not empty i.e. specifies config settings """
+        return not self.empty()
+
+    def __iter__(self):
+        """
+        An iterator of config_key: value pairs
+        """
+        for v in sorted(vars(self)):
+            if v.startswith('_'):
+                continue
+            yield v, getattr(self, v)
+
     def empty(self):
         for _, v in self:
             if v is None or v.empty():
@@ -347,15 +370,6 @@ class _FLMetaconfigMixin:
         return {k: v if v is None else v.settings_dict(omit_none=omit_none, _hashed=_hashed,
                                                        unhasher_cache=unhasher_cache)
                 for k, v in self if not (v is None and skip_none)}
-
-    def __iter__(self):
-        """
-        An iterator of config_key: value pairs
-        """
-        for v in sorted(vars(self)):
-            if v.startswith('_'):
-                continue
-            yield v, getattr(self, v)
 
     def iter(self, hashed=True, unhashed=True):  # -> (str,FLConfigMixin|None):
         """

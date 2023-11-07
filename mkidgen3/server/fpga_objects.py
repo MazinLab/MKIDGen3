@@ -123,25 +123,27 @@ class FeedlineHardware:
         # Add the config to the pot and get the effective config
         fl_setup = self.config_manager.add(id, config)
 
-        if fl_setup.rfdc_clk is not None:
+        clock_set = False
+        if fl_setup.rfdc_clk:
             getLogger(__name__).debug(f'Requesting update to RFDC clocking configuration.')
             mkidgen3.drivers.rfdcclock.configure(**fl_setup.rfdc_clk.settings_dict())
+            clock_set = True
 
-        if fl_setup.bitstream is not None or fl_setup.rfdc_clk is not None:
+        if clock_set or fl_setup.bitstream:
             getLogger(__name__).debug(f'Requesting update to bitstream.')
-            if fl_setup.bitstream is not None:
+            if fl_setup.bitstream:
                 x = copy.deepcopy(self._default_bitstream)
                 x.merge_with(fl_setup.bitstream)
 
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
 
-        if fl_setup.rfdc is not None:
+        if fl_setup.rfdc:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
             self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
-        if fl_setup.if_board is not None:
+        if fl_setup.if_board:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             try:
                 self._if_board.configure(**fl_setup.if_board.settings_dict())
@@ -152,19 +154,19 @@ class FeedlineHardware:
             getLogger(__name__).debug(f'Configure DAC with {fl_setup.waveform.settings_dict()}')
             self._ol.dac_table.configure(**fl_setup.waveform.settings_dict())
 
-        if fl_setup.chan is not None:
+        if fl_setup.chan:
             self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.chan.settings_dict())
 
-        if fl_setup.ddc is not None:
+        if fl_setup.ddc:
             self._ol.photon_pipe.reschan.ddccontrol_0.configure(**fl_setup.ddc.settings_dict())
 
-        if fl_setup.filter is not None:
+        if fl_setup.filter:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.filter.settings_dict())
 
-        if fl_setup.trig is not None:
+        if fl_setup.trig:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.trig.settings_dict())
 
-        if fl_setup.if_board is not None:
+        if fl_setup.if_board:
             self._if_board.settle()
 
     def plram_cap(self, pipe, cr: CaptureRequest, context=None):

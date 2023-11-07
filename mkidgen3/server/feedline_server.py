@@ -257,6 +257,8 @@ class FeedlineReadoutServer:
                 getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
                 continue
 
+            cr.destablish()  # ensure nothing lingers from any status messages
+
             try:
                 self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
