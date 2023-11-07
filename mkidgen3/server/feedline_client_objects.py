@@ -1,3 +1,4 @@
+import copy
 import pickle
 import threading
 import time
@@ -16,6 +17,7 @@ from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
+from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTAGE_CHANNELS
 from functools import cached_property
 
 from typing import Tuple
@@ -69,10 +71,48 @@ class CaptureRequest:
     STATUS_ENDPOINT = 'inproc://cap_stat.xsub'
     DATA_ENDPOINT = 'inproc://cap_data.xsub'
     FINAL_STATUSES = ('finished', 'aborted', 'failed')
+    SUPPORTED_TAPS = ('postage', 'photon', 'adc', 'iq', 'phase')
+
+    @staticmethod
+    def validate_channels(tap: str, chan: list):
+        """
+        Verify that the channel/group selection is compatible with the driver.
+
+        Note that this is not done dynamically, no driver discovery is performed
+
+        See mkidgen3.drivers.FilterPhase, .drivers.FilterIQ, and .trigger.PhotonPostageFilter
+        for details about groups and monitor channels.
+
+        Args:
+            chan: A list of channels/groups to monotor
+            tap: A capture location
+
+        Returns: True|False
+        """
+        tap = tap.lower()
+        if tap == 'iq':
+            l = N_IQ_GROUPS
+            m = N_IQ_GROUPS
+        elif tap == 'phase':
+            l = N_PHASE_GROUPS
+            m = N_PHASE_GROUPS
+        elif tap == 'postage':
+            l = N_POSTAGE_CHANNELS
+            m = N_CHANNELS
+        elif chan:
+            l = 0  # no channels for photon or adc capture
+        else:
+            return False
+        try:
+            assert len(chan) <= l
+            for c in chan:
+                assert type(c) == int and 0 <= c < m
+        except AssertionError:
+            return False
+        return True
 
     def __init__(self, n, tap: str, feedline_config: FeedlineConfig,
-                 feedline_server: FRSClient, file: str = None,
-                 chunking_ok: float | bool = True):
+                 feedline_server: FRSClient, channels: list = None, file: str = None):
         """
 
         Args:
@@ -81,10 +121,16 @@ class CaptureRequest:
             feedline_config: the FL configuration required by the capture
             feedline_server: the FRS to capture from
             file: an optinal file
-            chunking_ok:
+            channels: an optional (required for postage) specifier of which channels to monitor.
         """
+        tap = tap.lower()
+        assert tap in CaptureRequest.SUPPORTED_TAPS
         self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
+        if channels is not None:
+            if not CaptureRequest.validate_channels(tap, channels):
+                raise ValueError('Invalid channels specification')
+        self.channels = list(channels) if channels else None
         self.tap = tap  # maybe add some error handling here
         self.feedline_config = feedline_config
         self.server = feedline_server
@@ -240,17 +286,17 @@ class CaptureRequest:
         elif not self._data_socket:
             raise RuntimeError('Data socket is not established.')
 
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         data = np.array(data.tolist()) if copy else data
         times = []
         times.append(time.time())
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         compressed = blosc2.compress(data) if compress else data
         times.append(time.time())
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         lend = len(compressed) / 1024 ** 2
         times.append(time.time())
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         self._send_status('capturing', status)
         times.append(time.time())
         tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
@@ -396,7 +442,7 @@ class CaptureSink(threading.Thread):
         return self.result
 
     def ready(self):
-        self._pipe[0].recv() # block until a byte arrives
+        self._pipe[0].recv()  # block until a byte arrives
 
 
 class StreamCaptureSink(CaptureSink):
@@ -611,6 +657,7 @@ class ADCCaptureData:
     """
     Formats raw ADC capture data to complex floats representing mV at the ADC input SMA.
     """
+
     def __init__(self, raw_data):
         """
         ADC data captured by an ADC capture request
@@ -628,6 +675,7 @@ class IQCaptureData:
     """
     Formats raw IQ capture data to complex floats between +/- 1.
     """
+
     def __init__(self, raw_data):
         self.raw = raw_data
 
@@ -643,6 +691,7 @@ class PhaseCaptureData:
     @cached_property
     def data(self):
         return raw_phase_to_radian(self.raw, scaled=False)
+
 
 class PostageCaptureData:
     def __init__(self, raw_data):

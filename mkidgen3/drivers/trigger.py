@@ -10,9 +10,9 @@ import time
 from collections import namedtuple
 
 from datetime import datetime
+from mkidgen3.mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
+from mkidgen3.system_parameters import LOWPASSED_IQ_SAMPLE_RATE
 
-
-LOWPASSED_IQ_SAMPLE_RATE = 1e6
 
 class PhotonTrigger(DefaultIP):
     bindto = ['mazinlab:mkidgen3:trigger:0.4']
@@ -112,7 +112,7 @@ class PhotonPostageFilter(DefaultIP):
         """ monitor_channels shall be 8 integers in [0,2047] """
         if monitor_channels is None:
             return
-        monitor_channels = np.asarray(monitor_channels, dtype=np.uint16).clip(0, 2047)
+        monitor_channels = np.asarray(monitor_channels[:8], dtype=np.uint16).clip(0, 2047)
         for a, c in zip(self.ADDR_MONITOR_CHAN, monitor_channels):
             self.write(a, int(c))
 
@@ -120,7 +120,7 @@ class PhotonPostageFilter(DefaultIP):
 class PhotonPostageMAXI(DefaultIP):
     POSTAGE_BUFFER_LEN = 1000 * 8  # Must be POSTAGE_BUFSIZE from the HLS
     N_CAPDATA = 127  # Must be 1 less than the HLS value
-    MAX_CAPTURE_TIME_S = POSTAGE_BUFFER_LEN/8*(N_CAPDATA+1)/LOWPASSED_IQ_SAMPLE_RATE
+    MAX_CAPTURE_TIME_S = POSTAGE_BUFFER_LEN / 8 * (N_CAPDATA + 1) / LOWPASSED_IQ_SAMPLE_RATE
     bindto = ['mazinlab:mkidgen3:postage_maxi:0.2']
 
     def __init__(self, description):
@@ -209,7 +209,6 @@ class PhotonPostageMAXI(DefaultIP):
         """ monitor_channels shall be 8 integers in [0,2047] """
         return self.capture(max_events)
 
-from mkidgen3.mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
 
 class PhotonMAXI(DefaultIP):
     N_PHOTON_BUFFERS = 2  # Must match HLS C

@@ -50,7 +50,7 @@ class FeedlineReadoutServer:
                                          ignore_version=ignore_version, program_clock=program_clock,
                                          rfdc=RFDCConfig(dac_mts=mts, adc_mts=False), download=download)
 
-        self._tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
+        self._tap_threads = {k: None for k in ('photon', 'postage', 'engineering')}
         self._to_check = []
         self._checked = []
         self._cap_pipe=None
@@ -287,7 +287,7 @@ class FeedlineReadoutServer:
         """
         assert self._tap_threads.get(cr.type, None) is None, 'Only one TapThread per location may be created at a time'
         cap_runners = {'engineering': self.hardware.plram_cap, 'photon': self.hardware.photon_cap,
-                       'stamp': self.hardware.stamp_cap}
+                       'postage': self.hardware.postage_cap}
         target = cap_runners[cr.type]
 
 

@@ -29,8 +29,9 @@ if_board = IFConfig(lo=6000, adc_attn=10, dac_attn=50)
 # DAC Config
 waveform_vals = WaveformFactory(frequencies=[100e6])
 waveform = WaveformConfig(waveform=waveform_vals)
+waveform2 = WaveformConfig(waveform=WaveformFactory(frequencies=[150e6]))
 freqs = waveform.waveform.freqs
-waveform.waveform.output_waveform
+# waveform.waveform.output_waveform
 # Bin2Res Config
 bins = np.zeros(2048, dtype=int)
 bins[:freqs.size] = opfb_bin_number(freqs, ssr_raw_order=True)
@@ -44,7 +45,8 @@ ddc = DDCConfig(tones=ddc_tones)
 # Feedline Config
 fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     if_board=if_board, waveform=waveform, chan=chan, ddc=ddc)
-
+fc2= FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
+                    if_board=if_board, waveform=waveform2, chan=chan, ddc=ddc)
 # gsm = StatusListener(b'', frsb.status_url)
 cr = CaptureRequest(3*1024**3//4, 'adc', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/adc3096MiB.npz')
 cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/iq1024MiB.npz')
@@ -54,3 +56,12 @@ cr = CaptureRequest(2**19, 'adc', fc, frsa)
 
 j = CaptureJob(cr)
 j.submit(True, True)
+
+cr2 = CaptureRequest(2**19, 'adc', fc2, frsa)
+
+j2 = CaptureJob(cr2)
+j2.submit(True, True)
+
+cr3 = CaptureRequest(100, 'postage', fc2, frsa, channels=[0,1,2])
+j3 = CaptureJob(cr3)
+j3.submit(True, True)

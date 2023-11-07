@@ -15,6 +15,7 @@ from mkidgen3.server.misc import zpipe
 import threading
 import pynq
 import time
+import numpy as np
 
 DEFAULT_BIT_FILE = '/home/xilinx/gen3_top.bit'
 
@@ -218,7 +219,9 @@ class FeedlineHardware:
         if partial:
             chunks.append(partial // capture_atom_bytes)
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
-        import numpy as np
+
+        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
+
         try:
             for i, csize in enumerate(chunks):
                 times = []
@@ -229,23 +232,23 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
                 times.append(time.time())
-#                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                data = self._ol.capture.capture(csize, cr.tap)
+                #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                data = self._ol.capture.capture(csize, cr.tap, groups=None)
                 times.append(time.time())
-#                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                zmqtmp=zmq.COPY_THRESHOLD
+                #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                zmqtmp = zmq.COPY_THRESHOLD
                 zmq.COPY_THRESHOLD = 0
                 tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
                 times.append(time.time())
- #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 if tracker is not None:
                     tracker.wait()
                 zmq.COPY_THRESHOLD = zmqtmp
                 times.append(time.time())
-  #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data.freebuffer()
                 times.append(time.time())
-  #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
                                                    (np.diff(times) * 1000).astype(int))))
             cr.finish()
@@ -339,12 +342,13 @@ class FeedlineHardware:
             if isinstance(q, zmq.Socket):
                 q.close()
 
-    def stamp_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
+    def postage_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
         failmsg = ''
-        postage_maxi = self._ol.photon_pipe.trigger_system.postage_maxi
+        postage_filt = self._ol.trigger_system.postage_filter_0
+        postage_maxi = self._ol.trigger_system.postage_maxi_1
         try:
             assert cr.type == 'postage', 'Incorrect capture request type'
-            assert postage_maxi.register_map.AP_CTRL_AP_IDLE == 1, 'Postage MAXI is busy'
+            assert postage_maxi.register_map.CTRL.AP_IDLE == 1, 'Postage MAXI is busy'
         except AssertionError as e:
             failmsg = str(e)
 
@@ -359,7 +363,8 @@ class FeedlineHardware:
             return
 
         try:
-            postage_maxi.capture()
+            postage_filt.configure(monitor_channels=cr.channels)
+            postage_maxi.capture(max_events=cr.nsamp)
             while not postage_maxi.interrupt.is_set():
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)

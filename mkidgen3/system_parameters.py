@@ -11,11 +11,15 @@ DAC_LUT_SIZE = 2 ** 19  # values
 DAC_SAMPLE_RATE = 4.096e9  # GSPS
 N_OPFB_CHANNELS = 4096  # Number of OPFB channels
 N_CHANNELS = 2048  # Number of DDC (resonator) channels
+N_PHASE_GROUPS = 128  # See HLS and the phase drivers, the AXI streams are 16 channels wide
+N_IQ_GROUPS = 256  # See HLS and the iq drivers, the AXI streams are 8 channels wide
+N_POSTAGE_CHANNELS = 8  # see HLS and the postage filter driver
 SYSTEM_BANDWIDTH = 4.096e9  # Hz Full readout bandwidth
 OS = 2  # OPFB Overlap factor
 PHASE_FRACTIONAL_BITS = 14  #cordic output is 16 bits, signed, 3 integer, 14 fractional
 PL_TOTAL_BYTES = 4 * 1024 ** 3
 SYSTEM_OVERHEAD_BYTES = 768 * 1024 ** 2
+LOWPASSED_IQ_SAMPLE_RATE = 1e6
 
 # per DS926 Table RF-ADC Electrical Characteristics for ZU2xDR Devices
 # (https://docs.xilinx.com/r/en-US/ds926-zynq-ultrascale-plus-rfsoc/RF-ADC-Electrical-Characteristics)
