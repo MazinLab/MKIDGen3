@@ -287,7 +287,7 @@ class CaptureRequest:
             raise RuntimeError('Data socket is not established.')
 
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        data = np.array(data.tolist()) if copy else data
+        data = np.array(data) if copy else data
         times = []
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
@@ -429,10 +429,12 @@ class CaptureSink(threading.Thread):
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
-            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
-                                     f'{self.result.data.dtype}: {self.result}')
+            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.shape} '
+                                     f'{self.result.dtype}: {self.result}')
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
+        except AttributeError:
+            raise
         finally:
             self.destablish()
             self._pipe[1].close()
@@ -594,7 +596,7 @@ class PostageCaptureSink(CaptureSink):
             getLogger(__name__).error('Capture data corrupt')
             return
 
-        self.result = ids, IQCaptureData(iqs)
+        self.result = PostageCaptureData(ids, iqs)
 
 
 class StatusListener(threading.Thread):
@@ -676,6 +678,14 @@ class ADCCaptureData:
         """
         self.raw = raw_data
 
+    @property
+    def dtype(self):
+        self.raw.dtype
+
+    @property
+    def shape(self):
+        self.raw.shape
+
     @cached_property
     def data(self):
         return convert_adc_raw_to_mv(self.raw[:, 0] + 1j * self.raw[:, 1])
@@ -689,6 +699,14 @@ class IQCaptureData:
     def __init__(self, raw_data):
         self.raw = raw_data
 
+    @property
+    def dtype(self):
+        self.raw.dtype
+
+    @property
+    def shape(self):
+        self.raw.shape
+
     @cached_property
     def data(self):
         return raw_iq_to_unit(self.raw[..., 0] + self.raw[..., 1] * 1j)
@@ -698,14 +716,31 @@ class PhaseCaptureData:
     def __init__(self, data):
         self.raw = data
 
+    @property
+    def dtype(self):
+        self.raw.dtype
+
+    @property
+    def shape(self):
+        self.raw.shape
+
     @cached_property
     def data(self):
         return raw_phase_to_radian(self.raw, scaled=False)
 
 
 class PostageCaptureData:
-    def __init__(self, raw_data):
-        self.raw = raw_data
+    def __init__(self, ids, raw_iqs):
+        self.ids = ids
+        self.raw = raw_iqs
+
+    @property
+    def dtype(self):
+        self.raw.dtype
+
+    @property
+    def shape(self):
+        self.raw.shape
 
     @cached_property
     def data(self):

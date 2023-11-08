@@ -3,6 +3,7 @@ loggers:
     pynq: INFO
     mkidgen3: DEBUG
     mkidgen3.drivers.ifboard.io: INFO
+    mkidgen3.drivers.axififo: INFO
     "":
       handlers: [ default ]
       level: WARNING

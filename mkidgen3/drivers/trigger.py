@@ -60,14 +60,14 @@ class PhotonTrigger(DefaultIP):
 
         _thresholds, _holdoffs = None, None
         if thresholds is not None:
-            thresholds = (thresholds.clip(-1, 1) * 128).round().astype(int).clip(-128, 127)
+            thresholds = (np.asarray(thresholds).clip(-1, 1) * 128).round().astype(int).clip(-128, 127)
             if len(thresholds) != 2048:
                 raise ValueError('len(thresholds)!=2048')
         else:
             _thresholds, _holdoffs = self.configuration(scaled=False)
 
         if holdoffs is not None:
-            holdoffs = holdoffs.astype(int).clip(0, 254)
+            holdoffs = np.asarray(holdoffs).astype(int).clip(0, 254)
             if len(holdoffs) != 2048:
                 raise ValueError('len(holdoffs)!=2048')
         elif _holdoffs is None:

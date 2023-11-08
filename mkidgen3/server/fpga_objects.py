@@ -162,7 +162,7 @@ class FeedlineHardware:
             self._ol.photon_pipe.phasematch.configure(**fl_setup.filter.settings_dict())
 
         if fl_setup.trig:
-            self._ol.photon_pipe.phasematch.configure(**fl_setup.trig.settings_dict())
+            self._ol.trigger_system.trigger_1.configure(**fl_setup.trig.settings_dict())
 
         if fl_setup.if_board:
             self._if_board.settle()
@@ -362,7 +362,7 @@ class FeedlineHardware:
         try:
             postage_filt.configure(monitor_channels=cr.channels)
             postage_maxi.capture(max_events=cr.nsamp)
-            while not postage_maxi.interrupt.is_set():
+            while not postage_maxi.register_map.CTRL.INTERRUPT:  # TODO postage_maxi.interrupt.is_set():
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
                     raise CaptureAbortedException(abort)
@@ -370,7 +370,7 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
                 time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
-            cr.send_data(postage_maxi.get_postage(raw=False, scaled=True), copy=False)
+            cr.send_data(postage_maxi.get_postage(raw=True, scaled=False), copy=False)
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e, raise_exception=False)
