@@ -473,6 +473,7 @@ class TriggerConfig(_FLConfigMixin):
     _settings = ('holdoffs', 'thresholds')
 
     def __init__(self, holdoffs: np.ndarray = None, thresholds: np.ndarray = None, _hashed=None):
+        """ See drivers.PhotonTrigger for notes on what these values should be"""
         self._hashed = _hashed
         if self._hashed:
             return

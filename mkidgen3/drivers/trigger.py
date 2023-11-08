@@ -26,7 +26,7 @@ class PhotonTrigger(DefaultIP):
         against the ap_fixed<16,1> phase) and a holdoff value (a byte that specified the number of samples over which to
         pick the minimal phase for a photon).
 
-        The holdoff value is in units of the phase stream sample rate (nominally 1MHz). It must not exceed 245 as the
+        The holdoff value is in units of the phase stream sample rate (nominally 1MHz). It must not exceed 254 as the
         driver needs to add 1 to the requested value internally. It is expected that a value below ~7 will cause
         aberrant and unpredictable behavior in the full design even if the core itself supports it
 
