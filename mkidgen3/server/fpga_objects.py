@@ -94,10 +94,7 @@ class FeedlineHardware:
             self._if_board.power_off(save_settings=False)
 
     def config_compatible_with(self, config: FeedlineConfig):
-        # can we do
-        # return self.config_manager.required().compatible_with(config)
-        # instead?
-        return self.config_manager.required() < config
+        return self.config_manager.required().compatible_with(config)
 
     def derequire_config(self, id):
         """True iff the required settings changed as a result"""

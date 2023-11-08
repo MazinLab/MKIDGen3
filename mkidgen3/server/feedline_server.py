@@ -225,7 +225,7 @@ class FeedlineReadoutServer:
                 else:
                     q = self._to_check if self._to_check else self._checked
                     try:
-                        data.set_status('queued', f'Queued')
+                        data.set_status('queued', f'Queued', destablish=True)
                         q.append(data)
                     except zmq.ZMQError as e:
                         getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
