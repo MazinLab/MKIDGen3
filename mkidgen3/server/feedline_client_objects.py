@@ -17,7 +17,8 @@ from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
-from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTAGE_CHANNELS
+from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTAGE_CHANNELS, \
+    PHOTON_POSTAGE_WINDOW_LENGTH, MAXIMUM_DESIGN_COUNTRATE_PER_S, PHASE_IQ_INPUT_FRACTIONAL_BITS
 from functools import cached_property
 
 from typing import Tuple
@@ -335,24 +336,50 @@ class CaptureRequest:
 
     @property
     def size_bytes(self):
-        return self.nsamp * self.nchan * self.dwid
+        return np.prod(self.buffer_shape).astype(int) * self.dwid
 
     @property
     def nchan(self):
-        return 2048 if self.tap in ('iq', 'phase') else 1
+        if self.channels:
+            return len(self.channels)
+        elif self.tap == 'postage':
+            return N_POSTAGE_CHANNELS
+        elif self.tap in ('iq', 'phase'):
+            return N_CHANNELS
+        else:
+            return 1
 
-    @property
-    def ngroup(self):
-        return 256 if self.tap in ('iq', 'phase') else 1
+    # @property
+    # def ngroup(self):
+    #     if self.tap == 'iq':
+    #         return len(channel_to_iqgroup(self.channels)) if self.channels else N_IQ_GROUPS
+    #     elif self.tap =='phase':
+    #         return len(channel_to_phasegroup(self.channels)) if self.channels else N_PHASE_GROUPS
+    #     else:
+    #         return 1
 
     @property
     def dwid(self):
-        """Data size of sample in bytes"""
-        return 4 if self.tap in ('adc', 'iq') else 2
+        """Data size of sample in bytes, for postage this is the size of a full IQ window"""
+        if self.tap in ('adc', 'iq', 'postage'):
+            return 4
+        elif self.tap == 'phase':
+            return 2
+        else:
+            return PHOTON_DTYPE.itemsize
 
     @property
     def buffer_shape(self):
-        return self.nsamp, self.nchan, self.dwid // 2
+        n = int(np.ceil(self.nsamp * MAXIMUM_DESIGN_COUNTRATE_PER_S / 1000)) if self.tap == 'photon' else self.nsamp
+
+        if self.tap == 'postage':
+            return n, PHOTON_POSTAGE_WINDOW_LENGTH + 1, 2
+        elif self.tap in ('adc', 'iq'):
+            return n, self.nchan, 2
+        elif self.tap == 'photon':
+            return (n,)
+        else:
+            return (n, self.nchan)
 
 
 class CaptureSink(threading.Thread):
@@ -386,7 +413,7 @@ class CaptureSink(threading.Thread):
         self._buf = b''.join(self._buf)
 
     def _finalize_data(self):
-        self.result = np.frombuffer(self._buf, dtype=np.int16)
+        raise NotImplementedError
 
     def establish(self, ctx: zmq.Context = None):
         ctx = ctx or zmq.Context.instance()
@@ -585,18 +612,10 @@ class PostageCaptureSink(CaptureSink):
         # get_postage returns:
         #  ids (nevents uint16 array or res cahnnels),
         #  events (nevents x 127 x2 of iq da
-        self.result = [], None
-        if not self._buf:
-            getLogger(__name__).debug('Finalizing, empty capture')
-            return
 
-        try:
-            ids, iqs = pickle.loads(self._buf)
-        except EOFError:
-            getLogger(__name__).error('Capture data corrupt')
-            return
-
-        self.result = PostageCaptureData(ids, iqs)
+        if len(self._buf) != np.prod(self._expected_buffer_shape) * 4:
+            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}')
+        self.result = PostageCaptureData(self._buf)
 
 
 class StatusListener(threading.Thread):
@@ -730,21 +749,26 @@ class PhaseCaptureData:
 
 
 class PostageCaptureData:
-    def __init__(self, ids, raw_iqs):
-        self.ids = ids
-        self.raw = raw_iqs
+    def __init__(self, buf) :
+        result = np.frombuffer(buf, count=len(buf) // 2, dtype=np.int16)
+        n = result.size//2//128
+        shape = (n, 128, 2)
+        result = result.reshape(shape)
+        self.ids = result[:, 0, 0].astype(np.uint16)
+        self.raw_iqs = result[:, 1:, :]
+        self.raw = result
 
     @property
     def dtype(self):
-        self.raw.dtype
+        return np.int16
 
     @property
     def shape(self):
-        self.raw.shape
+        return self.raw_iqs.shape
 
     @cached_property
     def data(self):
-        return raw_iq_to_unit(self.raw)
+        return raw_iq_to_unit(self.raw_iqs[..., 0] + self.raw_iqs[..., 1] * 1j, word_length=PHASE_IQ_INPUT_FRACTIONAL_BITS)
 
 
 class CaptureJob:

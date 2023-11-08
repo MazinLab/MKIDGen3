@@ -11,7 +11,7 @@ from collections import namedtuple
 
 from datetime import datetime
 from mkidgen3.mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
-from mkidgen3.system_parameters import LOWPASSED_IQ_SAMPLE_RATE
+from mkidgen3.system_parameters import LOWPASSED_IQ_SAMPLE_RATE, PHOTON_POSTAGE_WINDOW_LENGTH
 
 
 class PhotonTrigger(DefaultIP):
@@ -119,7 +119,7 @@ class PhotonPostageFilter(DefaultIP):
 
 class PhotonPostageMAXI(DefaultIP):
     POSTAGE_BUFFER_LEN = 1000 * 8  # Must be POSTAGE_BUFSIZE from the HLS
-    N_CAPDATA = 127  # Must be 1 less than the HLS value
+    N_CAPDATA = PHOTON_POSTAGE_WINDOW_LENGTH  # Must be 1 less than the HLS value
     MAX_CAPTURE_TIME_S = POSTAGE_BUFFER_LEN / 8 * (N_CAPDATA + 1) / LOWPASSED_IQ_SAMPLE_RATE
     bindto = ['mazinlab:mkidgen3:postage_maxi:0.2']
 
@@ -182,7 +182,7 @@ class PhotonPostageMAXI(DefaultIP):
         self.register_map.CTRL.AP_START = 1
         return self._buf
 
-    def get_postage(self, raw=False, scaled=True):
+    def get_postage(self, raw=False, scaled=True, rawbuffer=False):
         """
         Raw takes precedence
 
@@ -193,6 +193,8 @@ class PhotonPostageMAXI(DefaultIP):
         """
         count = self.event_count
         data = np.array(self._buf[:count])
+        if rawbuffer:
+            return data
         ids = data[:, 0, 0].astype(np.uint16)
         events = data[:, 1:, :]
         if not raw:

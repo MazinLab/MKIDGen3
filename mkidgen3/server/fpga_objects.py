@@ -370,7 +370,7 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
                 time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
-            cr.send_data(postage_maxi.get_postage(raw=True, scaled=False), copy=False)
+            cr.send_data(postage_maxi.get_postage(rawbuffer=True), copy=False)
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e, raise_exception=False)

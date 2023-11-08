@@ -7,7 +7,7 @@ import mkidgen3.mkidpynq
 from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
     check_description_for  # config, overlay details
 from logging import getLogger
-from ..system_parameters import N_CHANNELS
+from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup
 
 
 class FilterIQ(DefaultIP):
@@ -51,7 +51,9 @@ class FilterIQ(DefaultIP):
 
         IQs are processed in 256 groups of 8, so to capture the IQ values of resonator channels 0, 37,
         and 2047 groups must be set to either 'all' or should
-        include (0, 4, 255). Note that this will cause IQs for channels 0-7, 32-39, and 2040-2047 to be captured.
+        include e.g. (0, 4, 255). Note that this will cause IQs for channels 0-7, 32-39, and 2040-2047 to be captured.
+
+        len(groups) must be a multiple of 2
         """
 
         # Determine keep, keep a group if all or if the group number is in groups
@@ -60,17 +62,17 @@ class FilterIQ(DefaultIP):
             if groups.lower() != 'all':
                 raise ValueError("The only legal string for keep is 'all'")
             keep += 0xFFFFFFFF
-            last = 255
+            last = N_IQ_GROUPS-1
         else:
 
-            if max(groups) > 255:
-                groups = set([g // 8 for g in groups])  # convert channel to group
+            if max(groups) > N_IQ_GROUPS-1:
+                groups = channel_to_iqgroup(groups)
             last = max(groups)
 
             if len(groups) % 2:
                 raise ValueError('Groups must be captured in multiples of two')
 
-            if max(groups) > 255 or min(groups) < 0:
+            if max(groups) > N_IQ_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-255')
 
             for g in groups:
