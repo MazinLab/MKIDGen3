@@ -240,7 +240,7 @@ class PPSSync(DefaultIP):
         self.subns_per_clk = int((clk_period_ns % 1.0) * 256)
 
         if load_time is None:
-            load_time = start_second * NS_PER_SEC
+            load_time = int(start_second * NS_PER_SEC)
         elif type(load_time) == float:
             load_time = int(load_time)
         if type(load_time) == int:
