@@ -1,4 +1,5 @@
 import logging
+import pickle
 import time
 
 from logging import getLogger
@@ -381,6 +382,9 @@ if __name__ == '__main__':
             getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
             fr.terminate_capture_handler()
             break
+        except pickle.UnpicklingError:
+            getLogger(__name__).error(f'Ignoring unpicklable command')
+            continue
         else:
             if not thread.is_alive():
                 getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '

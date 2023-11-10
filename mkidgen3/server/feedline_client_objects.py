@@ -304,8 +304,8 @@ class CaptureRequest:
         times.append(time.time())
         getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
                                            (np.diff(times) * 1000).astype(int))))
-        getLogger(__name__).debug(
-            f'Sending {lend:.1f} MiB, compressed to {100 * lend / (data.nbytes / 1024 ** 2):.1f}%')
+        cval = 100 * lend / (data.nbytes / 1024 ** 2) if data.nbytes else 100
+        getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
         return tracker
 
     def _send_status(self, status, message=''):
