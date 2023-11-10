@@ -327,8 +327,7 @@ class PhotonMAXI(DefaultIP):
             from mkidgen3.server.misc import zpipe
             stop, kill = zpipe(zmq.Context.instance())
             fetcher_thread = threading.Thread(target=self.photon_fountain, name='photon fountain',
-                                              args=(q, ),
-                                              kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer))
+                                              args=(q, ), kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer))
             return fetcher_thread, stop
 
         import asyncio
@@ -347,7 +346,7 @@ class PhotonMAXI(DefaultIP):
             tic = datetime.utcnow()
             if toc:
                 delt = tic - toc
-                delts.append(delt.microseconds)
+                delts.append(delt.seconds*1e6+delt.microseconds)
                 x = tic.strftime('%M:%S.%f')
                 log.debug(f'Fetching @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
 
@@ -358,10 +357,12 @@ class PhotonMAXI(DefaultIP):
             toc = datetime.utcnow()
             try:
                 x = self.get_photons(no_copy=not copy_buffer)
+                if not x.size:
+                    continue
                 if hasattr(q, 'put'):
                     q.put(x)
                 else:
-                    q.send_pyobj(x)
+                    q.send(x, copy=False)
             except RuntimeError:
                 log.error(f"Dropping photons, couldn't keep up with with buffer rotation")
                 continue
@@ -369,7 +370,8 @@ class PhotonMAXI(DefaultIP):
         if hasattr(q, 'put'):
             q.put(None)
         else:
-            q.send_pyobj(None)
+            q.send(b'')
+            q.close()
 
     @property
     def buffer_count_interval(self):

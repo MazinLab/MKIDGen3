@@ -4,6 +4,7 @@ loggers:
     mkidgen3: DEBUG
     mkidgen3.drivers.ifboard.io: INFO
     mkidgen3.drivers.axififo: INFO
+    mkidgen3.server.captures.statusio: INFO
     "":
       handlers: [ default ]
       level: WARNING

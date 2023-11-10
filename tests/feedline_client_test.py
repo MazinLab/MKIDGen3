@@ -4,7 +4,7 @@ ctx.linger = 0
 import logging
 logging.basicConfig(level=logging.DEBUG)
 from mkidgen3.server.feedline_config import FeedlineConfig
-from mkidgen3.server.feedline_client_objects import CaptureJob, PowerSweepJob, CaptureRequest
+from mkidgen3.server.captures import CaptureJob, PowerSweepJob, CaptureRequest
 
 # cap command default 8888
 # cap data 8889

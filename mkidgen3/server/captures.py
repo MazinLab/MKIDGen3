@@ -22,7 +22,7 @@ from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTA
 from functools import cached_property
 
 from typing import Tuple
-
+PHOTON_DTYPE_PACKED = np.uint64
 
 class CaptureAbortedException(Exception):
     pass
@@ -312,7 +312,7 @@ class CaptureRequest:
         if not self._status_socket:
             raise RuntimeError('No status_socket connection available')
         update = f'{status}:{message}'
-        getLogger(__name__).debug(f'Published status update for {self}: "{update}"')
+        getLogger(__name__).getChild('statusio').debug(f'Published status update for {self}: "{update}"')
         self._last_status = (status, message)
         self._status_socket.send_multipart([self.id, update.encode()])
 
@@ -448,7 +448,7 @@ class CaptureSink(threading.Thread):
                 if self._pipe[1] in avail:
                     getLogger(__name__).debug(f'Received shutdown order, terminating data acq. of {self}')
                     break
-                data = self.receive()
+                data = self.receive()  #does decompression
                 if not data:
                     getLogger(__name__).debug(f'Received null, capture data stream over')
                     break
@@ -508,9 +508,7 @@ class PhaseCaptureSink(StreamCaptureSink):
 
 class SimplePhotonSink(CaptureSink):
     def _accumulate_data(self, d):
-        if self._buf is None:
-            self._buf = []
-        self._buf.append(blosc2.decompress(d))
+        self._buf.append(d)
         if sum(map(len, self._buf)) / 1024 ** 2 > 100:  # limit to 100MiB
             self._buf.pop(0)
 
@@ -518,7 +516,7 @@ class SimplePhotonSink(CaptureSink):
         self._buf = b''.join(self._buf)
 
     def _finalize_data(self):
-        self.result = np.frombuffer(self._buf, dtype=PHOTON_DTYPE)
+        self.result = np.frombuffer(self._buf, dtype=PHOTON_DTYPE_PACKED)
 
 
 class PhotonCaptureSink(CaptureSink):
@@ -867,97 +865,3 @@ class CaptureJob:
             self._status_listener.kill()
             self.datasink.kill()
             raise e
-
-
-class PowerSweepJob:
-    def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3,
-                 use_cached=True):
-        """
-        Args:
-            ntones (int): Number of tones in power sweep comb. Default is 2048.
-            points (int): Number of I and Q samples to capture for each IF setting.
-            min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
-            max_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
-            attn_step (float): Difference in dB between subsequent global attenuation settings.
-                               0.25 dB is default and finest resolution.
-            lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
-            fres (float): Difference in Hz between subsequent LO settings.
-                               7.14e3 Hz is default and finest resolution we can produce with a 4.096 GSPS DAC
-                               and 2**19 complex samples in the waveform look-up-table.
-
-        Returns:
-            PowerSweepRequest: Object which computes the appropriate hardware settings and produces the necessary
-            CaptureRequests to collect power sweep data.
-        """
-        self.freqs = np.linspace(0, ntones - 1, ntones)
-        self.points = points
-        self.total_attens = np.arange(min_attn, max_attn + attn_step, attn_step)
-        self._sweep_bw = SYSTEM_BANDWIDTH / ntones
-        self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
-        self.use_cached = use_cached
-
-    def generate_jobs(self, submit=False) -> List[CaptureJob]:
-        from .feedline_config import WaveformConfig, IFConfig
-
-        feedline_server = 'tcp://localhost:8888'
-        capture_data_server = 'tcp://localhost:8889'
-        status_server = 'tcp://localhost:8890'
-
-        dacconfig = WaveformConfig(n_uniform_tones=1024)
-        dacconfig_hash = hash(dacconfig)
-        jobs = []
-        for adc_atten, dac_atten in self.attens:
-            for freq in self.lo_centers:
-                ifconfig = IFConfig(lo=freq, adc_attn=adc_atten, dac_attn=dac_atten)
-                fc = FeedlineConfig(dac_setup=dacconfig_hash if jobs else dacconfig, if_setup=ifconfig)
-                cr = CaptureRequest(self.points, 'adc', feedline_config=fc)
-                cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
-                jobs.append(cj)
-
-        if submit:
-            try:
-                for j in jobs:
-                    j.submit()
-            except Exception as e:
-                getLogger(__name__).debug('Cancelling all capture jobs use to a submission error.')
-                for j in jobs:
-                    j.cancel(kill_status_monitor=True, kill_data_sink=True)
-                raise e
-
-        return jobs
-
-
-class PowerSweepRequest:
-    def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3,
-                 use_cached=True):
-        """
-        Args:
-            ntones (int): Number of tones in power sweep comb. Default is 2048.
-            points (int): Number of I and Q samples to capture for each IF setting.
-            min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
-            max_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
-            attn_step (float): Difference in dB between subsequent global attenuation settings.
-                               0.25 dB is default and finest resolution.
-            lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
-            fres (float): Difference in Hz between subsequent LO settings.
-                               7.14e3 Hz is default and finest resolution we can produce with a 4.096 GSPS DAC
-                               and 2**19 complex samples in the waveform look-up-table.
-
-        Returns:
-            PowerSweepRequest: Object which computes the appropriate hardware settings and produces the necessary
-            CaptureRequests to collect power sweep data.
-
-        """
-        self.freqs = np.linspace(0, ntones - 1, ntones)
-        self.points = points
-        self.total_attens = np.arange(min_attn, max_attn + attn_step, attn_step)
-        self._sweep_bw = SYSTEM_BANDWIDTH / ntones
-        self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
-        self.use_cached = use_cached
-
-    def capture_requests(self):
-        dacsetup = WaveformConfig('power_sweep_comb', n_uniform_tones=self.ntones)
-        return [CaptureRequest(self.samples, FeedlineConfig(dac_setup=dacsetup,
-                                                            if_config=IFConfig(lo=freq, adc_attn=adc_atten,
-                                                                               dac_attn=dac_atten)))
-                for (adc_atten, dac_atten) in self.attens for freq in self.lo_centers]

@@ -9,7 +9,7 @@ from mkidgen3.mkidpynq import DummyOverlay
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
-from mkidgen3.server.feedline_client_objects import CaptureAbortedException, CaptureRequest
+from mkidgen3.server.captures import CaptureAbortedException, CaptureRequest
 import zmq
 from mkidgen3.server.misc import zpipe
 import threading
@@ -178,13 +178,13 @@ class FeedlineHardware:
         Returns: None
 
         """
-        try:
-            aio_eloop = asyncio.get_running_loop()
-        except RuntimeError:
-            aio_eloop = asyncio.new_event_loop()
+        # try:
+        #     aio_eloop = asyncio.get_running_loop()
+        # except RuntimeError:
+        #     aio_eloop = asyncio.new_event_loop()
             # t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
             # t.start()
-        asyncio.set_event_loop(aio_eloop)
+        # asyncio.set_event_loop(aio_eloop)
         # assert aio_eloop.is_running()
 
         failmsg = ''
@@ -204,7 +204,7 @@ class FeedlineHardware:
         if failmsg:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
-            aio_eloop.close()
+            # aio_eloop.close()
             return
 
         capture_atom_bytes = cr.dwid * cr.nchan
@@ -260,7 +260,7 @@ class FeedlineHardware:
             pipe.close()
         except zmq.ZMQError:
             pass
-        aio_eloop.close()
+        # aio_eloop.close()
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
         """
@@ -268,7 +268,7 @@ class FeedlineHardware:
         cr: the capture request
         """
         failmsg = ''
-        photon_maxi = self._ol.photon_pipe.trigger_system.photon_maxi
+        photon_maxi = self._ol.trigger_system.photon_maxi_0
         try:
             assert cr.type == 'photon', 'Incorrect capture request type'
         except AssertionError as e:
@@ -289,27 +289,44 @@ class FeedlineHardware:
             return
 
         q, q_other = zpipe(zmq.Context.instance())
-        # q = queue.SimpleQueue()  #an alternative
-        fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=False)
+        # q = q_other = queue.SimpleQueue()  #an alternative
+
+        fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=True)
+
 
         def photon_sender(q: zmq.Socket, cr, unpack=False):
             log = getLogger(__name__)
+            from datetime import datetime
+            toc = 0
+            delts = []
             try:
                 while True:
-                    log.info(f'iter start')
-                    photons = q.recv_pyobj()
-                    log.info(f'received')
+                    tic = datetime.utcnow()
+                    if toc:
+                        delt = tic - toc
+                        delts.append(delt.seconds*1e6+delt.microseconds)
+                        x = tic.strftime('%M:%S.%f')
+                        log.debug(f'Prep send @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
+
+                    # photons = q.recv_pyobj()
+                    x=q.recv()
+                    if not x:
+                        break
+                    photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE)
+                    toc = datetime.utcnow()
                     if photons is None:
                         cr.finish()
                         break
-                    cr.send_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False)
+                    cr.send_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False,
+                                 compress=True)
             except Exception as e:
-                cr.abort(f'Uncaught exception: {e}')
-                q.close()
+                cr.abort(f'Uncaught exception in photon sender: {e}')
                 raise e
-            log.info(f'done')
+            finally:
+                q.close()
+            log.info(f'Done. Time between send waits: {delts} us')
 
-        sender = threading.Thread(target=photon_sender, args=(q, cr))
+        sender = threading.Thread(target=photon_sender, args=(q, cr), name='Photon Sender')
 
         try:
             sender.start()
@@ -323,16 +340,17 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
         except CaptureAbortedException as e:
-            stop.set()  # sender will finish up the CR
+            stop.send(b'')  # sender will finish up the CR
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            stop.set()
+            stop.send(b'')
             cr.fail(f'Failed due to {e}')
         finally:
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
-            self._ol.photon_pipe_trigger_system.photon_maxi.stop_capture()
-            stop.set()
+            self._ol.trigger_system.photon_maxi_0.stop_capture()
+            stop.send(b'')
+            stop.close()
             pipe.close()
             fountain.join()
             sender.join()

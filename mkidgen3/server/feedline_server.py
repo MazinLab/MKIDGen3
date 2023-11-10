@@ -4,7 +4,7 @@ import time
 
 from logging import getLogger
 
-from mkidgen3.server.feedline_client_objects import CaptureRequest
+from mkidgen3.server.captures import CaptureRequest
 from mkidgen3.server.feedline_config import RFDCConfig
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 from mkidgen3.server.misc import zpipe
@@ -349,7 +349,7 @@ if __name__ == '__main__':
 
     args = parse_cl()
 
-    context = zmq.Context.instance()
+    context = zmq.Context.instance(io_threads=2)
     context.linger = 1
 
     fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.ifboard,
