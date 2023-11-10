@@ -324,28 +324,44 @@ class PhotonMAXI(DefaultIP):
 
         """
         if spawn:
-            kill = threading
+            from mkidgen3.server.misc import zpipe
+            stop, kill = zpipe(zmq.Context.instance())
             fetcher_thread = threading.Thread(target=self.photon_fountain, name='photon fountain',
-                                              args=(kill, q),
-                                              kwargs=dict(spawn=False))
-            return fetcher_thread, kill
+                                              args=(q, ),
+                                              kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer))
+            return fetcher_thread, stop
+
+        import asyncio
+        loop = asyncio.new_event_loop()
 
         log = getLogger(__name__)
         delts = []
-        while not kill.is_set():
+        toc=0
+        while True:
+            try:
+                kill.recv(zmq.NOBLOCK)
+                break
+            except zmq.ZMQError as e:
+                if e.errno != zmq.EAGAIN:
+                    raise
             tic = datetime.utcnow()
-            delt = tic - toc
-            delts.append(delt.microseconds)
-            x = tic.strftime('%M:%S.%f')
-            log.debug(f'Fetching @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
-            self.interrupt.wait()
+            if toc:
+                delt = tic - toc
+                delts.append(delt.microseconds)
+                x = tic.strftime('%M:%S.%f')
+                log.debug(f'Fetching @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
+
+            # loop.run_until_complete(loop.create_task(self.interrupt.wait()))
+            while not self.register_map.CTRL.INTERRUPT:
+                time.sleep(.001)
+            self.register_map.IP_ISR = 1
             toc = datetime.utcnow()
             try:
                 x = self.get_photons(no_copy=not copy_buffer)
                 if hasattr(q, 'put'):
                     q.put(x)
                 else:
-                    q.send_pyobj(x, copy_buffer=False)
+                    q.send_pyobj(x)
             except RuntimeError:
                 log.error(f"Dropping photons, couldn't keep up with with buffer rotation")
                 continue
