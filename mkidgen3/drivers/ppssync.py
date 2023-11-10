@@ -31,7 +31,7 @@ class PPSMode(Enum):
     """Stops the PPS synchronization engine"""
 
     FORCE_START = 1
-    """Immediatly starts the PPS Engine ignoring PPS pulses"""
+    """Immediately starts the PPS Engine ignoring PPS pulses"""
 
     PPS_FREERUN = 2
     """Starts on the next PPS edge and then counts ignoring all further PPS
