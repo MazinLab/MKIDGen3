@@ -5,6 +5,7 @@ loggers:
     mkidgen3.drivers.ifboard.io: INFO
     mkidgen3.drivers.axififo: INFO
     mkidgen3.server.captures.statusio: INFO
+    mkidgen3.drivers.phasematch: INFO
     "":
       handlers: [ default ]
       level: WARNING

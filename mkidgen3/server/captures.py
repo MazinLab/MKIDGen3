@@ -64,6 +64,12 @@ class FRSClient:
             s.send_pyobj(('bequiet', {}))
             return s.recv_pyobj()
 
+    def order(self, *args):
+        ctx = zmq.Context().instance()
+        with ctx.socket(zmq.REQ) as s:
+            s.connect(self.command_url)
+            s.send_pyobj(args)
+            return s.recv_pyobj()
 
 class CaptureRequest:
     """
@@ -302,8 +308,8 @@ class CaptureRequest:
         times.append(time.time())
         tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
         times.append(time.time())
-        getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
-                                           (np.diff(times) * 1000).astype(int))))
+        # getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
+        #                                    (np.diff(times) * 1000).astype(int))))
         cval = 100 * lend / (data.nbytes / 1024 ** 2) if data.nbytes else 100
         getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
         return tracker

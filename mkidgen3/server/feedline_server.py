@@ -137,6 +137,10 @@ class FeedlineReadoutServer:
         if self._cap_pipe:
             self._cap_pipe.send_pyobj(('abort', 'all'))
 
+    def abort(self, id):
+        if self._cap_pipe:
+            self._cap_pipe.send_pyobj(('abort', id))
+
     def capture(self, capture_request):
         if self._cap_pipe:
             self._cap_pipe.send_pyobj(('capture', capture_request))
@@ -383,6 +387,7 @@ if __name__ == '__main__':
             fr.terminate_capture_handler()
             break
         except pickle.UnpicklingError:
+            socket.send_pyobj('ERROR: Ignoring unpicklable command')
             getLogger(__name__).error(f'Ignoring unpicklable command')
             continue
         else:
@@ -420,6 +425,13 @@ if __name__ == '__main__':
         elif cmd == 'capture':
             fr.capture(arg)
             socket.send_pyobj({'resp': 'OK', 'code': 0})
+
+        elif cmd == 'abort':
+            fr.abort(arg)
+            socket.send_pyobj({'resp': 'OK', 'code': 0})
+
+        else:
+            socket.send_pyobj({'resp': 'ERROR', 'code': 0})
 
     thread.join()
     socket.close()

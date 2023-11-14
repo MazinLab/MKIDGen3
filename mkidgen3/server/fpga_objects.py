@@ -293,13 +293,13 @@ class FeedlineHardware:
 
         fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=True)
 
-
         def photon_sender(q: zmq.Socket, cr, unpack=False):
             log = getLogger(__name__)
             from datetime import datetime
             toc = 0
             delts = []
             try:
+                cr.establish(context=context)
                 while True:
                     tic = datetime.utcnow()
                     if toc:
@@ -308,11 +308,8 @@ class FeedlineHardware:
                         x = tic.strftime('%M:%S.%f')
                         log.debug(f'Prep send @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
 
-                    # photons = q.recv_pyobj()
-                    x=q.recv()
-                    if not x:
-                        break
-                    photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE)
+                    x = q.recv()
+                    photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE) if x else None
                     toc = datetime.utcnow()
                     if photons is None:
                         cr.finish()
@@ -323,9 +320,11 @@ class FeedlineHardware:
                 cr.abort(f'Uncaught exception in photon sender: {e}')
                 raise e
             finally:
+                cr.destablish()
                 q.close()
-            log.info(f'Done. Time between send waits: {delts} us')
+            log.info(f'Sending done. Time between send waits: {delts} us')
 
+        cr.destablish()
         sender = threading.Thread(target=photon_sender, args=(q, cr), name='Photon Sender')
 
         try:
@@ -340,20 +339,19 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
         except CaptureAbortedException as e:
+            getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
             stop.send(b'')  # sender will finish up the CR
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
             stop.send(b'')
-            cr.fail(f'Failed due to {e}')
         finally:
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
             self._ol.trigger_system.photon_maxi_0.stop_capture()
-            stop.send(b'')
-            stop.close()
-            pipe.close()
             fountain.join()
             sender.join()
+            pipe.close()
+            stop.close()
+            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
+            del cr
             if isinstance(q, zmq.Socket):
                 q.close()
 

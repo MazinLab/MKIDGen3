@@ -297,6 +297,8 @@ class PhotonMAXI(DefaultIP):
         ab = self.read(0x28) & 0xff
         count = self.read(0x20) if ab else self.read(0x24)
         count &= 0x1ffff
+        if not count:
+            getLogger(__name__).warning(f'No counts and getting, {repr(self.register_map)}')
         if no_copy:
             ret = self._buf[0 if ab else 1][:count]
         else:
