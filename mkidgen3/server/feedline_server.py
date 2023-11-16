@@ -22,16 +22,21 @@ class TapThread:
     def __init__(self, target, cr:CaptureRequest):
         context = zmq.Context().instance()
         a, b = zpipe(context)
-        t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, cr), kwargs=dict(context=context))
+        t = threading.Thread(target=target, name=f"TapThread: {cr.tap}:{cr.id}", args=(b, cr), kwargs=dict(context=context))
         self.thread = t
         self.request = cr
         self._pipe = a
         self._other_pipe = b
         t.start()
 
+    def __repr__(self):
+        a = 'running' if self.thread.is_alive() else 'stopped'
+        return f'<{self.thread.name} ({a})>'
+
     def abort(self):
         try:
             # Abort the thread, not the request, the thread will handle the abort of the request if necessary!
+            getLogger(__name__).debug(f'Sending abort to worker: {self}')
             self._pipe.send(b'abort')
         except zmq.ZMQError:
             getLogger(__name__).critical(f'Error sending abort to worker thread {self.thread}')
@@ -349,6 +354,10 @@ def start_zmq_devices(cap_addr, stat_addr):
 
 
 if __name__ == '__main__':
+
+    import os, time
+    os.environ['TZ'] = 'right/UTC'
+    time.tzset()
     setup_logging('feedlinereadoutserver')
 
     args = parse_cl()

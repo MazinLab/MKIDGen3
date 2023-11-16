@@ -294,18 +294,24 @@ class PhotonMAXI(DefaultIP):
         self._buf = None
 
     def get_photons(self, no_copy=False):
-        ab = self.read(0x28) & 0xff
-        count = self.read(0x20) if ab else self.read(0x24)
+        # ab = self.read(0x28) & 0xff
+        # count = self.read(0x20) if ab else self.read(0x24)
+
+        cnta, cntb, ab = self.mmio.array[8:11]
+        ab &= 0xff
+        count = cnta if ab else cntb
+
         count &= 0x1ffff
-        if not count:
-            getLogger(__name__).warning(f'No counts and getting, {repr(self.register_map)}')
-        if no_copy:
-            ret = self._buf[0 if ab else 1][:count]
-        else:
-            ret = np.array(self._buf[0 if ab else 1][:count])
+        # if not count:
+        #     getLogger(__name__).warning(f'No counts and getting, {repr(self.register_map)}')
+
+        ret = self._buf[0 if ab else 1][:count]
+        if not no_copy:
+            ret = np.array(ret)
         ab2 = self.read(0x28) & 0xff
-        getLogger(__name__).debug(f'Active Buffer: {ab}. Buffer counts: {count}')
+
         if not ab == ab2:
+            getLogger(__name__).debug(f'Active Buffer: {ab}. Buffer counts: {count}')
             raise RuntimeError('Buffer changed during read')
         return ret
 
@@ -316,9 +322,11 @@ class PhotonMAXI(DefaultIP):
         """
         Is both the target for and can spawn a thread of the same
 
-        kill must be a threading.Event if spawn is not True
+        q may be a zma socket or a queue Queue
 
-        returns an unstarted thread and an event to kill the thread
+        kill must be a zmq.Socket if spawn is not True
+
+        returns an unstarted thread and a kill socket to kill the thread (send anything)
 
         photons will be fetched and sent over the q copying the buffer if copy_buffer is True
 
@@ -332,43 +340,67 @@ class PhotonMAXI(DefaultIP):
                                               args=(q, ), kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer))
             return fetcher_thread, stop
 
-        import asyncio
-        loop = asyncio.new_event_loop()
+        # import asyncio
+        # loop = asyncio.new_event_loop()
 
         log = getLogger(__name__)
         delts = []
-        toc=0
+        times=[time.time()]
         while True:
+            times.append(time.time())
             try:
                 kill.recv(zmq.NOBLOCK)
                 break
             except zmq.ZMQError as e:
                 if e.errno != zmq.EAGAIN:
                     raise
-            tic = datetime.utcnow()
-            if toc:
-                delt = tic - toc
-                delts.append(delt.seconds*1e6+delt.microseconds)
-                x = tic.strftime('%M:%S.%f')
-                log.debug(f'Fetching @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
-
+            times.append(time.time())
             # loop.run_until_complete(loop.create_task(self.interrupt.wait()))
             while not self.register_map.CTRL.INTERRUPT:
                 time.sleep(.001)
             self.register_map.IP_ISR = 1
-            toc = datetime.utcnow()
+            times.append(time.time())
             try:
                 x = self.get_photons(no_copy=not copy_buffer)
+
                 if not x.size:
+                    times.append(time.time())
+                    dif = (np.diff(times) * 1e6).astype(int)
+                    delts.append(dif)
+                    x = datetime.utcnow().strftime('%M:%S.%f')
+                    na=('logmsg','zmqrecv','sleep','get')
+                    log.debug(f'Empty Fetch @ {x}, us intervals: {list(zip(na,dif))}')
+                    times = times[-1:]
                     continue
-                if hasattr(q, 'put'):
-                    q.put(x)
-                else:
-                    q.send(x, copy=False)
+
             except RuntimeError:
-                log.error(f"Dropping photons, couldn't keep up with with buffer rotation")
+                times.append(time.time())
+                dif = (np.diff(times) * 1e6).astype(int)
+                delts.append(dif)
+                x = datetime.utcnow().strftime('%M:%S.%f')
+                na = ('logmsg', 'zmqrecv', 'sleep', 'get')
+                log.error(f'Drop Fetch @ {x}, us intervals: {list(zip(na, dif))}')
+                # log.error(f"Dropping photons, couldn't keep up with buffer rotation")
+                times = times[-1:]
                 continue
-        log.info(f'Time between waits: {delts} us')
+
+            times.append(time.time())
+
+            if hasattr(q, 'put'):
+                q.put(x)
+            else:
+                q.send(x, copy=False)
+
+            times.append(time.time())
+            dif = (np.diff(times)*1e6).astype(int)
+            delts.append(dif)
+            x = datetime.utcnow().strftime('%M:%S.%f')
+            na = ('logmsg', 'zmqrecv', 'sleep', 'get','inq')
+            log.error(f'Fetch @ {x}, us intervals: {list(zip(na, dif))}')
+            times=times[-1:]
+
+        log.info(f'Time between waits: {delts}')
+
         if hasattr(q, 'put'):
             q.put(None)
         else:
@@ -385,6 +417,7 @@ class PhotonMAXI(DefaultIP):
 
     @buffer_interval.setter
     def buffer_interval(self, interval_ms):
+        """range is about 0.5 - 1000 sm"""
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).warning('buffer_interval change will not take effect until core restart')
         l2_buffer_shift = np.round(np.log2(interval_ms * 1000))
