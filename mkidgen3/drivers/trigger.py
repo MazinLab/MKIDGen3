@@ -417,15 +417,17 @@ class PhotonMAXI(DefaultIP):
 
     @buffer_interval.setter
     def buffer_interval(self, interval_ms):
-        """range is about 0.5 - 1000 sm"""
+        """range is about 0.5 - 1000 ms"""
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).warning('buffer_interval change will not take effect until core restart')
         l2_buffer_shift = np.round(np.log2(interval_ms * 1000))
         _buffer_time_ms = 2 ** l2_buffer_shift / 1000
         if l2_buffer_shift < 9 or l2_buffer_shift > 20:
+            l2_buffer_shift = min(max(l2_buffer_shift, 9), 20)
+            _buffer_time_ms = 2 ** l2_buffer_shift / 1000
             getLogger(__name__).warning(f'Requested photon buffer interval ({interval_ms:.2f} ms) unsupported, '
                                         f'using {_buffer_time_ms:.2f}')
-            l2_buffer_shift = min(max(l2_buffer_shift, 9), 20)
+
         elif abs(_buffer_time_ms - interval_ms) >= .01:
             getLogger(__name__).info(f'Photon buffer interval {interval_ms:.2f} ms rounded to '
                                      f'{_buffer_time_ms:.2f} ms')
@@ -434,6 +436,15 @@ class PhotonMAXI(DefaultIP):
         self.write(0x40, int(l2_buffer_shift))
 
     def capture(self, n_photons_per_buffer=2 ** 16 - 1, buffer_time_ms=4.096):
+        """
+
+        Args:
+            n_photons_per_buffer: max 2 ** 16 - 1
+            buffer_time_ms: range is about 0.5 - 1000 ms and will be coerced to the nearest allowed value
+
+        Returns:
+
+        """
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
