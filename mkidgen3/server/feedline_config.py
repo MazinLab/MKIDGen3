@@ -545,7 +545,9 @@ class WaveformConfig(_FLConfigMixin):
     def default_channel_config(self) -> ChannelConfig:
         """A convenience method to get a ChannelConfig using all the waveform's frequencies
         default channel config is not available for tabulated waveforms."""
-        return ChannelConfig(frequencies=self.waveform.freqs)
+        f = np.zeros(2048, dtype=self.waveform.freqs.dtype)
+        f[:self.waveform.freqs.size] = self.waveform.freqs
+        return ChannelConfig(frequencies=f)
 
 
 class FeedlineConfig(_FLMetaconfigMixin):
