@@ -125,6 +125,7 @@ class FeedlineHardware:
         if fl_setup.rfdc_clk:
             getLogger(__name__).debug(f'Requesting update to RFDC clocking configuration.')
             mkidgen3.drivers.rfdcclock.configure(**fl_setup.rfdc_clk.settings_dict())
+            #time.sleep(0.5)
             clock_set = True
 
         if clock_set or fl_setup.bitstream:
@@ -140,6 +141,23 @@ class FeedlineHardware:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
             self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
+
+        from mkidgen3.drivers.ppssync import PPSMode, PPSSource
+        loop = asyncio.new_event_loop()
+        ppstask = loop.create_task(self._ol.pps_synchronization.pps_synchronizer_con_0.start_engine(
+                mode=PPSMode.FORCE_START,
+                start_second=None,
+                skew=None,
+                lockout=None,
+                rollover_thresh=None,
+                resync=False,
+                pps_source=PPSSource.PPS0,
+                load_time=None,
+                clk_period_ns=1.953125,
+                timeout=5,
+                poll=1000*1000*1000))
+        loop.run_until_complete(ppstask)
+        loop.close()
 
         if fl_setup.if_board:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
@@ -340,16 +358,18 @@ class FeedlineHardware:
                         raise
         except CaptureAbortedException as e:
             getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
-            stop.send(b'')  # sender will finish up the CR
+            stop.set()
+            # stop.send(b'')  # sender will finish up the CR
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            stop.send(b'')
+            stop.set()
+            # stop.send(b'')
         finally:
             self._ol.trigger_system.photon_maxi_0.stop_capture()
             fountain.join()
             sender.join()
             pipe.close()
-            stop.close()
+            # stop.close()
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
             if isinstance(q, zmq.Socket):
