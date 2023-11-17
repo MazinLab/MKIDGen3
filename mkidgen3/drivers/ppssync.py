@@ -337,12 +337,12 @@ class PPSSync(DefaultIP):
     @property
     def started(self):
         """Is 1 if the PPS counter engine is started, 0 otherwise"""
-        return _field_get(self.register_map.counter_status_reg.counter_status_reg, 0, 1)
+        return bool(_field_get(self.register_map.counter_status_reg.counter_status_reg, 0, 1))
 
     @property
     def captured(self):
         """Us 1 if the capture engine has captured, 0 otherwise"""
-        return _field_get(self.register_map.counter_status_reg.counter_status_reg, 8, 1)
+        return bool(_field_get(self.register_map.counter_status_reg.counter_status_reg, 8, 1))
 
     @property
     def mode(self):
@@ -484,7 +484,7 @@ class PPSSync(DefaultIP):
     def captured_time_ns(self):
         """The time captured by the core in floating point nanoseconds"""
         if not self.captured:
-            logging.getLogger().warning(
+            logging.getLogger(__name__).warning(
                 "Captured time read while registers are invalid"
             )
         return _make_time_ns(self.captured_secs, self.captured_ns, self.captured_subns)
