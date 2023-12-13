@@ -1,8 +1,12 @@
+import asyncio
 from logging import getLogger
 import numpy as np
+import pynq
+
 from mkidgen3.util import _which_one_bit_set
 from pynq import allocate, DefaultIP
 import bitstruct
+from pynq.lib.dma import _SGDMAChannel
 
 class MCMM2SBufferDescriptor:
     """
@@ -556,3 +560,411 @@ class MCDMA(DefaultIP):
         for c in channels:
             self.write(MCDMA.ADDR_S2MM_TAILDESC[c], self.bd_chains[c].tail_addr & 0xffffffff)
             self.write(MCDMA.ADDR_S2MM_TAILDESC[c]+4, self.bd_chains[c].tail_addr >> 32)
+
+
+class S2MMBufferDescriptor:
+    """
+    S2MM BD:
+    next pointer 32bits
+        0:5 Must be 0, descriptors must be 16-word aligned that is, 0x00, 0x40, 0x80, and so forth. Any other
+            alignment has undefined results.
+        6:31 value must be 16word aligned (e.g multiple of 0x40)
+    next pointer upper 32
+    buffer addr 32bits
+        - must be data width aligned if core lacks Buffer Realignment Engine (ours do)
+    buffer addr upper 32
+    reserved 32bits
+    reserved 32bits
+    control 32bits
+        0-25 This value indicates the amount of space in bytes available for receiving data in an S2MM stream.
+            The usable width of buffer length is specified by the parameter Width of Buffer Length Register
+            (c_sg_length_width). A maximum of 67,108,863 bytes of transfer can be described by this field. This
+            value should be an integer multiple of AXI4-Stream data width. Note: The total buffer space in the S2MM
+            descriptor chain (that is, the sum of buffer length values for each descriptor in a chain) must be, at a
+            minimum, capable of holding the maximum receive packet size. Undefined results occur if a packet larger
+            than the defined buffer space is received. Setting the Buffer Length Register Width smaller than 26
+            reduces FPGA resource utilization.
+        26  End of Frame. Flag indicating the last buffer to be processed. This flag is set by the sw/user to indicate
+            to AXI DMA that this descriptor describes the end of the packet. The buffer associated with this
+            descriptor is received last.
+            0 = Not End of Frame.
+            1 = End of Frame.
+            This is applicable only when AXI_DMA is configured in Micro mode.
+        27 RXSOF  Start of Frame. Flag indicating the first buffer to be processed. This flag is set by the
+            sw/user to indicate to AXI DMA that this descriptor describes the start of the packet. The buffer
+            associated with this descriptor is received first.
+            0 = Not Start of Frame.
+            1 = Start of Frame.
+            This is applicable only when AXI_DMA is configured in Micro mode.
+        28-31 Reserved, should be set to 0
+    status 32bits (set by core)
+        0:25 Transferred Bytes This value indicates the amount of data received and stored in the buffer described by
+            this descriptor. This might or might not match the buffer length. For example, if this descriptor
+            indicates a buffer length of 1,024 bytes but only 50 bytes were received and stored in the buffer,
+            then the Transferred Bytes field indicates 0x32. The entire receive packet length can be determined by
+            adding the Transferred Byte values from each descriptor from the RXSOF descriptor to the Receive End of
+            Frame (RXEOF) descriptor. The usable width of Transferred Bytes is specified by the parameter
+            Width of Buffer Length Register (c_sg_length_width) in the block design. A maximum of 67,108,863 bytes of
+            transfer can be described by this field.
+        26 RXEOF End of Frame. Flag indicating buffer holds the last part of packet. This bit is set by AXI MCDMA to
+            indicate that the buffer associated with this descriptor contains the end of the packet. User Application
+            data sent through the status stream input is stored in APP0 to APP4 of the RXEOF descriptor when the
+            Control/Status Stream is enabled.
+        27 RXSOF Start of Frame. Flag indicating buffer holds first part of packet. This bit is set by AXI MCDMA to
+            indicate that the buffer associated with this descriptor contains the start of the packet.
+        28 DMAIntErr MCDMA Internal Error. Internal Error detected by AXI DataMover. This error can occur if a 0
+            length bytes to transfer is fed to the AXI DataMover. This only happens if the Buffer Length specified in
+            the fetched descriptor is set to 0. This error can also be caused if there is an under-run or
+            over-run condition. This error condition causes the AXI MCDMA to halt gracefully. The MCDMACR.RS bit is
+            set to 0, and when the engine has completely shut down, the MCDMASR.Halted bit is set to 1.
+        29 DMASlvErr DMA Slave Error. Slave Error detected by primary AXI DataMover. This error occurs if the slave
+            read from the Memory Map interface issues a Slave Error. This error condition causes the AXI MCDMA to
+            halt gracefully. The MCDMACR.RS bit is set to 0, and when the engine has completely shut down, the
+            MCDMASR.Halted bit is set to 1.
+        30 DMADecErr DMA Decode Error. Decode Error detected by primary AXI DataMover. This error occurs if the
+            Descriptor Buffer Address points to an invalid address. This error condition causes the AXI MCDMA to halt
+            gracefully. The MCDMACR.RS bit is set to 0, and when the engine has completely shut down,
+            the MCDMASR.Halted bit is set to 1.
+        31 Complete This indicates that the MCDMA engine has completed the transfer as described by the
+            associated descriptor. The MCDMA Engine sets this bit to 1 when the transfer is completed. The software can
+            manipulate any descriptor with the Completed bit set to 1. If a descriptor is fetched with this bit set to
+            1, the descriptor is considered a stale descriptor. A SGIntErr is flagged and the AXI MCDMA engine halts.
+    User0 - User3 32bits each
+        When Status/Control Stream is enabled, the status data received on the AXI Status Stream is stored into the
+        APP fields of the End of Frame (EOF) Descriptor. For other S2MM descriptors with EOF = 0, the APP fields are
+        set to zero by the Scatter Gather Engine.
+    User4 32bits
+        User Application field 4 and Receive Byte Length. If Use RxLength In Status Stream is not enabled, this field
+        functions identically to APP0 to APP3 in that the status data received on the AXI Status Stream is stored into
+        the APP4 field of the End of Frame (EOF) Descriptor. This field has a dual purpose when Use RxLength in
+        Status Stream is enabled. The first least significant bits specified in the Buffer Length Register Width
+        (up to a maximum of 16) specify the total number of receive bytes for a packet that were received on the
+        S2MM primary data stream. Second, the remaining most significant bits are User Application data.
+    """
+    S2MM_STATUS_BD = bitstruct.compile('b1b1 b1b1 b1b1 u26', names=['complete', 'dma_decode_err',
+                                                        'dma_slave_err', 'dma_internal_err',
+                                                        'rx_sof', 'rx_eof', 'xfer_len'])
+    BD = bitstruct.compile('>u64 u64 '
+                           'p64'
+                           'p4 b1b1 u26'
+                           'b1b1 b1b1 b1b1 u26'
+                           'u32 u32 u32 u32 u32', names=['next', 'buff',
+                                                         'control.rxsof', 'control.rxeof', 'control.buff_len',
+                                                         'status.complete', 'status.dma_decode_err',
+                                                         'status.dma_slave_err', 'status.dma_internal_err',
+                                                         'status.rx_sof', 'status.rx_eof', 'status.xfer_len',
+                                                         'app0', 'app1', 'app2', 'app3', 'app4'])
+
+    def __init__(self, next_addr, buf_addr, length, _dict=None):
+        """
+        Note that this may generate an illegal BD:
+            next must be in multiples of 0x40
+            Buf_addr mod stream_width_bytes must be 0. E.g. for a 64 byte wide stream it must be in multiples of 0x40
+            length must be representable by the width of the core's Buffer Length Register
+        """
+        # NB Changing the hard coded defaults will set non-zero initial values for BD properties that are set by the
+        # DMA core, while this probably has no effect it may make it harder to debug what comes back.
+        # setting status.complete=True would initialize the BD as stale.
+        defaults = {'next': next_addr, 'buff': buf_addr,
+                     'control.rxsof':0, 'control.rxeof':0, 'control.buff_len': length,
+                     'status.xfer_len': 0, 'status.rx_eof': False, 'status.rx_sof': False,
+                     'status.dma_internal_err': False, 'status.dma_slave_err': False,
+                     'status.dma_decode_err': False, 'status.complete': False,
+                     'app0': 0, 'app1': 0, 'app2': 0, 'app3': 0, 'app4': 0}
+        if _dict:
+            defaults.update(_dict)
+        self._bytes = self.BD.pack(defaults)
+
+    @staticmethod
+    def from_dict(d):
+        return S2MMBufferDescriptor(0, 0, 0, _dict=d)
+
+    @staticmethod
+    def array_to_dict(array):
+        d = {'next': np.uint64(array[0]) | (np.uint64(array[1]) << np.uint64(32)),
+             'buff': np.uint64(array[2]) | (np.uint64(array[3]) << np.uint64(32)),
+             'control.buff_len': array[6] & ((1 << 26) - 1),
+             'status.xfer_len': array[7] & ((1 << 26) - 1),
+             'status.rx_eof': bool(array[7] & (1 << 26)), 'status.rx_sof': bool(array[7] & (1 << 27)),
+             'status.dma_internal_err': bool(array[7] & (1 << 28)),
+             'status.dma_slave_err': bool(array[7] & (1 << 29)),
+             'status.dma_decode_err': bool(array[7] & (1 << 30)),
+             'status.complete': bool(array[7] & (1 << 31))}
+        if array.size>7:
+            d.update({'app0': array[8], 'app1': array[9], 'app2': array[10],
+                      'app3': array[11], 'app4': array[12]})
+        return d
+
+    @staticmethod
+    def from_array(array):
+        if array.size not in (8, 12):
+            raise ValueError('Improper data, 8 or 12 words required')
+        return S2MMBufferDescriptor(0, 0, 0, _dict=S2MMBufferDescriptor.array_to_dict(array))
+
+    @property
+    def array(self):
+        """ Return 8 or 12 words with the contents of the buffer descriptor. """
+        n=len(self._bytes)//4
+        words = [int(self._bytes[i * 4:(i + 1) * 4].hex(), 16) for i in range(n)]
+        words[:2] = words[:2][::-1]  # gotta swap so that the high word goes into the right register
+        words[2:4] = words[2:4][::-1]
+        return np.array(words, dtype=np.uint32)
+
+
+class S2MMBufferChain:
+    def __init__(self, n_buffers, buffer_size, dtype=np.uint64, cyclic=True):
+        # if buffer_size % dtype().itemsize:
+        #     raise ValueError('Buffer size must be a multiple of the itemsize width (0x40)')
+        self._chain = allocate((n_buffers, 16), dtype=np.uint32)
+        if self._chain.device_address % 0x40:
+            raise ValueError('Chain does not start on a 0x40 address boundary')
+
+        self._buffers = pynq.allocate((n_buffers, buffer_size), dtype=dtype)
+        self.chain_length = n_buffers
+
+        self.buf_addr = [self._buffers.device_address + i*buffer_size*dtype.nbytes for i in range(n_buffers)]
+        self.buffer_size = buffer_size
+        self._buffers[:] = 0
+        self.cyclic=cyclic
+
+        self.chain_addr = [self._chain.device_address + 0x40 * i for i in range(n_buffers)]
+
+        # Build chain
+        for i, chain_addr, buf_addr in zip(range(n_buffers), self.buf_addr):
+            if i==n_buffers-1:
+                next_addr = self.chain_addr[0] if self.cyclic else 0
+            else:
+                next_addr = self.chain_addr[i+1]
+            descriptor = S2MMBufferDescriptor(next_addr, buf_addr, self.buffer_size*dtype.nbytes)
+            self._chain[i, :] = descriptor.array
+
+    @property
+    def head_addr(self):
+        """ Return the memory address of the first descriptor in the chain"""
+        return self._chain[0].device_address
+
+    @property
+    def tail_addr(self):
+        """ Return the memory address of the last descriptor in the chain"""
+        return  self._chain[-1].device_address
+
+    def cyclify_index(self, i):
+        if not self.cyclic and i<0 or i>=self.chain_length:
+            raise IndexError(f'Index {i} out of bounds for a non-cyclic chain of length {self.chain_length}')
+        i%=self.chain_length
+
+    def descriptor(self, i):
+        """Return a dict of link i of the chain"""
+        return self._chain[self.cyclify_index(i)]
+
+    def descriptor_dict(self, i):
+        """Return a dict of link i of the chain"""
+        return S2MMBufferDescriptor.array_to_dict(self._chain[self.cyclify_index(i)])
+
+    def descriptor_data(self, i):
+        """Retrieve the data from the descriptor"""
+        i = self.cyclify_index(i)
+
+        cd = self._chain[i]
+        cd.flush()
+        desc=S2MMBufferDescriptor.from_array(cd)
+
+        # sd = unpack_s2mm_status(self._descr[fetch, 7])
+        if desc.DMAIntErr:
+            assert desc.size != 0, 'a descriptor has null size'
+            raise RuntimeError('DMA under/overrun, dropping data??')
+        if desc.DMADecErr:
+            raise RuntimeError('Invalid buffer descriptor address')
+        if desc.DMASlvErr:
+            raise RuntimeError('Error on slave read of the Memory Map interface')
+        if not desc.complete:
+            raise RuntimeError('IOC but descriptor not completed')
+        if not desc.RXSOF or not desc.RXEOF:
+            raise NotImplementedError('Packet spans multiple descriptors')
+        # if not cd[7]>>31:
+        #     raise RuntimeError('Descriptor not complete')
+        self._buffers[i].flush()
+        d = np.array(self._buffers[i, :desc.n_transferred])
+        cd[7]&=0x7FFF_FFFF
+        return d
+
+    def __del__(self):
+        self._buffers.freebuffer()
+        self._chain.freebuffer()
+
+
+class _CyclicS2MMDMAChannel(_SGDMAChannel):
+    def __init__(self, existing_rx):
+        super().__init__(existing_rx._mmio, existing_rx._max_size, existing_rx._align,
+                         existing_rx._tx_rx, existing_rx._dre, interrupt=existing_rx._interrupt)
+        self.chain = None
+
+    @property
+    def s2mm_currdesc(self):
+        return self.read(self._offset+8, length=8, word_order='little')
+
+    def s2mm_dmasr(self, unpack=False):
+        x= self._mmio.read(self._offset + 4)
+        if unpack:
+            x = S2MMBufferDescriptor.S2MM_STATUS_BD.unpack(np.array([x]))
+        return x
+
+    @property
+    def error_str(self):
+        error = self.s2mm_dmasr
+        if not error & 0x770:  # error bits
+            return None
+        if error & 0x10:
+            return "DMA Internal Error (transfer length 0?)"
+        if error & 0x20:
+            return "DMA Slave Error (cannot access memory map interface)"
+        if error & 0x40:
+            return "DMA Decode Error (invalid address)"
+        if error & 0x100:
+            return "Scatter-Gather Internal Error (re-used completed descriptor)"
+        if error & 0x200:
+            return "Scatter-Gather Slave Error (cannot access memory map interface)"
+        if error & 0x400:
+            return "Scatter-Gather Decode Error (invalid descriptor address)"
+
+    def transfer(self):
+        """
+        Transfer memory with the DMA
+
+        Transfer must only be called when the channel is halted
+        For `nbytes`, 0 means everything after the starting point.
+
+        If the AXI DMA is not configured for data re-alignment then a
+        valid address must be aligned or undefined results occur.
+
+        For S2MM (recv), if Data Realignment Engine is not included,
+        the destination address must be S2MM Memory Map data width aligned.
+
+        For example, if memory map data width = 32, data is aligned if it is
+        located at word offsets (32-bit offset), that is, 0x0, 0x4, 0x8, 0xC,
+        and so forth.
+
+        Cyclic Buffer Descriptor (BD) mode allows the DMA to loop through the
+        buffer descriptors without user intervention. As the DMA cycles through
+        the BDs indefinitely, the wait() function is not valid in this mode.
+        Instead, use the stop() function to terminate DMA operation. This mode
+        is only valid for the sendchannel.
+
+        Parameters
+        ----------
+        array : ContiguousArray
+            An contiguously allocated array to be transferred
+        start : int
+             Offset into array to start. Default is 0.
+        nbytes : int
+             Number of bytes to transfer. Default is 0.
+        cyclic : bool
+             Enable cyclic BD mode. Default is False.
+
+        """
+        if not self.halted:
+            raise RuntimeError("DMA channel not halted")
+
+        self._cyclic = False
+
+        # Idle DMA engine
+        self.stop()
+
+        # Figure out largest possible block size
+
+        blk_size = self._max_size - (self._max_size % self._align)
+        n = blk_size/np.uint64().itemsize
+        if blk_size%np.uint64().itemsize:
+            raise RuntimeError('buffer size is not an appropriate multiple')
+
+        self.chain = S2MMBufferChain(self, np.uint64, dtype=np.uint64, buffer_size=n, cyclic=True)
+
+        start = 0
+        if not self._dre and ((self.chain._buffers.physical_address + start) % self._align) != 0:
+            raise RuntimeError(
+                "DMA does not support unaligned transfers; "
+                "Starting address must be aligned to "
+                "{} bytes.".format(self._align)
+            )
+
+        self.chain._buffers[:]=0
+        if self._flush_before:
+            self.chain._buffers.flush()
+
+        # Flush DMA descriptors
+        self.chain._chain.flush()
+        self._descr = self.chain._chain
+
+
+        desc0 = self.chain.descriptor(0)
+        descN = self.chain.descriptor(self.chain.chain_length-1)
+
+        # Write first desc
+        self._mmio.write(self._offset + 0x08, desc0.physical_address & 0xFFFFFFFF)
+        self._mmio.write(self._offset + 0x0C, (desc0.physical_address>> 32) & 0xFFFFFFFF)
+
+        self._active_buffer = self.chain._buffers
+
+        # Let's go!
+        self.transferred = 0
+        self._mmio.write(self._offset, 0x1001)  # Interrupt on complete non-cyclic (cyclic: 0x1011
+        while not self.running:
+            pass
+
+        # Writing last desc triggers the descriptor fetches
+        self._mmio.write(self._offset + 0x10, descN.physical_address & 0xFFFFFFFF)
+        self._mmio.write(self._offset + 0x14, (descN.physical_address>> 32) & 0xFFFFFFFF)
+
+    def wait(self, use_asyncio=False):
+        if use_asyncio:
+            try:
+                loop = asyncio.get_running_loop()
+            except:
+                loop = asyncio.new_event_loop()
+            task = loop.create_task(self._interrupt.wait())
+            loop.run_until_complete(task)
+        else:
+            while not self.s2mm_dmasr() & 0x7000:  # an interrupt
+                pass
+
+    def yield_buf(self, use_asyncio=False):
+        self.transfer()
+
+        self.packets = []
+        max_packets = 40
+        while True:
+            self.wait(use_asyncio=use_asyncio)
+            status = self.s2mm_dmasr(unpack=True)
+            if status['dma_decode_err'] or status['dma_slave_err'] or status['dma_internal_err']:
+                error_str = 'Errors: '
+                if status['dma_decode_err']:
+                    error_str+='dma_decode_err '
+                if status['dma_slave_err']:
+                    error_str += 'dma_slave_err '
+                if status['dma_internal_err']:
+                    error_str += 'dma_internal_err '
+                raise RuntimeError(error_str)
+            elif status['idle'] or status['halted']:
+                break
+            elif status['complete']:
+                i = self.chain.chain_addr.index(self.s2mm_currdesc)
+                i = self.chain.cyclify_index(i-1)
+                try:
+                    d = self.chain.descriptor_data(i)
+                except RuntimeError as e:
+                    break
+                self.s2mm_taildesc = self.chain.chain_addr[i]
+                self.packets.append(d)
+                if len(self.packets) > max_packets:
+                    break
+            else:
+                raise RuntimeError('Not possible')
+
+    @property
+    def s2mm_taildesc(self):
+        return self.mmio.read(self._offset+0x10, 8, 'little')
+
+    @s2mm_taildesc.setter
+    def s2mm_taildesc(self, x):
+        self.mmio.write(self._offset+0x10, x & 0xffffffff)
+        self.mmio.write(self._offset+0x14, (x  >> 32) & 0xffffffff)
