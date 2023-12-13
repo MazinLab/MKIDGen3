@@ -697,9 +697,10 @@ class S2MMBufferDescriptor:
 
     @staticmethod
     def from_array(array):
-        if array.size not in (8, 12):
-            raise ValueError('Improper data, 8 or 12 words required')
-        return S2MMBufferDescriptor(0, 0, 0, _dict=S2MMBufferDescriptor.array_to_dict(array))
+        if array.size not in (8, 12, 16):
+            raise ValueError('Improper data, 8, 12, or 16 words required')
+        return S2MMBufferDescriptor(0, 0, 0,
+                                    _dict=S2MMBufferDescriptor.array_to_dict(array[:12]))
 
     @property
     def array(self):
@@ -708,21 +709,23 @@ class S2MMBufferDescriptor:
         words = [int(self._bytes[i * 4:(i + 1) * 4].hex(), 16) for i in range(n)]
         words[:2] = words[:2][::-1]  # gotta swap so that the high word goes into the right register
         words[2:4] = words[2:4][::-1]
+        words.extend([0]*(16-len(words)))
         return np.array(words, dtype=np.uint32)
 
 
 class S2MMBufferChain:
-    def __init__(self, n_buffers, buffer_size, dtype=np.uint64, cyclic=True):
+    def __init__(self, n_buffers, buffer_size, dtype='u8', cyclic=True):
         # if buffer_size % dtype().itemsize:
         #     raise ValueError('Buffer size must be a multiple of the itemsize width (0x40)')
-        self._chain = allocate((n_buffers, 16), dtype=np.uint32)
+        self._chain = allocate((n_buffers, 16), dtype='u4')
         if self._chain.device_address % 0x40:
             raise ValueError('Chain does not start on a 0x40 address boundary')
 
         self._buffers = pynq.allocate((n_buffers, buffer_size), dtype=dtype)
         self.chain_length = n_buffers
+        item_nbytes= int(dtype[1:])
 
-        self.buf_addr = [self._buffers.device_address + i*buffer_size*dtype.nbytes for i in range(n_buffers)]
+        self.buf_addr = [self._buffers.device_address + i*buffer_size*item_nbytes for i in range(n_buffers)]
         self.buffer_size = buffer_size
         self._buffers[:] = 0
         self.cyclic=cyclic
@@ -730,12 +733,12 @@ class S2MMBufferChain:
         self.chain_addr = [self._chain.device_address + 0x40 * i for i in range(n_buffers)]
 
         # Build chain
-        for i, chain_addr, buf_addr in zip(range(n_buffers), self.buf_addr):
+        for i, buf_addr in zip(range(n_buffers), self.buf_addr):
             if i==n_buffers-1:
                 next_addr = self.chain_addr[0] if self.cyclic else 0
             else:
                 next_addr = self.chain_addr[i+1]
-            descriptor = S2MMBufferDescriptor(next_addr, buf_addr, self.buffer_size*dtype.nbytes)
+            descriptor = S2MMBufferDescriptor(next_addr, buf_addr, self.buffer_size*item_nbytes)
             self._chain[i, :] = descriptor.array
 
     @property
@@ -801,7 +804,7 @@ class _CyclicS2MMDMAChannel(_SGDMAChannel):
 
     @property
     def s2mm_currdesc(self):
-        return self.read(self._offset+8, length=8, word_order='little')
+        return self._mmio.read(self._offset+8, length=8, word_order='little')
 
     def s2mm_dmasr(self, unpack=False):
         x= self._mmio.read(self._offset + 4)
@@ -873,11 +876,11 @@ class _CyclicS2MMDMAChannel(_SGDMAChannel):
         # Figure out largest possible block size
 
         blk_size = self._max_size - (self._max_size % self._align)
-        n = blk_size/np.uint64().itemsize
+        n = blk_size//np.uint64().itemsize
         if blk_size%np.uint64().itemsize:
             raise RuntimeError('buffer size is not an appropriate multiple')
 
-        self.chain = S2MMBufferChain(self, np.uint64, dtype=np.uint64, buffer_size=n, cyclic=True)
+        self.chain = S2MMBufferChain(4, dtype='u8', buffer_size=n, cyclic=True)
 
         start = 0
         if not self._dre and ((self.chain._buffers.physical_address + start) % self._align) != 0:

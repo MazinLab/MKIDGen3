@@ -27,9 +27,8 @@ class WaitMode(Enum):
     SLEEP = 2
     """ Just sleep """
 
-
 class PhotonTrigger(DefaultIP):
-    bindto = ['mazinlab:mkidgen3:trigger:0.4']
+    bindto = ['mazinlab:mkidgen3:trigger:0.4', 'mazinlab:mkidgen3:fake_trigger:0.1']
     THRESHOFF_SLICE = slice(0x1000 // 4, 0x1000 // 4 + 1024)
     StatusTuple = namedtuple('PhotonTriggerStatus', ('thresholds', 'holdoffs'))
 
