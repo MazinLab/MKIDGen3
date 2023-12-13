@@ -30,19 +30,6 @@ def _hasher(v, pass_none=False):
 class _FLConfigMixin:
     _settings = tuple()
 
-    def __ge__(self, other):
-        """ Returns true if self is at least as specified as other (i.e. other has = or more Nones)"""
-        if other is None:
-            return True
-        if not isinstance(other, type(self)):
-            raise ValueError(f'Invalid type: {type(self)}')
-        if self.is_hashed or other.is_hashed:
-            raise ValueError('Unable to compare hashed configs.')
-        for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
-            if b is not None and a is None:
-                return False
-        return True
-
     def __eq__(self, other):
         """
         Configs are equivalent if all of their settings are the equ.
@@ -50,6 +37,8 @@ class _FLConfigMixin:
         If either is hashed then their hashes must match exactly. Otherwise the data
 
         """
+        if other is None:
+            return self.empty()
         if not isinstance(other, type(self)):
             return False
         if self.is_hashed or other.is_hashed:
@@ -59,21 +48,57 @@ class _FLConfigMixin:
                 return False
         return True
 
+    def __ge__(self, other):
+        """ Returns true if self is at least as specified as other (i.e. other has = or more Nones)"""
+        if other is None:
+            return True
+        if not isinstance(other, type(self)):
+            raise TypeError(f'Invalid type: {type(other)}')
+        if self.is_hashed or other.is_hashed:
+            raise ValueError('Unable to compare hashed configs.')
+        for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
+            if b is not None and a is None:
+                return False
+        return True
+
     def __le__(self, other):
         if other is None:
-            return False
+            return self.empty()
+        if not isinstance(other, type(self)):
+            raise TypeError('Incorrect type for config comparison')
         return other.__ge__(self)
 
     def __lt__(self, other):
         """ Returns true if other is more specified than self (i.e. self has more Nones) """
-        # if other is None:
-        #     return False
-        return not self.__ge__(other)  # and not self == other
+        return not self.__ge__(other)
 
     def __gt__(self, other):
-        if other is None:
-            return True
         return self.__ge__(other) and not self == other
+
+    def __bool__(self):
+        """ True iff not empty i.e. specifies config settings """
+        return not self.empty()
+
+    def __hash__(self):
+        """
+        Return a hash of the config, the same settings will always return the same hash.
+
+        A hashed config has the same hash as an unhashed config.
+
+        A setting set to None is different than one set to a value.
+        """
+        if self.is_hashed:
+            return self._hashed
+        return int(_hasher(self._hash_data), 16)
+
+    def __str__(self):
+        """Nicely format one's self"""
+        name = self.__class__.__name__
+        if self._hashed:
+            return f"{name}: {hash(self)} (hashed)"
+        else:
+            return (f"{name}: {hash(self)}\n"
+                    f"  {self.settings_dict()}")
 
     @staticmethod
     def _hashdata_vals_equal(a, b) -> bool:
@@ -85,6 +110,12 @@ class _FLConfigMixin:
         elif a != b:
             return False
         return True
+
+    @property
+    def _hash_data(self) -> tuple:
+        """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
+        hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
+        return tuple(sorted(hash_data, key=lambda x: x[0]))
 
     def merge_with(self, other):
         """Adopt the specified values of the other"""
@@ -108,6 +139,8 @@ class _FLConfigMixin:
 
         Returns: True if the two configs' settings can coexist in hardware
         """
+        if other is None:
+            return True
         if not isinstance(other, type(self)):
             return False
         if self.is_hashed or other.is_hashed:
@@ -121,43 +154,35 @@ class _FLConfigMixin:
 
     def deltafy(self, other):
         """
-        Generate a new config with only the settings that specified by other but not self, all other settings are None.
+        Generate a new config with only the settings that specified by other but not self, or have changed in other
+        from self, all other settings are None.
 
-        No comparison of setting values is made.
         """
-        d = {k: getattr(other, k) for k in self._settings if getattr(self, k) is None and getattr(other, k) is not None}
+        d = {}
+        if other is not None:
+            for k in self._settings:
+                sv = getattr(self, k)
+                ov = getattr(other, k)
+                if ov is not None:
+                    if sv is None:
+                        d[k] = ov
+                        continue
+                    if isinstance(ov, np.ndarray):
+                        if not (sv==ov).all():
+                            d[k] = ov
+                    elif sv != ov:
+                        d[k] = ov
         return type(self)(**d)
+
+    def empty(self):
+        """
+        Return true if all the settings are unspecified (e.g. None)
+        """
+        return not self.settings_dict(omit_none=True)
 
     @property
     def is_hashed(self) -> bool:
         return self._hashed is not None
-
-    @property
-    def _hash_data(self) -> tuple:
-        """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
-        hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
-        return tuple(sorted(hash_data, key=lambda x: x[0]))
-
-    def __hash__(self):
-        """
-        Return a hash of the config, the same settings will always return the same hash.
-
-        A hashed config has the same hash as an unhashed config.
-
-        A setting set to None is different than one set to a value.
-        """
-        if self.is_hashed:
-            return self._hashed
-        return int(_hasher(self._hash_data), 16)
-
-    def __str__(self):
-        """Nicely format one's self"""
-        name = self.__class__.__name__
-        if self._hashed:
-            return f"{name}: {hash(self)} (hashed)"
-        else:
-            return (f"{name}: {hash(self)}\n"
-                    f"  {self.settings_dict()}")
 
     @property
     def hashed_form(self):
@@ -172,6 +197,8 @@ class _FLConfigMixin:
         """
         Build a dict of setting_keys:values for use in creating a clone of the config or
         passing to a drivers configure() method
+
+        TODO how does a hanshed None setting (is this possible?) interacte with omit_none
 
         Args:
             omit_none: Exclude settings with no set value from the dictionary
@@ -219,6 +246,8 @@ class _FLMetaconfigMixin:
         """
         if other is None:
             return True
+        if not isinstance(other, type(self)):
+            return False
         for k, v in self:
             other_v = getattr(other, k)
             assert isinstance(v, (_FLMetaconfigMixin, _FLConfigMixin, type(None), int))
@@ -230,51 +259,77 @@ class _FLMetaconfigMixin:
         return True
 
     def __eq__(self, other):
-        """ Feedline configs are equivalent if all of their settings are equivalent"""
-        if other is None:
-            return False
-
+        """
+        Feedline configs are == if all of their settings are the same.
+        NB: None is compatible with anything but not considered the same however None is == a config with all None settings
+        """
         for k, v in self:
-            other_v = getattr(other, k)
-            assert isinstance(v, (_FLMetaconfigMixin, _FLConfigMixin, type(None), int))
-            assert isinstance(other_v, (_FLMetaconfigMixin, _FLConfigMixin, type(None), int))
-            # Compute hash if necessary
-            v_hash = hash(v) if isinstance(v, _FLMetaconfigMixin) else v
-            o_hash = hash(other_v) if isinstance(other_v, _FLMetaconfigMixin) else other_v
-            if not v_hash == o_hash:
+            other_v = None if other is None else getattr(other, k)
+            assert isinstance(v, (_FLConfigMixin, type(None)))
+            assert isinstance(other_v, (_FLConfigMixin, type(None)))
+            if v is None and other_v is not None:
+                if not other_v.empty():
+                    return False
+            elif not v == other_v:
                 return False
         return True
 
-    def __gt__(self, other):
-        if other is None:
-            return True
-        return self.__ge__(self) and not self == other
-
-    def __lt__(self, other):
-        return not self.__ge__(other)
-
     def __ge__(self, other):
         """Self is more specified or equal to other """
-        if other is None:
-            return True
-        for k, v in self.iter():
+
+        for k, v in self:
             ov = getattr(other, k)
-            if v is None and ov is not None:
+            if v is None and ov is not None and not ov.empty():
                 return False
-            if v is None and ov is None:
-                continue
             if not v >= ov:
                 return False
         return True
 
+        # for k, v in self.iter():
+        #     ov = getattr(other, k)
+        #     if v is None and ov is not None:
+        #         return False
+        #     if v is None and ov is None:
+        #         continue
+        #     if not v >= ov:
+        #         return False
+        # return True
+
+    def __le__(self, other):
+        if other is None:
+            return self.empty()
+        if not isinstance(other, type(self)):
+            raise TypeError('Incorrect type for config comparison')
+        return other.__ge__(self)
+
+    def __lt__(self, other):
+        return not self.__ge__(other)
+
+    def __gt__(self, other):
+        return self.__ge__(other) and not self == other
+
     def __hash__(self):
         return int(_hasher(tuple(sorted(((k, _hasher(v)) for k, v in self.__dict__.items()), key=lambda x: x[0]))), 16)
 
+    def __bool__(self):
+        """ True iff not empty i.e. specifies config settings """
+        return not self.empty()
+
     def __iter__(self):
+        """
+        An iterator of config_key: value pairs
+        """
         for v in sorted(vars(self)):
             if v.startswith('_'):
                 continue
             yield v, getattr(self, v)
+
+    def empty(self):
+        for _, v in self:
+            if v is None or v.empty():
+                continue
+            return False
+        return True
 
     def merge_with(self, other):
         """Adopt the specified values of the other"""
@@ -318,7 +373,7 @@ class _FLMetaconfigMixin:
 
     def iter(self, hashed=True, unhashed=True):  # -> (str,FLConfigMixin|None):
         """
-        a iterator of config_key: value pairs including any nested meta configs
+        An iterator of config_key: value pairs including any nested meta configs
 
         nested meta config's config keys are yielded as key.child_key, note that nothing prevents a child
         from also having meta config so.this.is.a.possible.key
@@ -418,6 +473,7 @@ class TriggerConfig(_FLConfigMixin):
     _settings = ('holdoffs', 'thresholds')
 
     def __init__(self, holdoffs: np.ndarray = None, thresholds: np.ndarray = None, _hashed=None):
+        """ See drivers.PhotonTrigger for notes on what these values should be"""
         self._hashed = _hashed
         if self._hashed:
             return
@@ -489,7 +545,9 @@ class WaveformConfig(_FLConfigMixin):
     def default_channel_config(self) -> ChannelConfig:
         """A convenience method to get a ChannelConfig using all the waveform's frequencies
         default channel config is not available for tabulated waveforms."""
-        return ChannelConfig(frequencies=self.waveform.freqs)
+        f = np.zeros(2048, dtype=self.waveform.freqs.dtype)
+        f[:self.waveform.freqs.size] = self.waveform.freqs
+        return ChannelConfig(frequencies=f)
 
 
 class FeedlineConfig(_FLMetaconfigMixin):
@@ -628,14 +686,18 @@ class FeedlineConfigManager:
         Raises: ValueError if a config contains unlearned hashes.
 
         """
+        if id in self._config and self._config[id] != config:
+            raise ValueError(f'ID {id} already used by a previously added config')
+
         self.learn(config)
         if self.unlearned_hashes(config):
             raise ValueError('Config contains unlearned hashes')
 
         required = self.required()
-        old = self._current
+
         if not required.compatible_with(config):
             raise ValueError('Proposed settings not compatible with required settings')
+
         self._config[id] = config
         new = self.required()
 
@@ -645,21 +707,12 @@ class FeedlineConfigManager:
         # IFConfig(dac_atten=None) and thus no settings changes would be needed.
 
         for k, v in new:
-            ov = getattr(old, k)
-            if ov is None:
-                continue
-            if isinstance(v, _FLMetaconfigMixin):
-                for k2, v2 in v:
-                    ov2 = getattr(ov, k2)
-                    if ov2 >= v2:
-                        setattr(v, k2, None)
-                    else:
-                        setattr(v, k2, ov2.deltafy(v2))
-            elif ov >= v:
-                setattr(new, k, None)
-            else:
-                setattr(new, k, ov.deltafy(v))
+            cv = getattr(self._current, k)
+            if v is None or cv is None:
+                continue  # our work is done or we must set for sure, either way continue
 
+            setattr(new, k, cv.deltafy(v))  # replace with what's actually changed
+
+        old = self._current
         self._current.merge_with(new)
-
         return new

@@ -3,7 +3,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 from logging import getLogger
 from mkidgen3.server.feedline_config import WaveformConfig
-from mkidgen3.server.feedline_client_objects import CaptureRequest, CaptureJob, FeedlineConfig
+from mkidgen3.server.captures import CaptureRequest, CaptureJob, FeedlineConfig
 
 
 """

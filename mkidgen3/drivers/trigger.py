@@ -10,12 +10,25 @@ import time
 from collections import namedtuple
 
 from datetime import datetime
+from mkidgen3.mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
+from mkidgen3.system_parameters import LOWPASSED_IQ_SAMPLE_RATE, PHOTON_POSTAGE_WINDOW_LENGTH
+
+from enum import Enum
 
 
-LOWPASSED_IQ_SAMPLE_RATE = 1e6
+class WaitMode(Enum):
+    """Enumerates capture waiting modes."""
+    POLL = 0
+    """ Poll the interrupt """
+
+    ASYNC = 1
+    """ Use asyncio to wait on the interrupt"""
+
+    SLEEP = 2
+    """ Just sleep """
 
 class PhotonTrigger(DefaultIP):
-    bindto = ['mazinlab:mkidgen3:trigger:0.4']
+    bindto = ['mazinlab:mkidgen3:trigger:0.4', 'mazinlab:mkidgen3:fake_trigger:0.1']
     THRESHOFF_SLICE = slice(0x1000 // 4, 0x1000 // 4 + 1024)
     StatusTuple = namedtuple('PhotonTriggerStatus', ('thresholds', 'holdoffs'))
 
@@ -26,7 +39,7 @@ class PhotonTrigger(DefaultIP):
         against the ap_fixed<16,1> phase) and a holdoff value (a byte that specified the number of samples over which to
         pick the minimal phase for a photon).
 
-        The holdoff value is in units of the phase stream sample rate (nominally 1MHz). It must not exceed 245 as the
+        The holdoff value is in units of the phase stream sample rate (nominally 1MHz). It must not exceed 254 as the
         driver needs to add 1 to the requested value internally. It is expected that a value below ~7 will cause
         aberrant and unpredictable behavior in the full design even if the core itself supports it
 
@@ -60,14 +73,14 @@ class PhotonTrigger(DefaultIP):
 
         _thresholds, _holdoffs = None, None
         if thresholds is not None:
-            thresholds = (thresholds.clip(-1, 1) * 128).round().astype(int).clip(-128, 127)
+            thresholds = (np.asarray(thresholds).clip(-1, 1) * 128).round().astype(int).clip(-128, 127)
             if len(thresholds) != 2048:
                 raise ValueError('len(thresholds)!=2048')
         else:
             _thresholds, _holdoffs = self.configuration(scaled=False)
 
         if holdoffs is not None:
-            holdoffs = holdoffs.astype(int).clip(0, 254)
+            holdoffs = np.asarray(holdoffs).astype(int).clip(0, 254)
             if len(holdoffs) != 2048:
                 raise ValueError('len(holdoffs)!=2048')
         elif _holdoffs is None:
@@ -88,7 +101,7 @@ class PhotonTrigger(DefaultIP):
 
 class PhotonPostageFilter(DefaultIP):
     ADDR_MONITOR_CHAN = tuple(range(0x10, 0x49, 0x8))
-    bindto = ['mazinlab:mkidgen3:postage_filter:0.2']
+    bindto = ['mazinlab:mkidgen3:postage_filter:0.2', 'mazinlab:mkidgen3:postage_filter_w_interconn:0.1']
 
     def __init__(self, description):
         """
@@ -112,15 +125,15 @@ class PhotonPostageFilter(DefaultIP):
         """ monitor_channels shall be 8 integers in [0,2047] """
         if monitor_channels is None:
             return
-        monitor_channels = np.asarray(monitor_channels, dtype=np.uint16).clip(0, 2047)
+        monitor_channels = np.asarray(monitor_channels[:8], dtype=np.uint16).clip(0, 2047)
         for a, c in zip(self.ADDR_MONITOR_CHAN, monitor_channels):
             self.write(a, int(c))
 
 
 class PhotonPostageMAXI(DefaultIP):
     POSTAGE_BUFFER_LEN = 1000 * 8  # Must be POSTAGE_BUFSIZE from the HLS
-    N_CAPDATA = 127  # Must be 1 less than the HLS value
-    MAX_CAPTURE_TIME_S = POSTAGE_BUFFER_LEN/8*(N_CAPDATA+1)/LOWPASSED_IQ_SAMPLE_RATE
+    N_CAPDATA = PHOTON_POSTAGE_WINDOW_LENGTH  # Must be 1 less than the HLS value
+    MAX_CAPTURE_TIME_S = POSTAGE_BUFFER_LEN / 8 * (N_CAPDATA + 1) / LOWPASSED_IQ_SAMPLE_RATE
     bindto = ['mazinlab:mkidgen3:postage_maxi:0.2']
 
     def __init__(self, description):
@@ -177,12 +190,20 @@ class PhotonPostageMAXI(DefaultIP):
         self.register_map.GIER = 1
         self.read(0x0C)
         self.write(0x2c, min(max(max_events, 1), self.POSTAGE_BUFFER_LEN))
-        self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA + 1, 2), dtype=np.int16)
+        if self._buf is not None:
+            getLogger(__name__).debug('Zeroing and reusing existing buffer')
+            assert self._buf.shape==(self.POSTAGE_BUFFER_LEN, self.N_CAPDATA + 1, 2)
+            assert self._buf.dtype==np.int16
+            self._buf[:] = 0
+        else:
+            self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA + 1, 2), dtype=np.int16)
+
+        self._buf[:,0,0]=-1
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
         self.register_map.CTRL.AP_START = 1
         return self._buf
 
-    def get_postage(self, raw=False, scaled=True):
+    def get_postage(self, raw=False, scaled=True, rawbuffer=False):
         """
         Raw takes precedence
 
@@ -193,6 +214,8 @@ class PhotonPostageMAXI(DefaultIP):
         """
         count = self.event_count
         data = np.array(self._buf[:count])
+        if rawbuffer:
+            return data
         ids = data[:, 0, 0].astype(np.uint16)
         events = data[:, 1:, :]
         if not raw:
@@ -209,14 +232,29 @@ class PhotonPostageMAXI(DefaultIP):
         """ monitor_channels shall be 8 integers in [0,2047] """
         return self.capture(max_events)
 
-from mkidgen3.mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
 
 class PhotonMAXI(DefaultIP):
     N_PHOTON_BUFFERS = 2  # Must match HLS C
-    PHOTON_BUFF_N = 102400  # 10ms 5000 cps 2048 resonators Must match HLS C
+    PHOTON_BUFF_N = 102400  # Must match HLS C and include padding for the partial burst
     PHOTON_DTYPE = _PHOTON_DTYPE
     PHOTON_PACKED_DTYPE = np.uint64
     bindto = ['mazinlab:mkidgen3:photon_maxi:0.2']
+
+    """
+    The PhotonMAXI core operates in AP_CONTINUE mode, ending and auto-restarting each time it needs to rotate the buffer
+    
+    The core reads inbound photons and when it has enough for a maximal (512) burst it writes them to the buffer.
+    every time it reads a photon it sets the number of photons written to that buffer (so this number will increment in
+    steps of 512 and will generally report that its value is valid while the core is running. 
+    
+    It appears that during a burst the core continues to ingest photons.
+    
+    Once a photon is received that has a timestamp with high bits that do not equal the preceding photon OR the number 
+    of photons written is at least the rotation quantity the core will burst out one final, partial burst, update the 
+    count of photons in that buffer and restart using the next buffer.
+    
+    The `active_buffer` is the buffer presently being updated. So if active 
+    """
 
     @staticmethod
     def pack_photons(x, out=None):
@@ -225,11 +263,29 @@ class PhotonMAXI(DefaultIP):
         return ret
 
     @staticmethod
-    def unpack_photons(x, out=None):
-        ret = np.zeros(x.size, dtype=PhotonMAXI.PHOTON_DTYPE) if out is None else out
-        ret['phase'] = x & 0xffff
-        ret['time'] = x >> 28
-        ret['id'] = (x >> 16) & 0xfff
+    def unpack_photons(x, out=None, n=0):
+        """
+        Unpack packed photons, optionally accumulating them into an existing output array
+
+        Args:
+            x: an array of packed photons
+            out: optional, an array of type PhotonMAXI.PHOTON_DTYPE with the shape of x, but see n
+            n: optional, an index into out to insert unpacked photons, the first axis is used if >1d an
+                IndexError is raised if there is insufficient space.
+
+        Returns: the unpacked photon array
+
+        """
+        if out is None:
+            n=0
+        elif x.shape[0]+n>out.shape[0]:
+            raise IndexError('Output array is too small')
+
+        ret = np.zeros(x.shape, dtype=PhotonMAXI.PHOTON_DTYPE) if out is None else out
+        sl=slice(n,n+x.shape[0])
+        ret['phase'][sl] = x & 0xffff
+        ret['time'][sl] = x >> 28
+        ret['id'][sl] = (x >> 16) & 0xfff
         return ret
 
     @staticmethod
@@ -293,29 +349,67 @@ class PhotonMAXI(DefaultIP):
         self._buf = None
 
     def get_photons(self, no_copy=False):
-        ab = self.read(0x28) & 0xff
-        count = self.read(0x20) if ab else self.read(0x24)
+        """v0.4 uses 9c7ad901ef20bb356010109c83311bc5e49db81e of photon_maxi
+        The active buffer is the index of the buffer being loaded and so the other index should be used
+        the active buffer is written every time a photon comes in and so will very likely be valid
+        """
+
+        if not self.register_map.active_buffer_ctrl.active_buffer_ap_vld:
+            getLogger(__name__).warning(f'No counts and getting, {repr(self.register_map)}')
+            # return None  # No valid buffer
+        tic=time.time()
+        cnta, cntb, ab = self.mmio.array[8:11]  # about 66% faster that a pair of reads, about 64-140 us
+        ab &= 0xff
+        count = cnta if ab else cntb
         count &= 0x1ffff
-        if no_copy:
-            ret = self._buf[0 if ab else 1][:count]
-        else:
-            ret = np.array(self._buf[0 if ab else 1][:count])
-        ab2 = self.read(0x28) & 0xff
-        getLogger(__name__).debug(f'Active Buffer: {ab}. Buffer counts: {count}')
-        if not ab == ab2:
+
+        ret = self._buf[0 if ab else 1][:count]
+        if not no_copy:
+            ret = np.array(ret)
+
+        if self.register_map.active_buffer_ctrl.active_buffer_ap_vld:
+            toc=time.time()
+            ab2 = self.mmio.array[10] & 0xff
+            getLogger(__name__).warning(f'Buffer {ab}->{ab2} in {int((toc-tic)*1e6)}. Dropping {count} photons.')
             raise RuntimeError('Buffer changed during read')
+
         return ret
 
     def stop_capture(self):
         self.register_map.CTRL.AUTO_RESTART = 0
 
+    def wait(self, method: WaitMode = WaitMode.POLL, interval=None):
+        """
+        Wait for a capture buffer to be ready
+
+        interval required for WaitMode.SLEEP
+        """
+        if method == WaitMode.POLL:
+            interval = interval or .000010
+            while not self.register_map.IP_ISR.CHAN0_INT_ST:  # self.register_map.CTRL.INTERRUPT:
+                time.sleep(interval)  # default to 10us
+        elif method == WaitMode.SLEEP:
+            assert interval, 'Interval required'
+            time.sleep(interval)
+        else:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+            _ = self.register_map.IP_ISR.CHAN0_INT_ST
+            fut = loop.create_task(self.interrupt.wait())
+            loop.run_until_complete(fut)
+        return
+
     def photon_fountain(self, q: (zmq.Socket, queue.SimpleQueue), kill=None, copy_buffer=False, spawn=True):
         """
         Is both the target for and can spawn a thread of the same
 
-        kill must be a threading.Event if spawn is not True
+        q may be a zma socket or a queue Queue
 
-        returns an unstarted thread and an event to kill the thread
+        kill must be a zmq.Socket if spawn is not True
+
+        returns an unstarted thread and a kill socket to kill the thread (send anything)
 
         photons will be fetched and sent over the q copying the buffer if copy_buffer is True
 
@@ -323,77 +417,176 @@ class PhotonMAXI(DefaultIP):
 
         """
         if spawn:
-            kill = threading
+            from mkidgen3.server.misc import zpipe
+            stop, kill = zpipe(zmq.Context.instance())
             fetcher_thread = threading.Thread(target=self.photon_fountain, name='photon fountain',
-                                              args=(kill, q),
-                                              kwargs=dict(spawn=False))
-            return fetcher_thread, kill
+                                              args=(q, ), kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer))
+            return fetcher_thread, stop
+
+        # import asyncio
+        # loop = asyncio.new_event_loop()
 
         log = getLogger(__name__)
         delts = []
-        while not kill.is_set():
-            tic = datetime.utcnow()
-            delt = tic - toc
-            delts.append(delt.microseconds)
-            x = tic.strftime('%M:%S.%f')
-            log.debug(f'Fetching @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
-            self.interrupt.wait()
-            toc = datetime.utcnow()
+        times=[time.time()]
+        while True:
+            times.append(time.time())
+            try:
+                kill.recv(zmq.NOBLOCK)
+                break
+            except zmq.ZMQError as e:
+                if e.errno != zmq.EAGAIN:
+                    raise
+            times.append(time.time())
+            # loop.run_until_complete(loop.create_task(self.interrupt.wait()))
+            while not self.register_map.CTRL.INTERRUPT:
+                time.sleep(.001)
+            self.register_map.IP_ISR = 1
+            times.append(time.time())
             try:
                 x = self.get_photons(no_copy=not copy_buffer)
-                if hasattr(q, 'put'):
-                    q.put(x)
-                else:
-                    q.send_pyobj(x, copy_buffer=False)
+
+                if not x.size:
+                    times.append(time.time())
+                    dif = (np.diff(times) * 1e6).astype(int)
+                    delts.append(dif)
+                    x = datetime.utcnow().strftime('%M:%S.%f')
+                    na=('logmsg','zmqrecv','sleep','get')
+                    log.debug(f'Empty Fetch @ {x}, us intervals: {list(zip(na,dif))}')
+                    times = times[-1:]
+                    continue
+
             except RuntimeError:
-                log.error(f"Dropping photons, couldn't keep up with with buffer rotation")
+                times.append(time.time())
+                dif = (np.diff(times) * 1e6).astype(int)
+                delts.append(dif)
+                x = datetime.utcnow().strftime('%M:%S.%f')
+                na = ('logmsg', 'zmqrecv', 'sleep', 'get')
+                log.error(f'Drop Fetch @ {x}, us intervals: {list(zip(na, dif))}')
+                # log.error(f"Dropping photons, couldn't keep up with buffer rotation")
+                times = times[-1:]
                 continue
-        log.info(f'Time between waits: {delts} us')
+
+            times.append(time.time())
+
+            if hasattr(q, 'put'):
+                q.put(x)
+            else:
+                q.send(x, copy=False)
+
+            times.append(time.time())
+            dif = (np.diff(times)*1e6).astype(int)
+            delts.append(dif)
+            x = datetime.utcnow().strftime('%M:%S.%f')
+            na = ('logmsg', 'zmqrecv', 'sleep', 'get','inq')
+            log.error(f'Fetch @ {x}, us intervals: {list(zip(na, dif))}')
+            times=times[-1:]
+
+        log.info(f'Time between waits: {delts}')
+
         if hasattr(q, 'put'):
             q.put(None)
         else:
-            q.send_pyobj(None)
+            q.send(b'')
+            q.close()
 
     @property
     def buffer_count_interval(self):
-        return self.read(0x38)
+        return self.read(0x38) & 0x1ffff
 
     @property
     def buffer_interval(self):
-        return 2 ** self.read(0x40) / 1e3
+        return 2 ** (self.read(0x40)&0x1f) / 1e3
 
     @buffer_interval.setter
     def buffer_interval(self, interval_ms):
-        if not self.register_map.CTRL.AP_IDLE:
-            getLogger(__name__).warning('buffer_interval change will not take effect until core restart')
+        """Permissible range is about 0.5 - 1000 ms and will be clipped"""
+        if not self.register_map.CTRL.AP_IDLE and self.register_map.CTRL.AUTO_RESTART:
+            getLogger(__name__).warning('Buffer rotation interval will not take effect until core (auto) restart')
+
         l2_buffer_shift = np.round(np.log2(interval_ms * 1000))
         _buffer_time_ms = 2 ** l2_buffer_shift / 1000
         if l2_buffer_shift < 9 or l2_buffer_shift > 20:
-            getLogger(__name__).warning(f'Requested photon buffer interval ({interval_ms:.2f} ms) unsupported, '
-                                        f'using {_buffer_time_ms:.2f}')
             l2_buffer_shift = min(max(l2_buffer_shift, 9), 20)
+            getLogger(__name__).warning(f'Requested rotation interval ({interval_ms:.2f} ms) unsupported, '
+                                        f'using {2 ** l2_buffer_shift / 1000:.2f}')
         elif abs(_buffer_time_ms - interval_ms) >= .01:
-            getLogger(__name__).info(f'Photon buffer interval {interval_ms:.2f} ms rounded to '
+            getLogger(__name__).info(f'Requested rotation interval {interval_ms:.2f} ms rounded to '
                                      f'{_buffer_time_ms:.2f} ms')
         else:
-            getLogger(__name__).debug(f'Photon buffer interval: {_buffer_time_ms:.2f} ms')
+            getLogger(__name__).info(f'Setting rotation interval to {_buffer_time_ms:.2f} ms')
+
         self.write(0x40, int(l2_buffer_shift))
 
-    def capture(self, n_photons_per_buffer=2 ** 16 - 1, buffer_time_ms=4.096):
+    def capture(self, n_photons_per_buffer=101888, buffer_time_ms=4.096, cacheable_buffer=True):
+        """
+        Initiate capture of photons. Any existing buffer will be freed.
+
+        Note that proper functionality of the core requires that at least two photons arrive at least buffer_time_ms
+        apart or more than n_photons_per_buffer are seen. If neither of those conditions is met the core will not
+        complete. If fewer than 512 photons are seen AND they all arrive within one buffer interval no data will even
+        be written into the buffer. Both of these scenarios are essentially impossible and can be resolved by setting
+        an arbitrarily low event trigger threshold in the trigger core.
+
+        The FPGA photon buffer is used as a C array of size uint128_t[N_PHOTON_BUFFERS][FLAT_PHOTON_BUFSIZE/2]
+        FLAT_PHOTON_BUFSIZE 102400
+        N_PHOTON_BUFFERS 2
+
+        Photons are packed in uint64_t and paired for writing, hence the half size axis and 128b word length for
+        the core. In the core:
+        0,0 [photon0 photon1 buf1] 0,1 [photon2 photon3 buf1] .....
+        1,0 [photon0 photon1 buf2] 1,1 [photon2 photon3 buf2] .....
+
+        In python we want to allocate  (N_PHOTON_BUFFERS, FLAT_PHOTON_BUFSIZE)
+
+        the photon count buffer is 17 bits and maxes out at 131071
+
+        the core only increments the count in units of 512 however (a maximal burst of 4KiB of photons)
+        then when a threshold is crossed (n_photons_per_buffer) or the high bits of two successive photons
+        aren't the same we stop bursting, send off any remaining values, and swap buffers
+
+        the active buffer (preburst) and photon count (post burst) are set once per burst, then the count updated with the
+        numbers from the final partial burst (just before restart, buffer swap and zeroing of new buffer count)
+
+        So each buffer must be n_photons_per_buffer + 256*2 photons deep
+
+
+        Args:
+            n_photons_per_buffer: Rotate the buffer approximately every this many photons, underset this by 512 if the
+            actual rate is critical. Will be limited to about 100k. FLAT_PHOTON_BUFSIZE-512 (see HLS C code).
+            buffer_time_ms: Rotate the buffer approximately every this many ms. Valid range is ~ 0.5 - 1000 us.
+
+        Returns: The buffer. Don't write to this. Don't free this. Glances at the returned buffer should see new
+        photons appear in batches of 512 and the buffer count increment in steps of 512, both until a final batch of up
+        to 512. Then the other buffer should increment while the values in the inactive buffer stay the same.
+
+        """
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
-        self.register_map.IP_IER.CHAN0_INT_EN = 1
+
+        if self._buf is not None:
+            self._buf.freebuffer()
+            self._buf = None
+
+        _ = self.register_map.IP_ISR.CHAN0_INT_ST  # clear any existing interrupt (COR)
+        self.register_map.IP_IER.CHAN0_INT_EN = 1  # enable the done interrupt
         self.register_map.GIER = 1
-        self.read(0x0C)
-        self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N), dtype=self.PHOTON_PACKED_DTYPE,
-                                    cacheable=True)
+        self.read(0x0C)  # (COR)  #clear the occupancy valid flag by reading the buffer occupancy
+
+        self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N),
+                                    dtype=self.PHOTON_PACKED_DTYPE, cacheable=cacheable_buffer)
+
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
+
         self.buffer_interval = buffer_time_ms
-        if n_photons_per_buffer > 2 ** 16 - 1:
-            getLogger(__name__).warning(f'Requested rotation count too high, photon buffer will be rotated at n'
-                                        f'={2 ** 16 - 1}')
-        self.write(0x38, min(max(int(n_photons_per_buffer), 0), 2 ** 16 - 1))
+
+        n_photons_per_buffer = int(n_photons_per_buffer)
+        if n_photons_per_buffer > self.PHOTON_BUFF_N - 512:
+            getLogger(__name__).warning(f'Requesting too large a buffer, buffer will be rotated every '
+                                        f'={self.PHOTON_BUFF_N} photons')
+
+        self.write(0x38, min(max(int(n_photons_per_buffer), 1), self.PHOTON_BUFF_N - 512))
         self.register_map.CTRL.AUTO_RESTART = 1
         self.register_map.CTRL.AP_START = 1
         return self._buf

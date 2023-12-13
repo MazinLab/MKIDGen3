@@ -93,14 +93,18 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         if coefficients is None:
             return
         getLogger(__name__).info(f'Configuring phasematch with {coefficients}')
-        if isinstance(coefficients, str) and coefficients == 'unity':
+        if isinstance(coefficients, str) and coefficients.startswith('unity'):
+            try:
+                n = min(max(1, int(coefficients.strip('unity'))), 2048)
+            except:
+                n = 2048
             coefficients = np.zeros((2048, 30), dtype=np.int16)
-            coefficients[:, 0] = 2 ** 15 - 1
+            coefficients[:n, 0] = 2 ** 15 - 1
         if coefficients.shape != (2048, 30) or coefficients.dtype != 'int16':
             raise ValueError('Please specify a (2048,30) array of int16s')
 
         channel = 0
-        for coefs in coefficients:
-            self.load_coeff(channel, coefs, vet=False, raw=True)
+        for coeffs in coefficients:
+            self.load_coeff(channel, coeffs, vet=False, raw=True)
             channel += 1
-        self.load_coeff(channel - 1, coefs, vet=False, raw=True, force_commit=True)
+        self.load_coeff(channel - 1, coeffs, vet=False, raw=True, force_commit=True)

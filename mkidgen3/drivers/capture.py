@@ -7,6 +7,7 @@ import mkidgen3.mkidpynq
 from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
     check_description_for  # config, overlay details
 from logging import getLogger
+from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup
 
 
 class FilterIQ(DefaultIP):
@@ -37,6 +38,10 @@ class FilterIQ(DefaultIP):
             ret += [j + 32 * i for j in range(32) if k & (1 << j)]
         return ret
 
+    def keep_channels(self, channels):
+        """Like keep= but assume channels"""
+        self.keep = set([g // 8 for g in channels])
+
     @keep.setter
     def keep(self, groups):
         """
@@ -46,7 +51,9 @@ class FilterIQ(DefaultIP):
 
         IQs are processed in 256 groups of 8, so to capture the IQ values of resonator channels 0, 37,
         and 2047 groups must be set to either 'all' or should
-        include (0, 4, 255). Note that this will cause IQs for channels 0-7, 32-39, and 2040-2047 to be captured.
+        include e.g. (0, 4, 255). Note that this will cause IQs for channels 0-7, 32-39, and 2040-2047 to be captured.
+
+        len(groups) must be a multiple of 2
         """
 
         # Determine keep, keep a group if all or if the group number is in groups
@@ -55,17 +62,17 @@ class FilterIQ(DefaultIP):
             if groups.lower() != 'all':
                 raise ValueError("The only legal string for keep is 'all'")
             keep += 0xFFFFFFFF
-            last = 255
+            last = N_IQ_GROUPS-1
         else:
 
-            if max(groups) > 255:
-                groups = set([g // 8 for g in groups])  # convert channel to group
+            if max(groups) > N_IQ_GROUPS-1:
+                groups = channel_to_iqgroup(groups)
             last = max(groups)
 
             if len(groups) % 2:
                 raise ValueError('Groups must be captured in multiples of two')
 
-            if max(groups) > 255 or min(groups) < 0:
+            if max(groups) > N_IQ_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-255')
 
             for g in groups:
@@ -102,6 +109,10 @@ class FilterPhase(DefaultIP):
             k = self.read(self.ADDR_KEEP + 0x4 * i)
             ret += [j + 32 * i for j in range(32) if k & (1 << j)]
         return ret
+
+    def keep_channels(self, channels):
+        """Like keep= but assume channels"""
+        self.keep = set([g // 16 for g in channels])
 
     @keep.setter
     def keep(self, groups):
@@ -269,11 +280,19 @@ class CaptureHierarchy(DefaultHierarchy):
     def is_ready(self):
         return self.axis2mm.ready
 
-    def capture(self, n, tap):
-        if tap in (self.IQ_MAP):
-            return self.capture_iq(n, tap_location=tap, duration=False, groups='all')
+    def keep_channels(self, tap, channels):
+        if isinstance(channels, str) and channels == 'all':
+            channels = list(range(N_CHANNELS))
+        if tap in self.IQ_MAP:
+            return self.filter_iq.keep_channels(channels)
         elif tap in self.PHASE_MAP:
-            return self.capture_phase(n, tap_location=tap, duration=False, groups='all')
+            return self.filter_phase.keep_channels(channels)
+
+    def capture(self, n, tap, groups='all'):
+        if tap in self.IQ_MAP:
+            return self.capture_iq(n, tap_location=tap, duration=False, groups=groups)
+        elif tap in self.PHASE_MAP:
+            return self.capture_phase(n, tap_location=tap, duration=False, groups=groups)
         elif tap == 'adc':
             return self.capture_adc(n, complex=False, sleep=True, use_interrupt=False, duration=False)
         else:
@@ -283,7 +302,7 @@ class CaptureHierarchy(DefaultHierarchy):
     def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
-        if buffer is None one will be allocated
+        if buffer is None one will be allocated, if groups is None it will not be set
         """
         if duration:
             # n samples = t[ms] * 2e6[samples/sec]
@@ -294,7 +313,9 @@ class CaptureHierarchy(DefaultHierarchy):
 
         if self.filter_iq.get(tap_location, None) is None:
             raise ValueError(f'Unsupported IQ capture location: {tap_location}')
-        self.filter_iq[tap_location].keep = groups
+
+        if groups is not None:
+            self.filter_iq[tap_location].keep = groups
         n_groups = len(self.filter_iq[tap_location].keep)
 
         # each group is 8 IQ (32 bytes)
@@ -381,7 +402,7 @@ class CaptureHierarchy(DefaultHierarchy):
     def capture_phase(self, n, groups='all', duration=False, tap_location='phase'):
         """
         samples are captured in multiples of 16 will be clipped ad necessary
-        groups is 0-127 or all
+        groups is 0-127 or all, None will leave the filter unchanged
         """
         if self.filter_phase.get(tap_location, None) is None:
             getLogger(__name__).error(f'Bitstream does not support phase capture at tap {tap_location}')
@@ -394,7 +415,8 @@ class CaptureHierarchy(DefaultHierarchy):
         if n <= 0:
             raise ValueError('Must request at least 1 sample')
 
-        self.filter_phase[tap_location].keep = groups
+        if groups is not None:
+            self.filter_phase[tap_location].keep = groups
         n_groups = len(self.filter_phase[tap_location].keep)
 
         # each group is 16 phases (32 bytes)

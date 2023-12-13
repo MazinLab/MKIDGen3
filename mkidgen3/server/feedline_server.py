@@ -1,9 +1,10 @@
 import logging
+import pickle
 import time
 
 from logging import getLogger
 
-from mkidgen3.server.feedline_client_objects import CaptureRequest
+from mkidgen3.server.captures import CaptureRequest
 from mkidgen3.server.feedline_config import RFDCConfig
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 from mkidgen3.server.misc import zpipe
@@ -21,16 +22,21 @@ class TapThread:
     def __init__(self, target, cr:CaptureRequest):
         context = zmq.Context().instance()
         a, b = zpipe(context)
-        t = threading.Thread(target=target, name=f"CapThread: {cr.id}", args=(b, cr), kwargs=dict(context=context))
+        t = threading.Thread(target=target, name=f"TapThread: {cr.tap}:{cr.id}", args=(b, cr), kwargs=dict(context=context))
         self.thread = t
         self.request = cr
         self._pipe = a
         self._other_pipe = b
         t.start()
 
+    def __repr__(self):
+        a = 'running' if self.thread.is_alive() else 'stopped'
+        return f'<{self.thread.name} ({a})>'
+
     def abort(self):
         try:
             # Abort the thread, not the request, the thread will handle the abort of the request if necessary!
+            getLogger(__name__).debug(f'Sending abort to worker: {self}')
             self._pipe.send(b'abort')
         except zmq.ZMQError:
             getLogger(__name__).critical(f'Error sending abort to worker thread {self.thread}')
@@ -50,7 +56,7 @@ class FeedlineReadoutServer:
                                          ignore_version=ignore_version, program_clock=program_clock,
                                          rfdc=RFDCConfig(dac_mts=mts, adc_mts=False), download=download)
 
-        self._tap_threads = {k: None for k in ('photon', 'stamp', 'engineering')}
+        self._tap_threads = {k: None for k in ('photon', 'postage', 'engineering')}
         self._to_check = []
         self._checked = []
         self._cap_pipe=None
@@ -135,6 +141,10 @@ class FeedlineReadoutServer:
     def abort_all(self):
         if self._cap_pipe:
             self._cap_pipe.send_pyobj(('abort', 'all'))
+
+    def abort(self, id):
+        if self._cap_pipe:
+            self._cap_pipe.send_pyobj(('abort', id))
 
     def capture(self, capture_request):
         if self._cap_pipe:
@@ -225,7 +235,7 @@ class FeedlineReadoutServer:
                 else:
                     q = self._to_check if self._to_check else self._checked
                     try:
-                        data.set_status('queued', f'Queued')
+                        data.set_status('queued', f'Queued', destablish=True)
                         q.append(data)
                     except zmq.ZMQError as e:
                         getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
@@ -257,6 +267,8 @@ class FeedlineReadoutServer:
                 getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
                 continue
 
+            cr.destablish()  # ensure nothing lingers from any status messages
+
             try:
                 self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
@@ -285,7 +297,7 @@ class FeedlineReadoutServer:
         """
         assert self._tap_threads.get(cr.type, None) is None, 'Only one TapThread per location may be created at a time'
         cap_runners = {'engineering': self.hardware.plram_cap, 'photon': self.hardware.photon_cap,
-                       'stamp': self.hardware.stamp_cap}
+                       'postage': self.hardware.postage_cap}
         target = cap_runners[cr.type]
 
 
@@ -342,11 +354,15 @@ def start_zmq_devices(cap_addr, stat_addr):
 
 
 if __name__ == '__main__':
+
+    import os, time
+    os.environ['TZ'] = 'right/UTC'
+    time.tzset()
     setup_logging('feedlinereadoutserver')
 
     args = parse_cl()
 
-    context = zmq.Context.instance()
+    context = zmq.Context.instance(io_threads=2)
     context.linger = 1
 
     fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.ifboard,
@@ -379,6 +395,10 @@ if __name__ == '__main__':
             getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
             fr.terminate_capture_handler()
             break
+        except pickle.UnpicklingError:
+            socket.send_pyobj('ERROR: Ignoring unpicklable command')
+            getLogger(__name__).error(f'Ignoring unpicklable command')
+            continue
         else:
             if not thread.is_alive():
                 getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
@@ -414,6 +434,13 @@ if __name__ == '__main__':
         elif cmd == 'capture':
             fr.capture(arg)
             socket.send_pyobj({'resp': 'OK', 'code': 0})
+
+        elif cmd == 'abort':
+            fr.abort(arg)
+            socket.send_pyobj({'resp': 'OK', 'code': 0})
+
+        else:
+            socket.send_pyobj({'resp': 'ERROR', 'code': 0})
 
     thread.join()
     socket.close()

@@ -31,7 +31,7 @@ class PPSMode(Enum):
     """Stops the PPS synchronization engine"""
 
     FORCE_START = 1
-    """Immediatly starts the PPS Engine ignoring PPS pulses"""
+    """Immediately starts the PPS Engine ignoring PPS pulses"""
 
     PPS_FREERUN = 2
     """Starts on the next PPS edge and then counts ignoring all further PPS
@@ -127,31 +127,120 @@ class PPSSync(DefaultIP):
     async def start_engine(
         self,
         mode=PPSMode.PPS_SYNC,
+        start_second=None,
         skew=None,
-        load_time=None,
         lockout=None,
         rollover_thresh=None,
         resync=False,
-        start_after=None,
         pps_source=PPSSource.PPS0,
+        load_time=None,
         clk_period_ns=1.953125,
         timeout=5,
         poll=0,
     ):
+        """Starts the PPS engine in varius modes
+
+        This will configure the PPS engine and provides the tools needed to
+        achieve board to board timestamp synchronization.
+
+        If you have a reliable PPS Source with PPS edges on the second edge
+        and assumptions about board clock accuracy are met then you can simply
+        do `await start_engine(skew = 0)` on all of the boards you want to
+        synchronize.
+
+        If your PPS Edges are not aligned then you will likely want go choose
+        a board and measure the skew relative to the system clock using
+        `PPSSync.sample_skew` and pass that skew to all the boards you want
+        to start with `await start_engine(skew = skew_measured)`. If you are
+        using only one board then `await start_engine()` will work
+
+        If you do not have a PPS Source available then using
+        `await start_engine(PPSMode.FORCE_START)` will start the PPS Engine
+        with a the system time plus or minus around a dozen microseconds
+
+        Parameters
+        ----------
+        mode : PPSMode
+            The mode you would like to start the PPS engine, SYSREF modes are
+            not considered part of the stable API and should not be used unless
+            you know what you are doing
+        start_second : int or NoneType
+            The UTC second you would like PPS engine to begin counting at,
+            should be at least 4 seconds in the future or None
+        skew : int or NoneType
+            The skew between the true second and the PPS Signal edge
+            in nanoseconds. If the PPS signal comes from a GPS source set this
+            to zero otherwise set it to a common value accross all boards. If
+            this is set to None the skew will be sampled relative to the system
+            clock in PPS based modes.
+        lockout : int or NoneType
+            The debounce interval in nanoseconds during which PPS edges will be
+            ignored. For the FS725 this can likely safely be left as None,
+            otherwise set to the risetime of your PPS Signal.
+        rollover : int or NoneType
+            The number of nanoseconds after which the nanosecond counter should
+            rollover without the presence of a PPSEdge. For the FS725 this can
+            be safely set to 1000*1000*1000 if your clocking configuration
+            is correct. If this and lockout are set resync should likely be set
+        resync : bool
+            If this is set and a PPS edge is detected in the lockout period
+            after an automatic rollover then the counter will not rollover
+            until another PPS Edge has been seen
+        pps_source : PPSSource
+            The PPS Source selected, see enum for documentation, PPS Signals
+            can be ord together
+        load_time : int or float or list or tuple or NoneType
+            The time in nanoseconds (float or int), or a tuple/list of seconds,
+            nanoseconds, and subns which you would like to load into the engine
+            when it is started. If None the utc second on which we are starting
+            will be chosen.
+        clk_period_ns : float
+            The clock period of the clock domain the block exists in. This
+            should be 1/512MHz as of Nov 2023
+        timeout : int or float
+            The maximum number of seconds to wait for a pps edge before timing
+            out worst case execution time is less than 4 + 2*timeout seconds
+        poll : float
+            The number of seconds to wait between polling for the status of
+            the engine
+
+        Assumptions
+        -----------
+        - The systems clock is accurate to < 0.2 seconds and that a leap
+          second is not about to occur
+        - The system is fast enough that ~12 writes to registers and
+          a small amount of floating point math can be done in python in
+          under a second
+        """
         self.mode = PPSMode.STOPPED
         self.pps_source = pps_source
         self.delay_ns = 0
         self.started_event.clear()
 
-        if skew is None:
-            skew = await self.sample_skew(timeout, poll)
-        self.delay_ns = NS_PER_SEC - skew
+        if lockout == 0:
+            lockout = None
+
+        if mode == PPSMode.PPS_SYNC or mode == PPSMode.PPS_FREERUN:
+            if skew is None:
+                skew = await self.sample_skew(timeout, poll)
+            if start_second is None:
+                start_second = time.time() + 1
+                if start_second % 1.0 > 0.75:
+                    start_second = start_second + 1
+                start_second = start_second // 1
+        else:
+            if skew is None:
+                skew = 0
+            if start_second is None:
+                start_second = time.time()
+        start_after = start_second - 0.2
+        self.delay_ns = (NS_PER_SEC - skew) % NS_PER_SEC
 
         self.ns_per_clk = int(floor(clk_period_ns))
         self.subns_per_clk = int((clk_period_ns % 1.0) * 256)
 
         if load_time is None:
-            load_time = time.time_ns() + NS_PER_SEC
+            load_time = int(start_second * NS_PER_SEC)
         elif type(load_time) == float:
             load_time = int(load_time)
         if type(load_time) == int:
@@ -175,10 +264,11 @@ class PPSSync(DefaultIP):
 
         if start_after is not None:
             while time.time_ns() < start_after:
-                asyncio.sleep(poll)
+                await asyncio.sleep(poll)
 
         self.mode = mode
         if mode == PPSMode.STOPPED:
+            self.started_event.clear()
             return
 
         start_time = time.time()
@@ -192,6 +282,8 @@ class PPSSync(DefaultIP):
         )
 
     def stop_engine(self):
+        """Stop the PPS Engine"""
+        self.started_event.clear()
         self.mode = PPSMode.STOPPED
 
     async def capture(
@@ -216,6 +308,23 @@ class PPSSync(DefaultIP):
         raise TimeoutError("Capture didn't occur before timeout")
 
     async def sample_skew(self, timeout=5, poll=0):
+        """Captures the sub-second portion of the system time at a PPS Edge
+        The PPS Engine should be stopped before you call this. Should be
+        accurate to less than 50 microseconds with the system under reasonable
+        load.
+
+        Parameters
+        ----------
+        timeout : int or float
+            The amount of time to wait for a PPS Edge in seconds
+        poll : float
+            The time between checking for a capture in seconds
+
+        Returns
+        -------
+        skew : int
+            The skew between the PPS Edge and the system time in nanoseconds
+        """
         assert (
             self.mode == PPSMode.STOPPED and self.delay_ns == 0
         ), "Turn off the counter, and set the delay to zero"
@@ -228,12 +337,12 @@ class PPSSync(DefaultIP):
     @property
     def started(self):
         """Is 1 if the PPS counter engine is started, 0 otherwise"""
-        return _field_get(self.register_map.counter_status_reg.counter_status_reg, 0, 1)
+        return bool(_field_get(self.register_map.counter_status_reg.counter_status_reg, 0, 1))
 
     @property
     def captured(self):
         """Us 1 if the capture engine has captured, 0 otherwise"""
-        return _field_get(self.register_map.counter_status_reg.counter_status_reg, 8, 1)
+        return bool(_field_get(self.register_map.counter_status_reg.counter_status_reg, 8, 1))
 
     @property
     def mode(self):
@@ -375,7 +484,7 @@ class PPSSync(DefaultIP):
     def captured_time_ns(self):
         """The time captured by the core in floating point nanoseconds"""
         if not self.captured:
-            logging.getLogger().warning(
+            logging.getLogger(__name__).warning(
                 "Captured time read while registers are invalid"
             )
         return _make_time_ns(self.captured_secs, self.captured_ns, self.captured_subns)

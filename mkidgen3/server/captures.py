@@ -1,3 +1,4 @@
+import copy
 import pickle
 import threading
 import time
@@ -16,10 +17,12 @@ from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
+from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTAGE_CHANNELS, \
+    PHOTON_POSTAGE_WINDOW_LENGTH, MAXIMUM_DESIGN_COUNTRATE_PER_S, PHASE_IQ_INPUT_FRACTIONAL_BITS
 from functools import cached_property
 
 from typing import Tuple
-
+PHOTON_DTYPE_PACKED = np.uint64
 
 class CaptureAbortedException(Exception):
     pass
@@ -61,6 +64,12 @@ class FRSClient:
             s.send_pyobj(('bequiet', {}))
             return s.recv_pyobj()
 
+    def order(self, *args):
+        ctx = zmq.Context().instance()
+        with ctx.socket(zmq.REQ) as s:
+            s.connect(self.command_url)
+            s.send_pyobj(args)
+            return s.recv_pyobj()
 
 class CaptureRequest:
     """
@@ -69,10 +78,48 @@ class CaptureRequest:
     STATUS_ENDPOINT = 'inproc://cap_stat.xsub'
     DATA_ENDPOINT = 'inproc://cap_data.xsub'
     FINAL_STATUSES = ('finished', 'aborted', 'failed')
+    SUPPORTED_TAPS = ('postage', 'photon', 'adc', 'iq', 'phase')
+
+    @staticmethod
+    def validate_channels(tap: str, chan: list):
+        """
+        Verify that the channel/group selection is compatible with the driver.
+
+        Note that this is not done dynamically, no driver discovery is performed
+
+        See mkidgen3.drivers.FilterPhase, .drivers.FilterIQ, and .trigger.PhotonPostageFilter
+        for details about groups and monitor channels.
+
+        Args:
+            chan: A list of channels/groups to monotor
+            tap: A capture location
+
+        Returns: True|False
+        """
+        tap = tap.lower()
+        if tap == 'iq':
+            l = N_IQ_GROUPS
+            m = N_IQ_GROUPS
+        elif tap == 'phase':
+            l = N_PHASE_GROUPS
+            m = N_PHASE_GROUPS
+        elif tap == 'postage':
+            l = N_POSTAGE_CHANNELS
+            m = N_CHANNELS
+        elif chan:
+            l = 0  # no channels for photon or adc capture
+        else:
+            return False
+        try:
+            assert len(chan) <= l
+            for c in chan:
+                assert type(c) == int and 0 <= c < m
+        except AssertionError:
+            return False
+        return True
 
     def __init__(self, n, tap: str, feedline_config: FeedlineConfig,
-                 feedline_server: FRSClient, file: str = None,
-                 chunking_ok: float | bool = True):
+                 feedline_server: FRSClient, channels: list = None, file: str = None):
         """
 
         Args:
@@ -81,10 +128,16 @@ class CaptureRequest:
             feedline_config: the FL configuration required by the capture
             feedline_server: the FRS to capture from
             file: an optinal file
-            chunking_ok:
+            channels: an optional (required for postage) specifier of which channels to monitor.
         """
+        tap = tap.lower()
+        assert tap in CaptureRequest.SUPPORTED_TAPS
         self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
+        if channels is not None:
+            if not CaptureRequest.validate_channels(tap, channels):
+                raise ValueError('Invalid channels specification')
+        self.channels = list(channels) if channels else None
         self.tap = tap  # maybe add some error handling here
         self.feedline_config = feedline_config
         self.server = feedline_server
@@ -240,32 +293,32 @@ class CaptureRequest:
         elif not self._data_socket:
             raise RuntimeError('Data socket is not established.')
 
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        data = np.array(data.tolist()) if copy else data
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        data = np.array(data) if copy else data
         times = []
         times.append(time.time())
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         compressed = blosc2.compress(data) if compress else data
         times.append(time.time())
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         lend = len(compressed) / 1024 ** 2
         times.append(time.time())
-#        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         self._send_status('capturing', status)
         times.append(time.time())
         tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
         times.append(time.time())
-        getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
-                                           (np.diff(times) * 1000).astype(int))))
-        getLogger(__name__).debug(
-            f'Sending {lend:.1f} MiB, compressed to {100 * lend / (data.nbytes / 1024 ** 2):.1f}%')
+        # getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
+        #                                    (np.diff(times) * 1000).astype(int))))
+        cval = 100 * lend / (data.nbytes / 1024 ** 2) if data.nbytes else 100
+        getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
         return tracker
 
     def _send_status(self, status, message=''):
         if not self._status_socket:
             raise RuntimeError('No status_socket connection available')
         update = f'{status}:{message}'
-        getLogger(__name__).debug(f'Published status update for {self}: "{update}"')
+        getLogger(__name__).getChild('statusio').debug(f'Published status update for {self}: "{update}"')
         self._last_status = (status, message)
         self._status_socket.send_multipart([self.id, update.encode()])
 
@@ -289,24 +342,50 @@ class CaptureRequest:
 
     @property
     def size_bytes(self):
-        return self.nsamp * self.nchan * self.dwid
+        return np.prod(self.buffer_shape).astype(int) * self.dwid
 
     @property
     def nchan(self):
-        return 2048 if self.tap in ('iq', 'phase') else 1
+        if self.channels:
+            return len(self.channels)
+        elif self.tap == 'postage':
+            return N_POSTAGE_CHANNELS
+        elif self.tap in ('iq', 'phase'):
+            return N_CHANNELS
+        else:
+            return 1
 
-    @property
-    def ngroup(self):
-        return 256 if self.tap in ('iq', 'phase') else 1
+    # @property
+    # def ngroup(self):
+    #     if self.tap == 'iq':
+    #         return len(channel_to_iqgroup(self.channels)) if self.channels else N_IQ_GROUPS
+    #     elif self.tap =='phase':
+    #         return len(channel_to_phasegroup(self.channels)) if self.channels else N_PHASE_GROUPS
+    #     else:
+    #         return 1
 
     @property
     def dwid(self):
-        """Data size of sample in bytes"""
-        return 4 if self.tap in ('adc', 'iq') else 2
+        """Data size of sample in bytes, for postage this is the size of a full IQ window"""
+        if self.tap in ('adc', 'iq', 'postage'):
+            return 4
+        elif self.tap == 'phase':
+            return 2
+        else:
+            return PHOTON_DTYPE.itemsize
 
     @property
     def buffer_shape(self):
-        return self.nsamp, self.nchan, self.dwid // 2
+        n = int(np.ceil(self.nsamp * MAXIMUM_DESIGN_COUNTRATE_PER_S / 1000)) if self.tap == 'photon' else self.nsamp
+
+        if self.tap == 'postage':
+            return n, PHOTON_POSTAGE_WINDOW_LENGTH + 1, 2
+        elif self.tap in ('adc', 'iq'):
+            return n, self.nchan, 2
+        elif self.tap == 'photon':
+            return (n,)
+        else:
+            return (n, self.nchan)
 
 
 class CaptureSink(threading.Thread):
@@ -340,7 +419,7 @@ class CaptureSink(threading.Thread):
         self._buf = b''.join(self._buf)
 
     def _finalize_data(self):
-        self.result = np.frombuffer(self._buf, dtype=np.int16)
+        raise NotImplementedError
 
     def establish(self, ctx: zmq.Context = None):
         ctx = ctx or zmq.Context.instance()
@@ -375,7 +454,7 @@ class CaptureSink(threading.Thread):
                 if self._pipe[1] in avail:
                     getLogger(__name__).debug(f'Received shutdown order, terminating data acq. of {self}')
                     break
-                data = self.receive()
+                data = self.receive()  #does decompression
                 if not data:
                     getLogger(__name__).debug(f'Received null, capture data stream over')
                     break
@@ -383,10 +462,12 @@ class CaptureSink(threading.Thread):
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
-            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
-                                     f'{self.result.data.dtype}: {self.result}')
+            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.shape} '
+                                     f'{self.result.dtype}: {self.result}')
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
+        except AttributeError:
+            raise
         finally:
             self.destablish()
             self._pipe[1].close()
@@ -396,7 +477,7 @@ class CaptureSink(threading.Thread):
         return self.result
 
     def ready(self):
-        self._pipe[0].recv() # block until a byte arrives
+        self._pipe[0].recv()  # block until a byte arrives
 
 
 class StreamCaptureSink(CaptureSink):
@@ -433,9 +514,7 @@ class PhaseCaptureSink(StreamCaptureSink):
 
 class SimplePhotonSink(CaptureSink):
     def _accumulate_data(self, d):
-        if self._buf is None:
-            self._buf = []
-        self._buf.append(blosc2.decompress(d))
+        self._buf.append(d)
         if sum(map(len, self._buf)) / 1024 ** 2 > 100:  # limit to 100MiB
             self._buf.pop(0)
 
@@ -443,7 +522,7 @@ class SimplePhotonSink(CaptureSink):
         self._buf = b''.join(self._buf)
 
     def _finalize_data(self):
-        self.result = np.frombuffer(self._buf, dtype=PHOTON_DTYPE)
+        self.result = np.frombuffer(self._buf, dtype=PHOTON_DTYPE_PACKED)
 
 
 class PhotonCaptureSink(CaptureSink):
@@ -537,8 +616,10 @@ class PostageCaptureSink(CaptureSink):
         # get_postage returns:
         #  ids (nevents uint16 array or res cahnnels),
         #  events (nevents x 127 x2 of iq da
-        ids, iqs = pickle.loads(self._buf)
-        self.result = ids, IQCaptureData(iqs)
+
+        if len(self._buf) != np.prod(self._expected_buffer_shape) * 4:
+            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}')
+        self.result = PostageCaptureData(self._buf)
 
 
 class StatusListener(threading.Thread):
@@ -611,6 +692,7 @@ class ADCCaptureData:
     """
     Formats raw ADC capture data to complex floats representing mV at the ADC input SMA.
     """
+
     def __init__(self, raw_data):
         """
         ADC data captured by an ADC capture request
@@ -618,6 +700,14 @@ class ADCCaptureData:
             raw_data: raw data captured by adc capture
         """
         self.raw = raw_data
+
+    @property
+    def dtype(self):
+        self.raw.dtype
+
+    @property
+    def shape(self):
+        self.raw.shape
 
     @cached_property
     def data(self):
@@ -628,8 +718,17 @@ class IQCaptureData:
     """
     Formats raw IQ capture data to complex floats between +/- 1.
     """
+
     def __init__(self, raw_data):
         self.raw = raw_data
+
+    @property
+    def dtype(self):
+        self.raw.dtype
+
+    @property
+    def shape(self):
+        self.raw.shape
 
     @cached_property
     def data(self):
@@ -640,17 +739,40 @@ class PhaseCaptureData:
     def __init__(self, data):
         self.raw = data
 
+    @property
+    def dtype(self):
+        self.raw.dtype
+
+    @property
+    def shape(self):
+        self.raw.shape
+
     @cached_property
     def data(self):
         return raw_phase_to_radian(self.raw, scaled=False)
 
+
 class PostageCaptureData:
-    def __init__(self, raw_data):
-        self.raw = raw_data
+    def __init__(self, buf) :
+        result = np.frombuffer(buf, count=len(buf) // 2, dtype=np.int16)
+        n = result.size//2//128
+        shape = (n, 128, 2)
+        result = result.reshape(shape)
+        self.ids = result[:, 0, 0].astype(np.uint16)
+        self.raw_iqs = result[:, 1:, :]
+        self.raw = result
+
+    @property
+    def dtype(self):
+        return np.int16
+
+    @property
+    def shape(self):
+        return self.raw_iqs.shape
 
     @cached_property
     def data(self):
-        return raw_iq_to_unit(self.raw)
+        return raw_iq_to_unit(self.raw_iqs[..., 0] + self.raw_iqs[..., 1] * 1j, word_length=PHASE_IQ_INPUT_FRACTIONAL_BITS)
 
 
 class CaptureJob:
@@ -749,97 +871,3 @@ class CaptureJob:
             self._status_listener.kill()
             self.datasink.kill()
             raise e
-
-
-class PowerSweepJob:
-    def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3,
-                 use_cached=True):
-        """
-        Args:
-            ntones (int): Number of tones in power sweep comb. Default is 2048.
-            points (int): Number of I and Q samples to capture for each IF setting.
-            min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
-            max_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
-            attn_step (float): Difference in dB between subsequent global attenuation settings.
-                               0.25 dB is default and finest resolution.
-            lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
-            fres (float): Difference in Hz between subsequent LO settings.
-                               7.14e3 Hz is default and finest resolution we can produce with a 4.096 GSPS DAC
-                               and 2**19 complex samples in the waveform look-up-table.
-
-        Returns:
-            PowerSweepRequest: Object which computes the appropriate hardware settings and produces the necessary
-            CaptureRequests to collect power sweep data.
-        """
-        self.freqs = np.linspace(0, ntones - 1, ntones)
-        self.points = points
-        self.total_attens = np.arange(min_attn, max_attn + attn_step, attn_step)
-        self._sweep_bw = SYSTEM_BANDWIDTH / ntones
-        self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
-        self.use_cached = use_cached
-
-    def generate_jobs(self, submit=False) -> List[CaptureJob]:
-        from .feedline_config import WaveformConfig, IFConfig
-
-        feedline_server = 'tcp://localhost:8888'
-        capture_data_server = 'tcp://localhost:8889'
-        status_server = 'tcp://localhost:8890'
-
-        dacconfig = WaveformConfig(n_uniform_tones=1024)
-        dacconfig_hash = hash(dacconfig)
-        jobs = []
-        for adc_atten, dac_atten in self.attens:
-            for freq in self.lo_centers:
-                ifconfig = IFConfig(lo=freq, adc_attn=adc_atten, dac_attn=dac_atten)
-                fc = FeedlineConfig(dac_setup=dacconfig_hash if jobs else dacconfig, if_setup=ifconfig)
-                cr = CaptureRequest(self.points, 'adc', feedline_config=fc)
-                cj = CaptureJob(cr, feedline_server, capture_data_server, status_server, submit=False)
-                jobs.append(cj)
-
-        if submit:
-            try:
-                for j in jobs:
-                    j.submit()
-            except Exception as e:
-                getLogger(__name__).debug('Cancelling all capture jobs use to a submission error.')
-                for j in jobs:
-                    j.cancel(kill_status_monitor=True, kill_data_sink=True)
-                raise e
-
-        return jobs
-
-
-class PowerSweepRequest:
-    def __init__(self, ntones=2048, points=512, min_attn=0, max_attn=30, attn_step=0.25, lo_center=0, fres=7.14e3,
-                 use_cached=True):
-        """
-        Args:
-            ntones (int): Number of tones in power sweep comb. Default is 2048.
-            points (int): Number of I and Q samples to capture for each IF setting.
-            min_attn (float): Lowest global attenuation value in dB. 0-30 dB allowed.
-            max_attn (float): Highest global attenuation value in dB. 0-30 dB allowed.
-            attn_step (float): Difference in dB between subsequent global attenuation settings.
-                               0.25 dB is default and finest resolution.
-            lo_center (float): Starting LO position in Hz. Default is XXX XX-XX allowed.
-            fres (float): Difference in Hz between subsequent LO settings.
-                               7.14e3 Hz is default and finest resolution we can produce with a 4.096 GSPS DAC
-                               and 2**19 complex samples in the waveform look-up-table.
-
-        Returns:
-            PowerSweepRequest: Object which computes the appropriate hardware settings and produces the necessary
-            CaptureRequests to collect power sweep data.
-
-        """
-        self.freqs = np.linspace(0, ntones - 1, ntones)
-        self.points = points
-        self.total_attens = np.arange(min_attn, max_attn + attn_step, attn_step)
-        self._sweep_bw = SYSTEM_BANDWIDTH / ntones
-        self.lo_centers = compute_lo_steps(center=lo_center, resolution=fres, bandwidth=self._sweep_bw)
-        self.use_cached = use_cached
-
-    def capture_requests(self):
-        dacsetup = WaveformConfig('power_sweep_comb', n_uniform_tones=self.ntones)
-        return [CaptureRequest(self.samples, FeedlineConfig(dac_setup=dacsetup,
-                                                            if_config=IFConfig(lo=freq, adc_attn=adc_atten,
-                                                                               dac_attn=dac_atten)))
-                for (adc_atten, dac_atten) in self.attens for freq in self.lo_centers]

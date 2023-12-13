@@ -19,16 +19,16 @@ def convert_adc_raw_to_mv(raw_data: np.ndarray,
     return adc_max_v * (raw_data / (2 ** (adc_interface_word_length - 1) - 1)) * 1e6
 
 
-def raw_iq_to_unit(raw_data: np.ndarray, adc_interface_word_length=ADC_DAC_INTERFACE_WORD_LENGTH):
+def raw_iq_to_unit(raw_data: np.ndarray, word_length=ADC_DAC_INTERFACE_WORD_LENGTH):
     """
     Args:
         raw_data: integer data
-        adc_interface_word_length: max adc int word length
+        word_length: max int word length
 
     Returns:
         complex iq data on the IQ unit circle
     """
-    return raw_data / (2 ** (adc_interface_word_length - 1) - 1)
+    return raw_data / (2 ** (word_length - 1) - 1)
 
 
 def raw_phase_to_radian(raw_data: np.ndarray, phase_fractional_bits=PHASE_FRACTIONAL_BITS, scaled=True):

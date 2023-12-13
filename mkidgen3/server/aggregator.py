@@ -1,4 +1,4 @@
-from .feedline_client_objects import *
+from .captures import *
 from zmq import *
 from .pixelmap import PixelMap
 

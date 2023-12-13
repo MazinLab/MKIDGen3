@@ -9,12 +9,13 @@ from mkidgen3.mkidpynq import DummyOverlay
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
-from mkidgen3.server.feedline_client_objects import CaptureAbortedException, CaptureRequest
+from mkidgen3.server.captures import CaptureAbortedException, CaptureRequest
 import zmq
 from mkidgen3.server.misc import zpipe
 import threading
 import pynq
 import time
+import numpy as np
 
 DEFAULT_BIT_FILE = '/home/xilinx/gen3_top.bit'
 
@@ -93,7 +94,7 @@ class FeedlineHardware:
             self._if_board.power_off(save_settings=False)
 
     def config_compatible_with(self, config: FeedlineConfig):
-        return self.config_manager.required() < config
+        return self.config_manager.required().compatible_with(config)
 
     def derequire_config(self, id):
         """True iff the required settings changed as a result"""
@@ -103,56 +104,85 @@ class FeedlineHardware:
             return False
 
     def apply_config(self, id, config: FeedlineConfig):
-        """Takes and applies a config to the hardware, updates and tracks the effective set of settings"""
+        """
+
+        Args:
+            id: an identifier to associate with the config, identifiers should be unique to each config.
+            config: a feedline config to apply, only updates will actually be sent to hardware
+
+        Returns: None
+
+        Raises: ValueError may be raised if a non-unique ID is used. ValueError will be raised if the config is not
+        compatible with currently required configs or it contains settings that are hashed and
+        have not been seen before.
+
+        """
 
         # Add the config to the pot and get the effective config
         fl_setup = self.config_manager.add(id, config)
 
-        if fl_setup.rfdc_clk is not None:
+        clock_set = False
+        if fl_setup.rfdc_clk:
             getLogger(__name__).debug(f'Requesting update to RFDC clocking configuration.')
             mkidgen3.drivers.rfdcclock.configure(**fl_setup.rfdc_clk.settings_dict())
+            #time.sleep(0.5)
+            clock_set = True
 
-        if fl_setup.bitstream is not None or fl_setup.rfdc_clk is not None:
+        if clock_set or fl_setup.bitstream:
             getLogger(__name__).debug(f'Requesting update to bitstream.')
-            if fl_setup.bitstream is not None:
+            if fl_setup.bitstream:
                 x = copy.deepcopy(self._default_bitstream)
                 x.merge_with(fl_setup.bitstream)
 
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
 
-        # RFDC
-        if fl_setup.rfdc is not None:
+        if fl_setup.rfdc:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
             self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
-        # IF Board
-        if fl_setup.if_board is not None:
+        from mkidgen3.drivers.ppssync import PPSMode, PPSSource
+        loop = asyncio.new_event_loop()
+        ppstask = loop.create_task(self._ol.pps_synchronization.pps_synchronizer_con_0.start_engine(
+                mode=PPSMode.FORCE_START,
+                start_second=None,
+                skew=None,
+                lockout=None,
+                rollover_thresh=None,
+                resync=False,
+                pps_source=PPSSource.PPS0,
+                load_time=None,
+                clk_period_ns=1.953125,
+                timeout=5,
+                poll=1000*1000*1000))
+        loop.run_until_complete(ppstask)
+        loop.close()
+
+        if fl_setup.if_board:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             try:
                 self._if_board.configure(**fl_setup.if_board.settings_dict())
             except Exception as e:
                 getLogger(__name__).warning(f"Unable to connect to IF board: {e}, proceeding without IF board.")
 
-        # DAC Replay
         if fl_setup.waveform is not None:
             getLogger(__name__).debug(f'Configure DAC with {fl_setup.waveform.settings_dict()}')
             self._ol.dac_table.configure(**fl_setup.waveform.settings_dict())
 
-        if fl_setup.chan is not None:
+        if fl_setup.chan:
             self._ol.photon_pipe.reschan.bin_to_res.configure(**fl_setup.chan.settings_dict())
-            # DDC
-        if fl_setup.ddc is not None:
-            self._ol.photon_pipe.reschan.ddccontrol_0.configure(**fl_setup.ddc.settings_dict())
-            # Matched Filters
-        if fl_setup.filter is not None:
-            self._ol.photon_pipe.phasematch.configure(**fl_setup.filter.settings_dict())
-            # Matched Filters
-        if fl_setup.trig is not None:
-            self._ol.photon_pipe.phasematch.configure(**fl_setup.trig.settings_dict())
 
-        if fl_setup.if_board is not None:
+        if fl_setup.ddc:
+            self._ol.photon_pipe.reschan.ddccontrol_0.configure(**fl_setup.ddc.settings_dict())
+
+        if fl_setup.filter:
+            self._ol.photon_pipe.phasematch.configure(**fl_setup.filter.settings_dict())
+
+        if fl_setup.trig:
+            self._ol.trigger_system.trigger_1.configure(**fl_setup.trig.settings_dict())
+
+        if fl_setup.if_board:
             self._if_board.settle()
 
     def plram_cap(self, pipe, cr: CaptureRequest, context=None):
@@ -166,13 +196,13 @@ class FeedlineHardware:
         Returns: None
 
         """
-        try:
-            aio_eloop = asyncio.get_running_loop()
-        except RuntimeError:
-            aio_eloop = asyncio.new_event_loop()
+        # try:
+        #     aio_eloop = asyncio.get_running_loop()
+        # except RuntimeError:
+        #     aio_eloop = asyncio.new_event_loop()
             # t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
             # t.start()
-        asyncio.set_event_loop(aio_eloop)
+        # asyncio.set_event_loop(aio_eloop)
         # assert aio_eloop.is_running()
 
         failmsg = ''
@@ -192,7 +222,7 @@ class FeedlineHardware:
         if failmsg:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
-            aio_eloop.close()
+            # aio_eloop.close()
             return
 
         capture_atom_bytes = cr.dwid * cr.nchan
@@ -204,7 +234,9 @@ class FeedlineHardware:
         if partial:
             chunks.append(partial // capture_atom_bytes)
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
-        import numpy as np
+
+        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
+
         try:
             for i, csize in enumerate(chunks):
                 times = []
@@ -215,23 +247,23 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
                 times.append(time.time())
-#                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                data = self._ol.capture.capture(csize, cr.tap)
+                #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                data = self._ol.capture.capture(csize, cr.tap, groups=None)
                 times.append(time.time())
-#                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                zmqtmp=zmq.COPY_THRESHOLD
+                #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                zmqtmp = zmq.COPY_THRESHOLD
                 zmq.COPY_THRESHOLD = 0
                 tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
                 times.append(time.time())
- #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 if tracker is not None:
                     tracker.wait()
                 zmq.COPY_THRESHOLD = zmqtmp
                 times.append(time.time())
-  #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data.freebuffer()
                 times.append(time.time())
-  #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
                                                    (np.diff(times) * 1000).astype(int))))
             cr.finish()
@@ -246,7 +278,7 @@ class FeedlineHardware:
             pipe.close()
         except zmq.ZMQError:
             pass
-        aio_eloop.close()
+        # aio_eloop.close()
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
         """
@@ -254,7 +286,7 @@ class FeedlineHardware:
         cr: the capture request
         """
         failmsg = ''
-        photon_maxi = self._ol.photon_pipe.trigger_system.photon_maxi
+        photon_maxi = self._ol.trigger_system.photon_maxi_0
         try:
             assert cr.type == 'photon', 'Incorrect capture request type'
         except AssertionError as e:
@@ -275,27 +307,43 @@ class FeedlineHardware:
             return
 
         q, q_other = zpipe(zmq.Context.instance())
-        # q = queue.SimpleQueue()  #an alternative
-        fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=False)
+        # q = q_other = queue.SimpleQueue()  #an alternative
+
+        fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=True)
 
         def photon_sender(q: zmq.Socket, cr, unpack=False):
             log = getLogger(__name__)
+            from datetime import datetime
+            toc = 0
+            delts = []
             try:
+                cr.establish(context=context)
                 while True:
-                    log.info(f'iter start')
-                    photons = q.recv_pyobj()
-                    log.info(f'received')
+                    tic = datetime.utcnow()
+                    if toc:
+                        delt = tic - toc
+                        delts.append(delt.seconds*1e6+delt.microseconds)
+                        x = tic.strftime('%M:%S.%f')
+                        log.debug(f'Prep send @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
+
+                    x = q.recv()
+                    photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE) if x else None
+                    toc = datetime.utcnow()
                     if photons is None:
                         cr.finish()
                         break
-                    cr.send_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False)
+                    cr.send_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False,
+                                 compress=True)
             except Exception as e:
-                cr.abort(f'Uncaught exception: {e}')
-                q.close()
+                cr.abort(f'Uncaught exception in photon sender: {e}')
                 raise e
-            log.info(f'done')
+            finally:
+                cr.destablish()
+                q.close()
+            log.info(f'Sending done. Time between send waits: {delts} us')
 
-        sender = threading.Thread(target=photon_sender, args=(q, cr))
+        cr.destablish()
+        sender = threading.Thread(target=photon_sender, args=(q, cr), name='Photon Sender')
 
         try:
             sender.start()
@@ -309,28 +357,31 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
         except CaptureAbortedException as e:
-            stop.set()  # sender will finish up the CR
+            getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
+            stop.set()
+            # stop.send(b'')  # sender will finish up the CR
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
             stop.set()
-            cr.fail(f'Failed due to {e}')
+            # stop.send(b'')
         finally:
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
-            self._ol.photon_pipe_trigger_system.photon_maxi.stop_capture()
-            stop.set()
-            pipe.close()
+            self._ol.trigger_system.photon_maxi_0.stop_capture()
             fountain.join()
             sender.join()
+            pipe.close()
+            # stop.close()
+            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
+            del cr
             if isinstance(q, zmq.Socket):
                 q.close()
 
-    def stamp_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
+    def postage_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
         failmsg = ''
-        postage_maxi = self._ol.photon_pipe.trigger_system.postage_maxi
+        postage_filt = self._ol.trigger_system.postage_filter_0
+        postage_maxi = self._ol.trigger_system.postage_maxi_1
         try:
             assert cr.type == 'postage', 'Incorrect capture request type'
-            assert postage_maxi.register_map.AP_CTRL_AP_IDLE == 1, 'Postage MAXI is busy'
+            assert postage_maxi.register_map.CTRL.AP_IDLE == 1, 'Postage MAXI is busy'
         except AssertionError as e:
             failmsg = str(e)
 
@@ -345,8 +396,9 @@ class FeedlineHardware:
             return
 
         try:
-            postage_maxi.capture()
-            while not postage_maxi.interrupt.is_set():
+            postage_filt.configure(monitor_channels=cr.channels)
+            postage_maxi.capture(max_events=cr.nsamp)
+            while not postage_maxi.register_map.CTRL.INTERRUPT:  # TODO postage_maxi.interrupt.is_set():
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
                     raise CaptureAbortedException(abort)
@@ -354,7 +406,7 @@ class FeedlineHardware:
                     if e.errno != zmq.EAGAIN:
                         raise
                 time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
-            cr.send_data(postage_maxi.get_postage(raw=False, scaled=True), copy=False)
+            cr.send_data(postage_maxi.get_postage(rawbuffer=True), copy=False)
             cr.finish()
         except CaptureAbortedException as e:
             cr.abort(e, raise_exception=False)
