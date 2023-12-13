@@ -151,18 +151,38 @@ def find_opfb_tones(data):
     print(f"peak in bin: {np.argmax(abs(data.real.mean(0)))}")
 
 
-def plot_waveforms(x, sample_rate=2e6, sw_phase=False, cordic=False, ax=None, label=None, xlabel='t (ms)', **pltargs):
+def plot_waveforms(x, sample_rate=2e6, mode=None, ax=None, label=None, xlabel='t (ms)', **pltargs):
+    """
+    Plots IQ and Phase data from OPFB and DDC Bins.
+    Args:
+        x: input data as phase or iq values
+        sample_rate: samplpe rate in Hz
+        mode:
+            - "sw_phase": computes and plots phase from IQ values
+            - "phase": plots phase
+            - "iq": Plots I and Q values as two overlaid timetraces
+        ax: plot ax
+        label: plot label
+        xlabel: xaxis label
+        **pltargs: plotargs
+
+    Returns:
+
+    """
     if ax is not None:
         plt.sca(ax)
     t = np.arange(x.size) / sample_rate * 1e3
-    if sw_phase:
+    if mode == 'sw_phase':
         plt.plot(t, np.angle(x) / np.pi, **pltargs)
         plt.ylim(-1.1, 1.1)
-    if cordic:
+    elif mode == 'phase':
         plt.plot(t, x, **pltargs)
-    else:
+        plt.ylim(-1.1, 1.1)
+    elif mode == 'iq':
         plt.plot(t, x.real, **pltargs)
         plt.plot(t, x.imag, **pltargs)
+    else:
+        raise NotImplementedError(f'mode {mode} is unkown. Valid modes are: "sw_phase", "phase", or "iq"')
     if label:
         plt.ylabel(label)
     if xlabel:
