@@ -453,7 +453,6 @@ class CaptureHierarchy(DefaultHierarchy):
         x.freebuffer()
         riq = riq[..., 0] + riq[..., 1] * 1j
         iq = iq[..., 0] + iq[..., 1] * 1j
-        print(int(np.abs(riq).max()), int(np.abs(iq).max()))
         return riq, iq
 
     def cap_cordic_compare(self, n_points=1024):
