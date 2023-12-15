@@ -594,3 +594,119 @@ class PhotonMAXI(DefaultIP):
     def configure(self):
         """ monitor_channels shall be 8 integers in [0,2047] """
         return self.capture()
+
+
+class PhotonPacketizer(DefaultIP):
+    MAX_PHOTON_PACKET_N = 262144  # Must not exceed dma buffer size
+    PHOTON_DTYPE = _PHOTON_DTYPE
+    PHOTON_PACKED_DTYPE = np.uint64
+    bindto = ['mazinlab:mkidgen3:photon_fifo_packetizer:0.1']
+
+    @staticmethod
+    def pack_photons(x, out=None):
+        ret = np.zeros(x.size, dtype=PhotonMAXI.PHOTON_PACKED_DTYPE) if out is None else out
+        ret[:] = (((x['time'] << 12) | x['id']) << 16) | x['phase'].astype(np.uint16)
+        return ret
+
+    @staticmethod
+    def unpack_photons(x, out=None, n=0):
+        """
+        Unpack packed photons, optionally accumulating them into an existing output array
+
+        Args:
+            x: an array of packed photons
+            out: optional, an array of type PhotonMAXI.PHOTON_DTYPE with the shape of x, but see n
+            n: optional, an index into out to insert unpacked photons, the first axis is used if >1d an
+                IndexError is raised if there is insufficient space.
+
+        Returns: the unpacked photon array
+
+        """
+        if out is None:
+            n = 0
+        elif x.shape[0] + n > out.shape[0]:
+            raise IndexError('Output array is too small')
+
+        ret = np.zeros(x.shape, dtype=PhotonMAXI.PHOTON_DTYPE) if out is None else out
+        sl = slice(n, n + x.shape[0])
+        ret['phase'][sl] = x & 0xffff
+        ret['time'][sl] = x >> 28
+        ret['id'][sl] = (x >> 16) & 0xfff
+        return ret
+
+    @staticmethod
+    def gen_fake_buffer_data(n, time_us):
+        n = int(n)
+        data = np.zeros(n, dtype=PhotonMAXI.PHOTON_DTYPE)
+        data['time'] = np.sort(np.random.randint(0, high=time_us, size=n))
+        data['id'] = np.random.randint(0, high=2047, size=n)
+        data['phase'] = np.random.randint(-0x7fff, high=0x7fff, size=n)
+        return data
+
+    def __init__(self, description):
+        """
+        The core watches for trigger events on 8 resonator channels and forwards IQ snippets around trigger events on
+        for capture by other parts of the firmware. It is configured with 8 resonator channel values for monitoring.
+
+        // 0x10 : Data signal of photons_per_buf
+        //        bit 16~0 - photons_per_buf[16:0] (Read/Write)
+        //        others   - reserved
+        // 0x18 : Data signal of time_shift
+        //        bit 4~0 - time_shift[4:0] (Read/Write)
+        //        others  - reserved
+        """
+        super().__init__(description=description)
+
+    @property
+    def buffer_count_interval(self):
+        return self.read(0x10) & 0x1ffff
+
+    @property
+    def buffer_interval(self):
+        return 2 ** (self.read(0x18) & 0x1f) / 1e3
+
+    @buffer_interval.setter
+    def buffer_interval(self, interval_ms):
+        """Permissible range is about 0.5 - 1000 ms and will be clipped"""
+        l2_buffer_shift = np.round(np.log2(interval_ms * 1000))
+        _buffer_time_ms = 2 ** l2_buffer_shift / 1000
+        if l2_buffer_shift < 9 or l2_buffer_shift > 20:
+            l2_buffer_shift = min(max(l2_buffer_shift, 9), 20)
+            getLogger(__name__).warning(f'Requested rotation interval ({interval_ms:.2f} ms) unsupported, '
+                                        f'using {2 ** l2_buffer_shift / 1000:.2f}')
+        elif abs(_buffer_time_ms - interval_ms) >= .01:
+            getLogger(__name__).info(f'Requested rotation interval {interval_ms:.2f} ms rounded to '
+                                     f'{_buffer_time_ms:.2f} ms')
+        else:
+            getLogger(__name__).info(f'Setting rotation interval to {_buffer_time_ms:.2f} ms')
+
+        self.write(0x18, int(l2_buffer_shift))
+
+    def packetize(self, n_photons_per_buffer=100000, buffer_time_ms=4.096):
+        """
+        Initiate packetization of photons.
+
+        Note that proper functionality of the core requires that at least two photons arrive at least buffer_time_ms
+        apart or more than n_photons_per_buffer are seen. If neither of those conditions is met the core will not
+        complete. If fewer than 512 photons are seen AND they all arrive within one buffer interval no data will even
+        be written into the buffer. Both of these scenarios are essentially impossible and can be resolved by setting
+        an arbitrarily low event trigger threshold in the trigger core.
+
+        Args:
+            n_photons_per_buffer: Rotate the buffer approximately every this many photons, underset this by 512 if the
+            actual rate is critical. Will be limited to about 100k. FLAT_PHOTON_BUFSIZE-512 (see HLS C code).
+            buffer_time_ms: Rotate the buffer approximately every this many ms. Valid range is ~ 0.5 - 1000 us.
+
+        """
+        self.buffer_interval = buffer_time_ms
+
+        n_photons_per_buffer = int(n_photons_per_buffer)
+        if n_photons_per_buffer > self.MAX_PHOTON_PACKET_N:
+            getLogger(__name__).warning(f'Requesting too large a packet, using packet of '
+                                        f'{self.MAX_PHOTON_PACKET_N} photons.')
+
+        self.write(0x10, min(max(n_photons_per_buffer-2, 1), self.MAX_PHOTON_PACKET_N-2))
+
+    def configure(self):
+        """ monitor_channels shall be 8 integers in [0,2047] """
+        return self.packetize()

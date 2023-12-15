@@ -755,6 +755,7 @@ class S2MMBufferChain:
         if not self.cyclic and i<0 or i>=self.chain_length:
             raise IndexError(f'Index {i} out of bounds for a non-cyclic chain of length {self.chain_length}')
         i%=self.chain_length
+        return i
 
     def descriptor(self, i):
         """Return a dict of link i of the chain"""
@@ -801,6 +802,67 @@ class _CyclicS2MMDMAChannel(_SGDMAChannel):
         super().__init__(existing_rx._mmio, existing_rx._max_size, existing_rx._align,
                          existing_rx._tx_rx, existing_rx._dre, interrupt=existing_rx._interrupt)
         self.chain = None
+
+    def dma_info(self, s2mmchain=True):
+        S2MM_DMACR = MM2S_DMACR = (  # (name, offset, length)
+            ('irq_delay', 24, 8),
+            ('irq_threshold', 16, 8),
+            ('error_irq_enable', 14, 1),
+            ('delay_irq_enable', 13, 1),
+            ('complete_irq_enable', 12, 1),
+            ('cyclic_bd_enable', 4, 1), ('keyhole', 3, 1), ('reset', 2, 1), ('runstop', 0, 1))
+
+        S2MM_DMASR = MM2S_DMASR = (  # (name, offset, length)
+            ('delay_status', 24, 8),
+            ('threshold_status', 16, 8),
+            ('error_irq', 14, 1),
+            ('delay_irq', 13, 1),
+            ('complete_irq', 12, 1),
+            ('sg_decode_error', 10, 1), ('sg_slave_error', 9, 1), ('sg_internal_error', 8, 1),
+            ('dma_decode_error', 6, 1), ('dma_slave_error', 5, 1), ('dma_internal_error', 4, 1),
+            ('sg_included', 3, 1), ('idle', 1, 1), ('halted', 0, 1))
+
+        S2MM_CURDESC = MM2S_CURDESC = (('current_descriptor', 0, 64),)
+        S2MM_TAILDESC = MM2S_TAILDESC = (('tail_descriptor', 0, 64),)
+        S2MM_DA = MM2S_SA = (('address', 0, 64),)
+        S2MM_LENGTH = MM2S_LENGTH = (('length', 0, 26),)
+        SG_CTL = (('sg_user', 8, 4),
+                  ('sg_cache', 0, 4))
+
+        def pack(description, d):
+            result = 0
+            for n, o, l in description:
+                v = d[n]
+                result |= (v & (2 ** l - 1)) << o
+            return result
+
+        def unpack(description, x):
+            result = {}
+            for n, o, l in description:
+                result[n] = (x >> o) & (2 ** l - 1)
+            return result
+
+        regs = (('MM2S_DMACR', 0, 1, MM2S_DMACR),
+                ('MM2S_DMASR', 0x4, 1, MM2S_DMASR),
+                ('MM2S_CURDESC', 0x8, 2, MM2S_CURDESC),
+                ('MM2S_TAILDESC', 0x10, 2, MM2S_TAILDESC),
+                ('MM2S_SA', 0x18, 2, MM2S_SA),
+                ('MM2S_LENGTH', 0x28, 1, MM2S_LENGTH),
+                ('SG_CTL', 0x2c, 1, SG_CTL),
+                ('S2MM_DMACR', 0x30, 1, S2MM_DMACR),
+                ('S2MM_DMASR', 0x34, 1, S2MM_DMASR),
+                ('S2MM_CURDESC', 0x38, 2, S2MM_CURDESC),
+                ('S2MM_TAILDESC', 0x40, 2, S2MM_TAILDESC),
+                ('S2MM_DA', 0x4c, 2, S2MM_DA),
+                ('S2MM_LENGTH', 0x58, 1, S2MM_LENGTH))
+
+        for k, a, l, r in regs:
+            x = self._mmio.read(a, l * 4)
+            print(k, x, unpack(r, x), '\n')
+        if s2mmchain:
+            for i in range(self.chain.chain_length):
+                print(self.chain.descriptor(i).physical_address, self.chain.descriptor_dict(i))
+
 
     @property
     def s2mm_currdesc(self):
