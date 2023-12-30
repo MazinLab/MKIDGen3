@@ -98,10 +98,10 @@ class PhasematchDriver(pynq.DefaultHierarchy):
                 n = min(max(1, int(coefficients.strip('unity'))), 2048)
             except:
                 n = 2048
-            coefficients = np.zeros((2048, 30), dtype=np.int16)
+            coefficients = np.zeros((2048, self.N_TEMPLATE_TAPS), dtype=np.int16)
             coefficients[:n, 0] = 2 ** 15 - 1
-        if coefficients.shape != (2048, 30) or coefficients.dtype != 'int16':
-            raise ValueError('Please specify a (2048,30) array of int16s')
+        if coefficients.shape != (2048, self.N_TEMPLATE_TAPS) or coefficients.dtype != 'int16':
+            raise ValueError(f'Please specify a (2048,{self.N_TEMPLATE_TAPS}) array of type int16')
 
         channel = 0
         for coeffs in coefficients:
