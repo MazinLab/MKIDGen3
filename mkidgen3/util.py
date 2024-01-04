@@ -3,6 +3,14 @@ import numpy as np
 import os
 import yaml
 import importlib.resources
+from logging import getLogger
+
+
+def delete_pynq_cache_file():
+    try:
+        os.remove('/usr/local/share/pynq-venv/lib/python3.10/site-packages/pynq/pl_server/_current_metadata.pkl')
+    except Exception as e:
+        return str(e)
 
 
 def buf2complex(b, free=True, unsigned=False, floating=True):
@@ -82,3 +90,88 @@ def ensure_array_or_scalar(x):
     if x is None:
         return x
     return x if np.isscalar(x) else np.asarray(x)
+
+
+def clear_interrupt(core, clear_axi_interrupt_controller=False):
+    """
+    Attempt to clear an interrupt on both an HLS core and at the Axi interrupt controller. For testing, not production.
+
+    Args:
+        core: a pynq.Interrupt or object with a pynq.DefaultIP with both an interrupt and
+            register_map.IP_ISR.CHAN0_INT_ST
+        clear_axi_interrupt_controller: set to true to reach in and futz with the interrupt controller as well
+
+    Returns: None
+
+    """
+    import pynq
+    given_int = isinstance(core, pynq.Interrupt)
+    interrupt = core if given_int else core.interrupt
+
+    int_number = interrupt.number
+
+    if not given_int and core.register_map.IP_ISR.CHAN0_INT_ST:
+        getLogger(__name__).info('Interrupt cleared at controller')
+
+    val = 1 << int_number
+    if clear_axi_interrupt_controller:
+        parent_mmio = interrupt.parent().mmio
+        if not (parent_mmio.read(0x8) & val):
+            getLogger(__name__).info('Interrupt is not enabled at controller')
+        if parent_mmio.read(0x4) & val:
+            parent_mmio.write(0x0C, val)
+            getLogger(__name__).info('Interrupt state was cleared at controller')
+
+
+def ps_ram_sane(nbytes, pynq_region=False):
+    """
+    Return True if the bytes might be available in PS ram
+    Args:
+        nbytes: number of bytes
+        pynq_region: select if the bytes should be in the region available to pynq.allocate
+
+    Returns: True if the ram might be available
+
+    """
+    if pynq_region:
+        return nbytes < 2 * 1024 ** 2
+    else:
+        return nbytes < 2 * 1024 ** 2
+
+
+def do_asyncio_thing(thing, use_new_thread=False):
+    """
+
+    Args:
+        thing: an asyncio coroutine. not really clear on the scope that will work safely here yet
+           written with do_asyncio_thing(interrupt.wait()) in mind
+        use_new_thread: Do the waiting in a new daemon thread
+
+    Returns: None or a future if a new thread is in use
+
+    """
+    import asyncio
+    from threading import Thread
+
+    def start_background_loop(loop: asyncio.AbstractEventLoop) -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_forever()
+
+    newloop = False
+    try:
+        if use_new_thread:
+            raise Exception
+        loop = asyncio.get_running_loop()
+    except:
+        loop = asyncio.new_event_loop()
+        newloop = True
+
+    if use_new_thread:
+        thread = Thread(target=start_background_loop, args=(loop,), daemon=True)
+        thread.start()
+        return asyncio.run_coroutine_threadsafe(thing, loop)
+
+    task = loop.create_task(thing)
+    loop.run_until_complete(task)
+    if newloop:
+        loop.close()

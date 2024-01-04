@@ -8,7 +8,7 @@ from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
     check_description_for  # config, overlay details
 from logging import getLogger
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup
-
+from ..util import do_asyncio_thing, ps_ram_sane
 
 class FilterIQ(DefaultIP):
     """
@@ -154,9 +154,9 @@ class FilterPhase(DefaultIP):
 
 
 class CaptureHierarchy(DefaultHierarchy):
-    IQ_MAP = {'rawiq': 0, 'iq': 1, 'ddciq': 2}
-    PHASE_MAP = {'rawphase': 0, 'phase': 1}
-    SOURCE_MAP = dict(adc=0, rawiq=1, iq=2, phase=4, rawphase=3)
+    IQ_MAP = {'rawiq': 0, 'ddciq': 1, 'debugiq': 2}
+    PHASE_MAP = {'filtphase': 0, 'debugphase': 1}
+    SOURCE_MAP = dict(adc=0, rawiq=1, ddciq=2, filtphase=3, debugiq=4, debugphase=5)
 
     def __init__(self, description):
         super().__init__(description)
@@ -288,18 +288,18 @@ class CaptureHierarchy(DefaultHierarchy):
         elif tap in self.PHASE_MAP:
             return self.filter_phase.keep_channels(channels)
 
-    def capture(self, n, tap, groups='all'):
+    def capture(self, n, tap, groups='all', wait=True):
         if tap in self.IQ_MAP:
-            return self.capture_iq(n, tap_location=tap, duration=False, groups=groups)
+            return self.capture_iq(n, tap_location=tap, duration=False, groups=groups, wait=wait)
         elif tap in self.PHASE_MAP:
-            return self.capture_phase(n, tap_location=tap, duration=False, groups=groups)
+            return self.capture_phase(n, tap_location=tap, duration=False, groups=groups, wait=wait)
         elif tap == 'adc':
-            return self.capture_adc(n, complex=False, sleep=True, use_interrupt=False, duration=False)
+            return self.capture_adc(n, complex=False, duration=False, wait=wait)
         else:
             valid = ('adc',) + tuple(self.IQ_MAP.keys()) + tuple(self.PHASE_MAP.keys())
             raise ValueError(f'{tap} is not a valid capture location from {valid}')
 
-    def capture_iq(self, n, groups='all', tap_location='iq', duration=False):
+    def capture_iq(self, n, groups='all', tap_location='ddciq', duration=False, wait=True):
         """
         potentially valid tap locations are the keys of CaptureHierarchy.IQ_MAP
         if buffer is None one will be allocated, if groups is None it will not be set
@@ -338,18 +338,27 @@ class CaptureHierarchy(DefaultHierarchy):
         getLogger(__name__).debug(msg)
 
         self._capture(tap_location, capture_bytes, addr)
-        time.sleep(captime)
+
+        if wait:
+            if isinstance(wait, bool):
+                wait = {}
+            if 'duration' not in wait:
+                wait['duration'] = captime
+            self.wait(**wait)
+
         return buffer
 
-    def capture_adc(self, n, duration=False, complex=False, sleep=True, use_interrupt=False):
+    def capture_adc(self, n, duration=False, complex=False, wait=True):
         """
         samples are captured in multiples of 8 will be clipped as necessary
 
         Set complex to return a numpy complex array of the result. This implies a copy out of the buffer so care is
         required with memory sizes (i.e. will use 5x standard memory in PS DDR).
 
-        use_interrupt is in testing, requires interrupt controller be configured
         """
+        if complex and not wait:
+            raise RuntimeError('Complex return not supported with immediate return.')
+
         if n <= 0:
             raise ValueError('Must request at least 1 sample')
 
@@ -364,6 +373,9 @@ class CaptureHierarchy(DefaultHierarchy):
 
         # Compute capturesize, this is the number of adc samples to be written
         capture_bytes = n * 4
+
+        if complex and not ps_ram_sane(n*8):
+            raise RuntimeError('Not enough RAM to copy capture to complex')
 
         try:
             buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0)
@@ -381,28 +393,35 @@ class CaptureHierarchy(DefaultHierarchy):
         getLogger(__name__).debug(msg)
 
         self._capture('adc', capture_bytes, addr)
-        if sleep or complex:
-            time.sleep(captime)
-        if use_interrupt and not sleep:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            task = loop.create_task(self.axis2mm.o_int.wait())
-            loop.run_until_complete(task)
+
+        if wait or complex:
+            if isinstance(wait, bool):
+                wait = {}
+            if 'duration' not in wait or (complex and wait['duration'] < captime):
+                wait['duration'] = captime
+            self.wait(**wait)
 
         if complex:
-            if not (sleep or use_interrupt):
-                getLogger(__name__).warning('Complex return not supported with immediate return.')
-                return buffer
-            d = np.array(buffer)
+            d = np.zeros(n, dtype=np.complex64)
+            d.real[:] = buffer[:,0]
+            d.imag[:] = buffer[:, 1]
             del buffer
-            return d[:, 0] + 1j * d[:, 1]
         else:
             return buffer
 
-    def capture_phase(self, n, groups='all', duration=False, tap_location='phase'):
+    def wait(self, duration=0, interrupt=True):
+        """Wait for a capture to complete, use interrupt on axis2mm by default, otherwise sleep for duration"""
+        if not interrupt:
+            time.sleep(duration)
+        else:
+            do_asyncio_thing(self.axis2mm.o_int.wait())
+
+    def capture_phase(self, n, groups='all', duration=False, tap_location='matchphase', wait:(bool,dict)=True):
         """
         samples are captured in multiples of 16 will be clipped ad necessary
         groups is 0-127 or all, None will leave the filter unchanged
+
+        wait is args to selt.wait
         """
         if self.filter_phase.get(tap_location, None) is None:
             getLogger(__name__).error(f'Bitstream does not support phase capture at tap {tap_location}')
@@ -439,16 +458,22 @@ class CaptureHierarchy(DefaultHierarchy):
         getLogger(__name__).debug(msg)
 
         self._capture(tap_location, capture_bytes, addr)
-        time.sleep(captime)
+
+        if wait:
+            if isinstance(wait, bool):
+                wait = {}
+            if 'duration' not in wait:
+                wait['duration'] = captime
+            self.wait(**wait)
 
         return buffer
 
     def ddc_compare_cap(self, n_points=1024):
-        """A helper function to capture data just after bin2res and after reschan"""
+        """A helper function to capture data just after bin2res and after the ddc"""
         x = self.capture_iq(n_points, 'all', tap_location='rawiq')
         riq = np.array(x)
         x.freebuffer()
-        x = self.capture_iq(n_points, 'all', tap_location='iq')
+        x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         iq = np.array(x)
         x.freebuffer()
         riq = riq[..., 0] + riq[..., 1] * 1j
@@ -457,10 +482,10 @@ class CaptureHierarchy(DefaultHierarchy):
 
     def cap_cordic_compare(self, n_points=1024):
         """A helper function to capture data just after lowpass and after conversion to phase"""
-        x = self.capture_iq(n_points, 'all', tap_location='iq')
+        x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         riq = np.array(x)
         x.freebuffer()
-        x = self.capture_phase(n_points, 'all', tap_location='rawphase')
+        x = self.capture_phase(n_points, 'all', tap_location='matchphase')
         phase = np.array(x)
         x.freebuffer()
         riq = riq[..., 0] + riq[..., 1] * 1j

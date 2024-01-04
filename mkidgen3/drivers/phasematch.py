@@ -13,13 +13,14 @@ class PhasematchDriver(pynq.DefaultHierarchy):
     N_RES_P_LANE = 512
     N_LANES = 4
     N_SLOTS = 2
+    N_FIFO_SIZE = 512
     MAX_COEFF_VALUE = 127  # 16 bits, 1 sign, 8 fractional
     COEFF_FORMAT = (1, 15)
 
     def __init__(self, description):
         super().__init__(description)
         self.fifo = self.reload.axi_fifo_mm_s_0
-        self._pending = [0, 0, 0, 0]
+        self._pending = np.zeros(self.N_LANES, dtype=int)
 
     @staticmethod
     def checkhierarchy(description):
@@ -44,7 +45,7 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         """convert taps to order needed by a reload packet"""
         return coeffs[::-1]  # see coefficient reload tab for order in block design
 
-    def load_coeff(self, res_id, coeffs, vet=True, force_commit=False, raw=False):
+    def load_coeff(self, res_id, coeffs, vet=True, force_commit=False, raw=False, wait=False, defer_commit=False):
         """
         A reload packet consists of the coefficients and the coefficient set number
 
@@ -53,6 +54,8 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         See block diagram for layout. Resonators assigned to lanes 0-3 in consecutive sets of 512.
 
         FIRs have two reload slots and are in "on vector" update mode.
+
+        set defer_commit to skip sending a config packet even if the packet sent filled up the number of usable slots
 
         See pg149 pg 18
         """
@@ -71,23 +74,22 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         reload_packet[1:] = [fp_format(c) for c in self.reorder_coeffs(coeffs)]
 
         cfg_packet = pack16_to_32(np.arange(self.N_RES_P_LANE, dtype=np.uint16))
-        if max(self._pending) >= self.N_SLOTS:
-            getLogger(__name__).warning('Forcing config before load as reload slots are full')
+        if self._pending[lane] >= self.N_SLOTS:
+            getLogger(__name__).info(f'Reload slots for lane {lane} are full, sending config packet first')
             self.fifo.tx(cfg_packet, destination=4)  # Send a config packet to trigger reload
-            self._pending[:] = [0, 0, 0, 0]
-        self.fifo.tx(pack16_to_32(reload_packet), destination=lane, last_bytes=2)  # reload channels are 0,2,4,6
+            self._pending[:] = 0
+        self.fifo.tx(pack16_to_32(reload_packet), destination=lane, last_bytes=2, wait=wait)  # reload channels are 0,2,4,6
         self._pending[lane] += 1
-        if force_commit or max(self._pending) >= self.N_SLOTS:
+        if force_commit or (self._pending[lane] >= self.N_SLOTS and not defer_commit):
             if not force_commit:
                 getLogger(__name__).debug('Sending config packet')
-            self.fifo.tx(cfg_packet, destination=4)  # Send a config packet to trigger reload
-            self._pending[:] = [0, 0, 0, 0]
+            self.fifo.tx(cfg_packet, destination=4, wait=wait)  # Send a config packet to trigger reload
+            self._pending[:] = 0
 
     def load_coeff_sets(self, coeff_sets):
         for res in range(self.N_RES):
-            if self.fifo.tx_vacancy < 500:
-                time.sleep(.1)
-            self.load_coeff(res, coeff_sets[res], vet=True, force_commit=False)
+            self.load_coeff(res, coeff_sets[res], vet=True, defer_commit=True, force_commit=res == self.N_RES-1,
+                            wait=False)
 
     def configure(self, coefficients=None):
         if coefficients is None:

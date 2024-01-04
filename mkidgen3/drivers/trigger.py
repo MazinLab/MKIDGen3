@@ -8,12 +8,12 @@ import queue
 import asyncio
 import time
 from collections import namedtuple
-
-from datetime import datetime
-from mkidgen3.mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
-from mkidgen3.system_parameters import LOWPASSED_IQ_SAMPLE_RATE, PHOTON_POSTAGE_WINDOW_LENGTH
-
 from enum import Enum
+from datetime import datetime
+
+from ..mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
+from ..system_parameters import LOWPASSED_IQ_SAMPLE_RATE, PHOTON_POSTAGE_WINDOW_LENGTH
+from ..util import do_asyncio_thing
 
 
 class WaitMode(Enum):
@@ -26,6 +26,7 @@ class WaitMode(Enum):
 
     SLEEP = 2
     """ Just sleep """
+
 
 class PhotonTrigger(DefaultIP):
     bindto = ['mazinlab:mkidgen3:trigger:0.4', 'mazinlab:mkidgen3:fake_trigger:0.1']
@@ -180,15 +181,17 @@ class PhotonPostageMAXI(DefaultIP):
         super().__init__(description=description)
         self._buf = None
 
-    def capture(self, max_events=None):
+    def capture(self, max_events=None, wait=True):
         if max_events is None:
             max_events = self.POSTAGE_BUFFER_LEN
         if not self.register_map.CTRL.AP_IDLE:
             getLogger(__name__).debug('Core already capturing, returning existing buffer')
             return self._buf
+
+        # Enable the interrupt
         self.register_map.IP_IER.CHAN0_INT_EN = 1
         self.register_map.GIER = 1
-        self.read(0x0C)
+        self.read(0x0C)  # clear it
         self.write(0x2c, min(max(max_events, 1), self.POSTAGE_BUFFER_LEN))
         if self._buf is not None:
             getLogger(__name__).debug('Zeroing and reusing existing buffer')
@@ -198,9 +201,11 @@ class PhotonPostageMAXI(DefaultIP):
         else:
             self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA + 1, 2), dtype=np.int16)
 
-        self._buf[:,0,0]=-1
+        self._buf[:,0,0] = -1  # set a sentinal value
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
         self.register_map.CTRL.AP_START = 1
+        if wait:
+            do_asyncio_thing(self.interrupt.wait())
         return self._buf
 
     def get_postage(self, raw=False, scaled=True, rawbuffer=False):
@@ -355,9 +360,9 @@ class PhotonMAXI(DefaultIP):
         """
 
         if not self.register_map.active_buffer_ctrl.active_buffer_ap_vld:
-            getLogger(__name__).warning(f'No counts and getting, {repr(self.register_map)}')
+            getLogger(__name__).warning(f'active_buffer_ctrl not valid and getting, {repr(self.register_map)}')
             # return None  # No valid buffer
-        tic=time.time()
+        tic=time.perf_counter()
         cnta, cntb, ab = self.mmio.array[8:11]  # about 66% faster that a pair of reads, about 64-140 us
         ab &= 0xff
         count = cnta if ab else cntb
@@ -368,7 +373,7 @@ class PhotonMAXI(DefaultIP):
             ret = np.array(ret)
 
         if self.register_map.active_buffer_ctrl.active_buffer_ap_vld:
-            toc=time.time()
+            toc=time.perf_counter()
             ab2 = self.mmio.array[10] & 0xff
             getLogger(__name__).warning(f'Buffer {ab}->{ab2} in {int((toc-tic)*1e6)}. Dropping {count} photons.')
             raise RuntimeError('Buffer changed during read')
@@ -380,7 +385,7 @@ class PhotonMAXI(DefaultIP):
 
     def wait(self, method: WaitMode = WaitMode.POLL, interval=None):
         """
-        Wait for a capture buffer to be ready
+        Wait for a capture buffer to be ready, will clear interrupt before awaiting if using asyncio, may not want this
 
         interval required for WaitMode.SLEEP
         """
@@ -392,72 +397,59 @@ class PhotonMAXI(DefaultIP):
             assert interval, 'Interval required'
             time.sleep(interval)
         else:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-            _ = self.register_map.IP_ISR.CHAN0_INT_ST
-            fut = loop.create_task(self.interrupt.wait())
-            loop.run_until_complete(fut)
+            self.read(0x0C)  # clear interrupt
+            do_asyncio_thing(self.interrupt.wait())
         return
 
     def photon_fountain(self, q: (zmq.Socket, queue.SimpleQueue), kill=None, copy_buffer=False, spawn=True):
         """
         Is both the target for and can spawn a thread of the same
 
-        q may be a zma socket or a queue Queue
+        q may be a zma socket or a queue.Queue
 
-        kill must be a zmq.Socket if spawn is not True
+        kill must be a threading.Event if spawn is not True
 
-        returns an unstarted thread and a kill socket to kill the thread (send anything)
+        returns an unstarted thread and a kill event to kill the thread
 
         photons will be fetched and sent over the q copying the buffer if copy_buffer is True
 
-        thread may (should) be started before .capture() is called to initiate capture
+        thread MUST be started before .capture() is called to initiate capture
 
         """
         if spawn:
-            from mkidgen3.server.misc import zpipe
-            stop, kill = zpipe(zmq.Context.instance())
+            stop = kill = threading.Event()
             fetcher_thread = threading.Thread(target=self.photon_fountain, name='photon fountain',
                                               args=(q, ), kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer))
             return fetcher_thread, stop
 
-        # import asyncio
-        # loop = asyncio.new_event_loop()
+        assert isinstance(kill, threading.Event)
 
         log = getLogger(__name__)
         delts = []
-        times=[time.time()]
+        times=[time.perf_counter()]
+
         while True:
-            times.append(time.time())
-            try:
-                kill.recv(zmq.NOBLOCK)
+            times.append(time.perf_counter())
+            if kill.is_set():
                 break
-            except zmq.ZMQError as e:
-                if e.errno != zmq.EAGAIN:
-                    raise
-            times.append(time.time())
-            # loop.run_until_complete(loop.create_task(self.interrupt.wait()))
-            while not self.register_map.CTRL.INTERRUPT:
-                time.sleep(.001)
-            self.register_map.IP_ISR = 1
-            times.append(time.time())
+            times.append(time.perf_counter())
+            self.wait(WaitMode.ASYNC)
+            times.append(time.perf_counter())
             try:
                 x = self.get_photons(no_copy=not copy_buffer)
 
-                if not x.size:
-                    times.append(time.time())
-                    dif = (np.diff(times) * 1e6).astype(int)
-                    delts.append(dif)
-                    x = datetime.utcnow().strftime('%M:%S.%f')
-                    na=('logmsg','zmqrecv','sleep','get')
-                    log.debug(f'Empty Fetch @ {x}, us intervals: {list(zip(na,dif))}')
-                    times = times[-1:]
-                    continue
+                # if x is None:
+                #     times.append(time.time())
+                #     dif = (np.diff(times) * 1e6).astype(int)
+                #     delts.append(dif)
+                #     x = datetime.utcnow().strftime('%M:%S.%f')
+                #     na=('logmsg','zmqrecv','sleep','get')
+                #     log.debug(f'Empty Fetch @ {x}, us intervals: {list(zip(na,dif))}')
+                #     times = times[-1:]
+                #     continue
 
             except RuntimeError:
-                times.append(time.time())
+                times.append(time.perf_counter())
                 dif = (np.diff(times) * 1e6).astype(int)
                 delts.append(dif)
                 x = datetime.utcnow().strftime('%M:%S.%f')
@@ -467,14 +459,14 @@ class PhotonMAXI(DefaultIP):
                 times = times[-1:]
                 continue
 
-            times.append(time.time())
+            times.append(time.perf_counter())
 
             if hasattr(q, 'put'):
                 q.put(x)
             else:
                 q.send(x, copy=False)
 
-            times.append(time.time())
+            times.append(time.perf_counter())
             dif = (np.diff(times)*1e6).astype(int)
             delts.append(dif)
             x = datetime.utcnow().strftime('%M:%S.%f')
@@ -566,13 +558,15 @@ class PhotonMAXI(DefaultIP):
             return self._buf
 
         if self._buf is not None:
-            self._buf.freebuffer()
+            x = self._buf
             self._buf = None
+            x.freebuffer()
 
-        _ = self.register_map.IP_ISR.CHAN0_INT_ST  # clear any existing interrupt (COR)
         self.register_map.IP_IER.CHAN0_INT_EN = 1  # enable the done interrupt
         self.register_map.GIER = 1
-        self.read(0x0C)  # (COR)  #clear the occupancy valid flag by reading the buffer occupancy
+
+        self.read(0x0C)  # clear any existing interrupt (COR)
+        self.read(0x28)  # clear the occupancy valid flag by reading the buffer occupancy (COR)
 
         self._buf = buffer.allocate((self.N_PHOTON_BUFFERS, self.PHOTON_BUFF_N),
                                     dtype=self.PHOTON_PACKED_DTYPE, cacheable=cacheable_buffer)
