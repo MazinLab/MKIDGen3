@@ -134,9 +134,9 @@ def ps_ram_sane(nbytes, pynq_region=False):
 
     """
     if pynq_region:
-        return nbytes < 2 * 1024 ** 2
+        return nbytes < 2 * 1024 ** 3
     else:
-        return nbytes < 2 * 1024 ** 2
+        return nbytes < 2 * 1024 ** 3
 
 
 def do_asyncio_thing(thing, use_new_thread=False):
