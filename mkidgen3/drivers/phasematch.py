@@ -14,7 +14,6 @@ class PhasematchDriver(pynq.DefaultHierarchy):
     N_LANES = 4
     N_SLOTS = 2
     N_FIFO_SIZE = 512
-    MAX_COEFF_VALUE = 127  # 16 bits, 1 sign, 8 fractional
     COEFF_FORMAT = (1, 15)
 
     def __init__(self, description):
@@ -30,10 +29,10 @@ class PhasematchDriver(pynq.DefaultHierarchy):
 
     @staticmethod
     def vet_coeffs(coeffs):
-        if coeffs.size != PhasematchDriver.N_TEMPLATE_TAPS:
+        if coeffs.shape[-1] != PhasematchDriver.N_TEMPLATE_TAPS:
             raise ValueError('Incorrect number of taps')
-        if max(abs(coeffs)) > PhasematchDriver.MAX_COEFF_VALUE:
-            raise ValueError(f'Coefficients must be <= {PhasematchDriver.MAX_COEFF_VALUE}')
+        if np.asarray(coeffs).dtype != np.int16 and abs(np.asarray(coeffs)).max() > 1:
+            raise ValueError(f'Coefficients must be <= 1 if floating point')
 
     @staticmethod
     def vet_res_id(res_id):
@@ -59,8 +58,8 @@ class PhasematchDriver(pynq.DefaultHierarchy):
 
         See pg149 pg 18
         """
-        self.vet_res_id(res_id)
         if vet:
+            self.vet_res_id(res_id)
             self.vet_coeffs(coeffs)
 
         if raw:
@@ -74,22 +73,34 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         reload_packet[1:] = [fp_format(c) for c in self.reorder_coeffs(coeffs)]
 
         cfg_packet = pack16_to_32(np.arange(self.N_RES_P_LANE, dtype=np.uint16))
+
         if self._pending[lane] >= self.N_SLOTS:
             getLogger(__name__).info(f'Reload slots for lane {lane} are full, sending config packet first')
-            self.fifo.tx(cfg_packet, destination=4)  # Send a config packet to trigger reload
+            self.fifo.tx(cfg_packet, destination=4, wait=wait)  # Send a config packet to trigger reload
             self._pending[:] = 0
+
         self.fifo.tx(pack16_to_32(reload_packet), destination=lane, last_bytes=2, wait=wait)  # reload channels are 0,2,4,6
         self._pending[lane] += 1
+
         if force_commit or (self._pending[lane] >= self.N_SLOTS and not defer_commit):
             if not force_commit:
                 getLogger(__name__).debug('Sending config packet')
             self.fifo.tx(cfg_packet, destination=4, wait=wait)  # Send a config packet to trigger reload
             self._pending[:] = 0
 
-    def load_coeff_sets(self, coeff_sets):
+    def load_coeff_sets(self, coeff_sets, raw=False):
+        """
+        Program coefficients for all the resonator channels
+        Args:
+            coeff_sets: (N_RES, N_TAP) array of coefficients, will be vetted
+            raw: (optional) whether to load the coefficients as is or convert to fixed point, see load_coeff
+
+        Returns: None
+        """
+        self.vet_coeffs(coeff_sets)
         for res in range(self.N_RES):
-            self.load_coeff(res, coeff_sets[res], vet=True, defer_commit=True, force_commit=res == self.N_RES-1,
-                            wait=False)
+            self.load_coeff(res, coeff_sets[res], vet=False, defer_commit=True, force_commit=res == self.N_RES-1,
+                            wait=False, raw=raw)
 
     def configure(self, coefficients=None):
         if coefficients is None:
@@ -103,10 +114,6 @@ class PhasematchDriver(pynq.DefaultHierarchy):
             coefficients = np.zeros((2048, self.N_TEMPLATE_TAPS), dtype=np.int16)
             coefficients[:n, 0] = 2 ** 15 - 1
         if coefficients.shape != (2048, self.N_TEMPLATE_TAPS) or coefficients.dtype != 'int16':
-            raise ValueError(f'Please specify a (2048,{self.N_TEMPLATE_TAPS}) array of type int16')
+            raise ValueError(f'coefficients must be a ({self.N_RES},{self.N_TEMPLATE_TAPS}) int16 array')
 
-        channel = 0
-        for coeffs in coefficients:
-            self.load_coeff(channel, coeffs, vet=False, raw=True)
-            channel += 1
-        self.load_coeff(channel - 1, coeffs, vet=False, raw=True, force_commit=True)
+        self.load_coeff_sets(coefficients, raw=True)
