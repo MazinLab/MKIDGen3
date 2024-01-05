@@ -406,6 +406,7 @@ class CaptureHierarchy(DefaultHierarchy):
             d.real[:] = buffer[:,0]
             d.imag[:] = buffer[:, 1]
             del buffer
+            return d[:, 0] + 1j * d[:, 1]
         else:
             return buffer
 
