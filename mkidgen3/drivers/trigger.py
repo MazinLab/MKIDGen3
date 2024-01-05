@@ -208,7 +208,7 @@ class PhotonPostageMAXI(DefaultIP):
             do_asyncio_thing(self.interrupt.wait())
         return self._buf
 
-    def get_postage(self, raw=False, scaled=True, rawbuffer=False):
+    def get_postage(self, complex=False, scaled=True, rawbuffer=False, omit_first=True):
         """
         Raw takes precedence
 
@@ -218,15 +218,28 @@ class PhotonPostageMAXI(DefaultIP):
         select events from a channel via events[ids==<your_channel>]
         """
         count = self.event_count
-        data = np.array(self._buf[:count])
+        start = int(omit_first)  # first photon is generally garbage
         if rawbuffer:
-            return data
-        ids = data[:, 0, 0].astype(np.uint16)
-        events = data[:, 1:, :]
-        if not raw:
-            events = events[:, :, 0] + events[:, :, 1] * 1j
-            if scaled:
-                events /= 2 ** 14
+            return np.array(self._buf[start:count])
+        else:
+            return self.process_postage(self._buf[start:count], scaled=scaled, complex=complex)
+
+    @staticmethod
+    def process_postage(buffer, complex=True, scaled=True):
+        """
+        convert postage stamp capture data into rids and associated complex values,
+        by default omit the first, garbage stamp
+        """
+        buffer = np.asarray(buffer)  # ensures pulled out of pynqbuffer via copy
+
+        if complex:
+            events = buffer[:, 1:, 0] + buffer[:, 1:, 1] * 1j
+        else:
+            events = buffer[:, 1:]
+        if scaled:
+            events /= 2 ** 14
+
+        ids = buffer[:, 0, 0].astype(np.uint16)
         return ids, events
 
     @property
