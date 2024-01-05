@@ -417,7 +417,7 @@ class CaptureHierarchy(DefaultHierarchy):
         else:
             do_asyncio_thing(self.axis2mm.o_int.wait())
 
-    def capture_phase(self, n, groups='all', duration=False, tap_location='matchphase', wait:(bool,dict)=True):
+    def capture_phase(self, n, groups='all', duration=False, tap_location='filtphase', wait:(bool,dict)=True):
         """
         samples are captured in multiples of 16 will be clipped ad necessary
         groups is 0-127 or all, None will leave the filter unchanged
@@ -486,7 +486,7 @@ class CaptureHierarchy(DefaultHierarchy):
         x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         riq = np.array(x)
         x.freebuffer()
-        x = self.capture_phase(n_points, 'all', tap_location='matchphase')
+        x = self.capture_phase(n_points, 'all', tap_location='filtphase')
         phase = np.array(x)
         x.freebuffer()
         riq = riq[..., 0] + riq[..., 1] * 1j
