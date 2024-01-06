@@ -4,6 +4,18 @@ This is the top-level repository for the third generation RF multiplexed readout
 
 This document, package, and the firmware are still in high flux. APIs, resource calculations, and drivers are only partially done. Various subsystems are in myriad states of test. Liberal communication with the authors is both welcomed and advised. The remainder of this readme focuses on the python side of things. For more information about the gateware and Vitis HLS blocks see the readme and design documents in the `firmware` subdirectory. 
 
+### Download the Repp
+```
+git clone --recurse-submodules https://github.com/MazinLab/MKIDGen3.git
+
+```
+### Build the Bitstream
+```
+cd firmware
+source <path/to/vivado/2022.1>
+make gen3_top
+```
+
 ### PYNQ setup
 
 SSH into the ZCU.
