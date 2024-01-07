@@ -1,5 +1,4 @@
-from pynq.interrupt import _InterruptController, get_uio_irq, Interrupt
-from pynq.uio import UioController
+from pynq.interrupt import _InterruptController, Interrupt
 from pynq import PL
 import threading
 import queue
@@ -48,6 +47,7 @@ class ThreadedPLInterruptManager:
 
     _queues = {}
     _events = defaultdict(list)
+    _event_by_id = defaultdict(threading.Event)
     _interrupts = {}
 
     @staticmethod
@@ -59,10 +59,16 @@ class ThreadedPLInterruptManager:
         return ThreadedPLInterruptManager
 
     @staticmethod
-    def get_monitor(name, maxq=1):
+    def get_monitor(name, maxq=1, id=None):
         m = ThreadedPLInterruptManager.get_manager()  # starts up UIO monitoring loop thread first time
+        try:
+            name = name._interrupts['interrupt']['fullpath']
+        except (AttributeError, KeyError):
+            if not isinstance(name, str) and name in PL.interrupt_pins:
+                raise ValueError("name must either be an interrupt pin name "
+                                 "or have _interrupts['interrupt']['fullpath']")
 
-        e = threading.Event()
+        e = threading.Event() if id is None else m._event_by_id.get[f"{name}{id}"]
         m._events[name].append(e)
         try:
             q = m._queues[name]
@@ -79,9 +85,29 @@ class ThreadedPLInterruptManager:
         return q, e
 
     @staticmethod
+    def remove_monitor(event):
+        """
+        Stop monitoring interrupt for event, removing the last monitor will also stop the queue and disable
+        the interrupt
+        """
+        m = ThreadedPLInterruptManager.get_manager()  # starts up UIO monitoring loop thread first time
+        name = None
+        for k,v in m._events.items():
+            try:
+                v.remove(event)
+                name = k
+            except ValueError:
+                pass
+        if not name:
+            return
+        for k, _  in filter(lambda k, v: v==event, m._event_by_id.items()):
+            m._event_by_id.pop(k)
+        if not m._events[name]:
+            ThreadedPLInterruptManager._queues.pop(name)  # no more events, kill the queue
+
+    @staticmethod
     async def interrupt_monitor(name):
         i = ThreadedPLInterruptManager._interrupts[name] = Interrupt(name)
-        q = ThreadedPLInterruptManager._queues[name]
 
         while True:
             t = time.perf_counter()
@@ -92,6 +118,10 @@ class ThreadedPLInterruptManager:
             log.info(f"Interrupt {name} @ {t}")
             for e in ThreadedPLInterruptManager._events[name]:
                 e.set()
+            try:
+                q = ThreadedPLInterruptManager._queues[name]
+            except KeyError:
+                break
             try:
                 q.put_nowait(t)  # will raise full and kill the loop at max queue size
             except queue.Full:

@@ -3,30 +3,12 @@ from pynq import DefaultIP, buffer
 import numpy as np
 from logging import getLogger
 import threading
-from queue import Queue
 import queue
-import asyncio
-import time
 from collections import namedtuple
-from enum import Enum
-from datetime import datetime
 
 from ..mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
 from ..system_parameters import LOWPASSED_IQ_SAMPLE_RATE, PHOTON_POSTAGE_WINDOW_LENGTH
-from ..util import do_asyncio_thing
 from ..interrupts import ThreadedPLInterruptManager
-
-
-class WaitMode(Enum):
-    """Enumerates capture waiting modes."""
-    POLL = 0
-    """ Poll the interrupt """
-
-    ASYNC = 1
-    """ Use asyncio to wait on the interrupt"""
-
-    SLEEP = 2
-    """ Just sleep """
 
 
 class PhotonTrigger(DefaultIP):
@@ -196,17 +178,20 @@ class PhotonPostageMAXI(DefaultIP):
         self.write(0x2c, min(max(max_events, 1), self.POSTAGE_BUFFER_LEN))
         if self._buf is not None:
             getLogger(__name__).debug('Zeroing and reusing existing buffer')
-            assert self._buf.shape==(self.POSTAGE_BUFFER_LEN, self.N_CAPDATA + 1, 2)
-            assert self._buf.dtype==np.int16
+            assert self._buf.shape == (self.POSTAGE_BUFFER_LEN, self.N_CAPDATA + 1, 2)
+            assert self._buf.dtype == np.int16
             self._buf[:] = 0
         else:
             self._buf = buffer.allocate((self.POSTAGE_BUFFER_LEN, self.N_CAPDATA + 1, 2), dtype=np.int16)
 
-        self._buf[:,0,0] = -1  # set a sentinal value
+        self._buf[:, 0, 0] = -1  # set a sentinal value
         self.write(0x10, np.asarray([self._buf.device_address]).tobytes())
         self.register_map.CTRL.AP_START = 1
+
         if wait:
-            do_asyncio_thing(self.interrupt.wait())
+            _, int_event = ThreadedPLInterruptManager.get_monitor(self)
+            int_event.wait()
+            ThreadedPLInterruptManager.remove_monitor(int_event)
         return self._buf
 
     def get_postage(self, complex=False, scaled=True, rawbuffer=False, omit_first=True):
@@ -296,12 +281,12 @@ class PhotonMAXI(DefaultIP):
 
         """
         if out is None:
-            n=0
-        elif x.shape[0]+n>out.shape[0]:
+            n = 0
+        elif x.shape[0] + n > out.shape[0]:
             raise IndexError('Output array is too small')
 
         ret = np.zeros(x.shape, dtype=PhotonMAXI.PHOTON_DTYPE) if out is None else out
-        sl=slice(n,n+x.shape[0])
+        sl = slice(n, n + x.shape[0])
         ret['phase'][sl] = x & 0xffff
         ret['time'][sl] = x >> 28
         ret['id'][sl] = (x >> 16) & 0xfff
@@ -398,25 +383,6 @@ class PhotonMAXI(DefaultIP):
     def stop_capture(self):
         self.register_map.CTRL.AUTO_RESTART = 0
 
-    def wait(self, method: WaitMode = WaitMode.POLL, interval=None):
-        """
-        Wait for a capture buffer to be ready, will clear interrupt before awaiting if using asyncio, may not want this
-
-        interval required for WaitMode.SLEEP
-        """
-
-        if method == WaitMode.POLL:
-            interval = interval or .000010  # default to 10us
-            while not self.read(0x0C):
-                time.sleep(interval)
-        elif method == WaitMode.SLEEP:
-            assert interval, 'Interval required'
-            time.sleep(interval)
-        else:
-            self.read(0x0C)  # clear interrupt
-            do_asyncio_thing(self.interrupt.wait())
-        return
-
     def photon_fountain(self, q: (zmq.Socket, queue.SimpleQueue), kill=None, copy_buffer=False, spawn=True,
                         discard_initial=3):
         """
@@ -438,74 +404,45 @@ class PhotonMAXI(DefaultIP):
                 raise RuntimeError('Photon fountain already running')
             kill = threading.Event()
             self._fountain_thread = threading.Thread(target=self.photon_fountain, name='photon fountain',
-                                              args=(q, ), kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer,
-                                                                      discard_initial=discard_initial))
+                                                     args=(q,),
+                                                     kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer,
+                                                                 discard_initial=discard_initial))
             return self._fountain_thread, kill
 
         assert isinstance(kill, threading.Event)
 
         log = getLogger(__name__)
-        delts = []
-        times=[time.perf_counter()]
+        sender = q.put if hasattr(q, 'put') else lambda x: q.send(x, copy=False)
+
         _, int_event = ThreadedPLInterruptManager.get_monitor(self._interrupts['interrupt']['fullpath'])
 
-        while True:
-            times.append(time.perf_counter())
-            if kill.is_set():
-                break
-            times.append(time.perf_counter())
-            # 110% the max buffer interval, if we don't interrupt something is off so give kill a chance
-            int_event.wait(1.1534336)
+        while not kill.is_set():
+
+            int_event.wait(1.1534336)  # 110% max buffer interval, if no interrupt something may be odd so check kill
+
             if not int_event.is_set():
-                getLogger(__name__).debug('Timeout waiting for interrupt')
-                times = times[-1:]
+                log.warning('Timeout waiting for interrupt, is capture started?')
                 continue
+
             int_event.clear()
             self.read(0x0c)
-            getLogger(__name__).debug('Finished waiting in fountain')
-            times.append(time.perf_counter())
 
-            if discard_initial>0:
-                getLogger(__name__).debug(f'Discarding {discard_initial} before sending')
+            if discard_initial > 0:
+                log.debug(f'Discarding {discard_initial} before sending')
                 discard_initial -= 1
-                times = times[-1:]
                 continue
 
             x = self.get_photons(no_copy=not copy_buffer, cautious=False)
 
             if int_event.is_set():  # or self.read(0x0c) then we have taken too long
-                times.append(time.perf_counter())
-                dif = (np.diff(times) * 1e6).astype(int)
-                delts.append(dif)
-                x = datetime.utcnow().strftime('%M:%S.%f')
-                na = ('logmsg', 'zmqrecv', 'sleep', 'get')
-                log.error(f'Drop Fetch @ {x}, us intervals: {list(zip(na, dif))}')
-                # log.error(f"Dropping photons, couldn't keep up with buffer rotation")
-                times = times[-1:]
+                log.error(f'Buffer likely rotated during fetch, this should not happen.')
                 continue
 
-            times.append(time.perf_counter())
+            sender(x)
 
-            if hasattr(q, 'put'):
-                getLogger(__name__).debug(f'Putting data in Q ')
-                q.put(x)
-            else:
-                q.send(x, copy=False)
-
-            times.append(time.perf_counter())
-            dif = (np.diff(times)*1e6).astype(int)
-            delts.append(dif)
-            x = datetime.utcnow().strftime('%M:%S.%f')
-            na = ('logmsg', 'zmqrecv', 'sleep', 'get','inq')
-            log.info(f'Fetch @ {x}, us intervals: {list(zip(na, dif))}')
-            times=times[-1:]
-
-        log.info(f'Time between waits: {delts}')
-
-        if hasattr(q, 'put'):
-            q.put(None)
-        else:
-            q.send(b'')
+        ThreadedPLInterruptManager.remove_monitor(int_event)
+        sender(b'')
+        if isinstance(q, zmq.Socket):
             q.close()
 
     @property
@@ -515,7 +452,7 @@ class PhotonMAXI(DefaultIP):
     @property
     def buffer_interval(self):
         """ Max buffer rotation interval in ms """
-        return 2 ** (self.read(0x40)&0x1f) / 1e3
+        return 2 ** (self.read(0x40) & 0x1f) / 1e3
 
     @buffer_interval.setter
     def buffer_interval(self, interval_ms):
@@ -723,7 +660,7 @@ class PhotonPacketizer(DefaultIP):
             getLogger(__name__).warning(f'Requesting too large a packet, using packet of '
                                         f'{self.MAX_PHOTON_PACKET_N} photons.')
 
-        self.write(0x10, min(max(n_photons_per_buffer-2, 1), self.MAX_PHOTON_PACKET_N-2))
+        self.write(0x10, min(max(n_photons_per_buffer - 2, 1), self.MAX_PHOTON_PACKET_N - 2))
 
     def configure(self):
         """ monitor_channels shall be 8 integers in [0,2047] """
