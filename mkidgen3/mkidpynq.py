@@ -7,6 +7,31 @@ N_IQ_GROUPS = 256
 
 PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
 
+def unpack_photons(x, out=None, n=0):
+    """
+    Unpack packed photons, optionally accumulating them into an existing output array
+
+    Args:
+        x: an array of packed photons
+        out: optional, an array of type PhotonMAXI.PHOTON_DTYPE with the shape of x, but see n
+        n: optional, an index into out to insert unpacked photons, the first axis is used if >1d an
+            IndexError is raised if there is insufficient space.
+
+    Returns: the unpacked photon array
+
+    """
+    if out is None:
+        n = 0
+    elif x.shape[0] + n > out.shape[0]:
+        raise IndexError('Output array is too small')
+
+    ret = np.zeros(x.shape, dtype=PHOTON_DTYPE) if out is None else out
+    sl = slice(n, n + x.shape[0])
+    ret['phase'][sl] = x & 0xffff
+    ret['time'][sl] = x >> 28
+    ret['id'][sl] = (x >> 16) & 0xfff
+    return ret
+
 
 def get_board_name():
     x = subprocess.run(['cat', '/proc/device-tree/chosen/pynq_board'], capture_output=True, text=True).stdout

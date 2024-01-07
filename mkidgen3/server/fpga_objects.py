@@ -16,7 +16,7 @@ import threading
 import pynq
 import time
 import numpy as np
-
+from mkidgen3.mkidpynq import unpack_photons
 DEFAULT_BIT_FILE = '/home/xilinx/gen3_top.bit'
 
 
@@ -332,7 +332,7 @@ class FeedlineHardware:
                     if photons is None:
                         cr.finish()
                         break
-                    cr.send_data(photon_maxi.unpack_photons(photons) if unpack else photons, copy=False,
+                    cr.send_data(unpack_photons(photons) if unpack else photons, copy=False,
                                  compress=True)
             except Exception as e:
                 cr.abort(f'Uncaught exception in photon sender: {e}')

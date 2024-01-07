@@ -9,7 +9,7 @@ from collections import namedtuple
 from ..mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
 from ..system_parameters import LOWPASSED_IQ_SAMPLE_RATE, PHOTON_POSTAGE_WINDOW_LENGTH
 from ..interrupts import ThreadedPLInterruptManager
-
+from ..mkidpynq import unpack_photons
 
 class PhotonTrigger(DefaultIP):
     bindto = ['mazinlab:mkidgen3:trigger:0.4', 'mazinlab:mkidgen3:fake_trigger:0.1']
@@ -264,32 +264,6 @@ class PhotonMAXI(DefaultIP):
     def pack_photons(x, out=None):
         ret = np.zeros(x.size, dtype=PhotonMAXI.PHOTON_PACKED_DTYPE) if out is None else out
         ret[:] = (((x['time'] << 12) | x['id']) << 16) | x['phase'].astype(np.uint16)
-        return ret
-
-    @staticmethod
-    def unpack_photons(x, out=None, n=0):
-        """
-        Unpack packed photons, optionally accumulating them into an existing output array
-
-        Args:
-            x: an array of packed photons
-            out: optional, an array of type PhotonMAXI.PHOTON_DTYPE with the shape of x, but see n
-            n: optional, an index into out to insert unpacked photons, the first axis is used if >1d an
-                IndexError is raised if there is insufficient space.
-
-        Returns: the unpacked photon array
-
-        """
-        if out is None:
-            n = 0
-        elif x.shape[0] + n > out.shape[0]:
-            raise IndexError('Output array is too small')
-
-        ret = np.zeros(x.shape, dtype=PhotonMAXI.PHOTON_DTYPE) if out is None else out
-        sl = slice(n, n + x.shape[0])
-        ret['phase'][sl] = x & 0xffff
-        ret['time'][sl] = x >> 28
-        ret['id'][sl] = (x >> 16) & 0xfff
         return ret
 
     @staticmethod

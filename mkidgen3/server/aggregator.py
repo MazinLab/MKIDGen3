@@ -1,6 +1,7 @@
 from .captures import *
 from zmq import *
 from .pixelmap import PixelMap
+from mkidgen3.mkidpynq import unpack_photons
 
 MAX_PHOTON_PER_CR_SEND = 5000
 INSTRUMENT_PHOTON_TYPE = (('time', 'u32'), ('x', 'u32'), ('y', 'u32'), ('phase', 'u16'))
@@ -94,6 +95,75 @@ class PhotonAggregator:
 
         for job in self._jobs:
             job.datasink.destablish()
+
+from mkidgen3.mkidpynq import PHOTON_DTYPE
+class PhotonAccumulator:
+    def __init__(self, max_ram=100, pixelmap: PixelMap = None, n_channels=None):
+        """
+        A tool to gather photons together without running out of ram and ease access
+        to timeseries, images, and other helpful metrics.
+
+        max_ram: how much space to allow for photon storage
+        pixelmap: and optional channel id to x or xy map, should be a nChan x 1 or 2 array positions
+        n_channels: optional shortcut if pixelmap not specified
+        """
+        assert bool(n_channels) ^ bool(pixelmap), 'Must specify n_channels xor pixelmap'
+        self.ram_limit = max_ram  # MiB
+        self.map = pixelmap if pixelmap else PixelMap(np.arange(n_channels, dtype=int), n_channels)
+        self._data = np.zeros(self.ram_limit * 1024 ** 2 // PHOTON_DTYPE.itemsize, dtype=PHOTON_DTYPE)
+        self.n = 0
+        self.accumulations = 0
+
+    def __getitem__(self, n):
+        """Get photons for channel n"""
+        return self.data[self.data['id'] == n]
+
+    def accumulate(self, buffer, n=None):
+        """Add some packed photons to the pot"""
+        self.accumulations += 1
+        if n is None:
+            d = np.array(buffer)
+            n = buffer.size
+        else:
+            d = np.array(buffer[:n])
+
+        drop = max(n - (self._data.size - self.n), 0)
+        if drop:
+            getLogger(__name__).debug(f'Memory used up, dropping {drop} old photons.')
+            self._data[:self._data.size - drop] = self._data[drop:]
+        unpack_photons(buffer[:n], out=self._data, n=self.n)
+        self.n += n - drop
+
+    @property
+    def data(self):
+        return self._data[:self.n]
+
+    def image(self, timestep_us=None, rate=False):
+        """ Build an image out of the current photon data, specify a timestep (in us) to make a timecube"""
+
+        first, last = self.data['time'][[0, -1]]
+        duration_s = (last - first) / 1e6
+        if first >= last:
+            raise ValueError('Last photon time is not after the first!')
+
+        if timestep_us:
+            timebins = (np.arange(first, last + timestep_us, timestep_us, dtype=type(timestep_us)),)
+        else:
+            timebins = tuple()
+        imbins = self.map.map_bins
+
+        val = self.map.map[self.data['id']]
+        val = (val,) if self.map.map.ndim == 1 else (val[0], val[1])
+        coord = val + (self.data['time'],) if timestep_us else val
+
+        hist, _ = np.histogramdd(coord, bins=imbins + timebins, density=rate)
+        if rate:
+            hist *= self.n
+            hist /= duration_s if timestep_us is None else 1e6
+
+        return hist
+
+
 
 from mkidgen3.server import pixelmap
 if __name__=='__main__':
