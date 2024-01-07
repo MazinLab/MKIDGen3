@@ -162,16 +162,22 @@ def do_asyncio_thing(thing, use_new_thread=False):
         if use_new_thread:
             raise Exception
         loop = asyncio.get_running_loop()
+        getLogger(__name__).debug(f"Using existing loop")
     except:
         loop = asyncio.new_event_loop()
         newloop = True
 
     if use_new_thread:
+        getLogger(__name__).debug(f"Using new loop in new thread")
         thread = Thread(target=start_background_loop, args=(loop,), daemon=True)
         thread.start()
         return asyncio.run_coroutine_threadsafe(thing, loop)
 
+    if newloop:
+        getLogger(__name__).debug(f"Using new loop")
+
     task = loop.create_task(thing)
+    getLogger(__name__).debug(f"Will wait in {loop} for {thing} (use_new_thread={use_new_thread})")
     loop.run_until_complete(task)
     if newloop:
         loop.close()

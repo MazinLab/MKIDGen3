@@ -14,6 +14,7 @@ from datetime import datetime
 from ..mkidpynq import PHOTON_DTYPE as _PHOTON_DTYPE
 from ..system_parameters import LOWPASSED_IQ_SAMPLE_RATE, PHOTON_POSTAGE_WINDOW_LENGTH
 from ..util import do_asyncio_thing
+from ..interrupts import ThreadedPLInterruptManager
 
 
 class WaitMode(Enum):
@@ -365,30 +366,31 @@ class PhotonMAXI(DefaultIP):
         """
         super().__init__(description=description)
         self._buf = None
+        self._fountain_thread = None
 
-    def get_photons(self, no_copy=False):
+    def get_photons(self, no_copy=False, cautious=True):
         """v0.4 uses 9c7ad901ef20bb356010109c83311bc5e49db81e of photon_maxi
         The active buffer is the index of the buffer being loaded and so the other index should be used
         the active buffer is written every time a photon comes in and so will very likely be valid
+        this function takes [0.35, 0.45) ms with cautious=True and ~0.24 um cautious=False
         """
-
-        if not self.register_map.active_buffer_ctrl.active_buffer_ap_vld:
+        if cautious and not self.read(0x2c):
             getLogger(__name__).warning(f'active_buffer_ctrl not valid and getting, {repr(self.register_map)}')
-            # return None  # No valid buffer
-        tic=time.perf_counter()
+            return None
+
+        getLogger(__name__).debug(f'Fetching buffer occupancy and active')
         cnta, cntb, ab = self.mmio.array[8:11]  # about 66% faster that a pair of reads, about 64-140 us
         ab &= 0xff
-        count = cnta if ab else cntb
-        count &= 0x1ffff
+        count = (cnta if ab else cntb) & 0x1ffff
+        getLogger(__name__).debug(f'Slicing data')
+        ret = self._buf[0 if ab else 1, :count]
 
-        ret = self._buf[0 if ab else 1][:count]
         if not no_copy:
+            getLogger(__name__).debug(f'Copy data')
             ret = np.array(ret)
 
-        if self.register_map.active_buffer_ctrl.active_buffer_ap_vld:
-            toc=time.perf_counter()
-            ab2 = self.mmio.array[10] & 0xff
-            getLogger(__name__).warning(f'Buffer {ab}->{ab2} in {int((toc-tic)*1e6)}. Dropping {count} photons.')
+        if cautious and self.read(0x0c):  # The core restarts when buffers are rotated, setting the interrupt
+            getLogger(__name__).error(f'Buffers rotated during read. Dropping {count} photons.')
             raise RuntimeError('Buffer changed during read')
 
         return ret
@@ -402,10 +404,11 @@ class PhotonMAXI(DefaultIP):
 
         interval required for WaitMode.SLEEP
         """
+
         if method == WaitMode.POLL:
-            interval = interval or .000010
-            while not self.register_map.IP_ISR.CHAN0_INT_ST:  # self.register_map.CTRL.INTERRUPT:
-                time.sleep(interval)  # default to 10us
+            interval = interval or .000010  # default to 10us
+            while not self.read(0x0C):
+                time.sleep(interval)
         elif method == WaitMode.SLEEP:
             assert interval, 'Interval required'
             time.sleep(interval)
@@ -414,7 +417,8 @@ class PhotonMAXI(DefaultIP):
             do_asyncio_thing(self.interrupt.wait())
         return
 
-    def photon_fountain(self, q: (zmq.Socket, queue.SimpleQueue), kill=None, copy_buffer=False, spawn=True):
+    def photon_fountain(self, q: (zmq.Socket, queue.SimpleQueue), kill=None, copy_buffer=False, spawn=True,
+                        discard_initial=3):
         """
         Is both the target for and can spawn a thread of the same
 
@@ -430,38 +434,46 @@ class PhotonMAXI(DefaultIP):
 
         """
         if spawn:
-            stop = kill = threading.Event()
-            fetcher_thread = threading.Thread(target=self.photon_fountain, name='photon fountain',
-                                              args=(q, ), kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer))
-            return fetcher_thread, stop
+            if self._fountain_thread and self._fountain_thread.is_alive():
+                raise RuntimeError('Photon fountain already running')
+            kill = threading.Event()
+            self._fountain_thread = threading.Thread(target=self.photon_fountain, name='photon fountain',
+                                              args=(q, ), kwargs=dict(kill=kill, spawn=False, copy_buffer=copy_buffer,
+                                                                      discard_initial=discard_initial))
+            return self._fountain_thread, kill
 
         assert isinstance(kill, threading.Event)
 
         log = getLogger(__name__)
         delts = []
         times=[time.perf_counter()]
+        _, int_event = ThreadedPLInterruptManager.get_monitor(self._interrupts['interrupt']['fullpath'])
 
         while True:
             times.append(time.perf_counter())
             if kill.is_set():
                 break
             times.append(time.perf_counter())
-            self.wait(WaitMode.ASYNC)
+            # 110% the max buffer interval, if we don't interrupt something is off so give kill a chance
+            int_event.wait(1.1534336)
+            if not int_event.is_set():
+                getLogger(__name__).debug('Timeout waiting for interrupt')
+                times = times[-1:]
+                continue
+            int_event.clear()
+            self.read(0x0c)
+            getLogger(__name__).debug('Finished waiting in fountain')
             times.append(time.perf_counter())
-            try:
-                x = self.get_photons(no_copy=not copy_buffer)
 
-                # if x is None:
-                #     times.append(time.time())
-                #     dif = (np.diff(times) * 1e6).astype(int)
-                #     delts.append(dif)
-                #     x = datetime.utcnow().strftime('%M:%S.%f')
-                #     na=('logmsg','zmqrecv','sleep','get')
-                #     log.debug(f'Empty Fetch @ {x}, us intervals: {list(zip(na,dif))}')
-                #     times = times[-1:]
-                #     continue
+            if discard_initial>0:
+                getLogger(__name__).debug(f'Discarding {discard_initial} before sending')
+                discard_initial -= 1
+                times = times[-1:]
+                continue
 
-            except RuntimeError:
+            x = self.get_photons(no_copy=not copy_buffer, cautious=False)
+
+            if int_event.is_set():  # or self.read(0x0c) then we have taken too long
                 times.append(time.perf_counter())
                 dif = (np.diff(times) * 1e6).astype(int)
                 delts.append(dif)
@@ -475,6 +487,7 @@ class PhotonMAXI(DefaultIP):
             times.append(time.perf_counter())
 
             if hasattr(q, 'put'):
+                getLogger(__name__).debug(f'Putting data in Q ')
                 q.put(x)
             else:
                 q.send(x, copy=False)
@@ -484,7 +497,7 @@ class PhotonMAXI(DefaultIP):
             delts.append(dif)
             x = datetime.utcnow().strftime('%M:%S.%f')
             na = ('logmsg', 'zmqrecv', 'sleep', 'get','inq')
-            log.error(f'Fetch @ {x}, us intervals: {list(zip(na, dif))}')
+            log.info(f'Fetch @ {x}, us intervals: {list(zip(na, dif))}')
             times=times[-1:]
 
         log.info(f'Time between waits: {delts}')
@@ -501,14 +514,12 @@ class PhotonMAXI(DefaultIP):
 
     @property
     def buffer_interval(self):
+        """ Max buffer rotation interval in ms """
         return 2 ** (self.read(0x40)&0x1f) / 1e3
 
     @buffer_interval.setter
     def buffer_interval(self, interval_ms):
         """Permissible range is about 0.5 - 1000 ms and will be clipped"""
-        if not self.register_map.CTRL.AP_IDLE and self.register_map.CTRL.AUTO_RESTART:
-            getLogger(__name__).warning('Buffer rotation interval will not take effect until core (auto) restart')
-
         l2_buffer_shift = np.round(np.log2(interval_ms * 1000))
         _buffer_time_ms = 2 ** l2_buffer_shift / 1000
         if l2_buffer_shift < 9 or l2_buffer_shift > 20:
