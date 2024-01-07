@@ -3,12 +3,14 @@ import pynq.buffer
 from pynq import allocate, DefaultIP, DefaultHierarchy
 import time
 import asyncio
-import mkidgen3.mkidpynq
-from mkidgen3.mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
-    check_description_for  # config, overlay details
 from logging import getLogger
+
+from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
+    check_description_for  # config, overlay details
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup
-from ..util import do_asyncio_thing, ps_ram_sane
+from ..util import ps_ram_sane
+from ..interrupts import ThreadedPLInterruptManager
+
 
 class FilterIQ(DefaultIP):
     """
@@ -73,7 +75,7 @@ class FilterIQ(DefaultIP):
                 raise ValueError('Groups must be captured in multiples of two')
 
             if max(groups) > N_IQ_GROUPS-1 or min(groups) < 0:
-                raise ValueError(f'Groups must be in range 0-255')
+                raise ValueError(f'Groups must be in range 0-{N_IQ_GROUPS-1}')
 
             for g in groups:
                 i = g // 32  # (0-7)
@@ -132,17 +134,17 @@ class FilterPhase(DefaultIP):
             if groups.lower() != 'all':
                 raise ValueError("The only legal string for keep is 'all'")
             keep += 0xFFFFFFFF
-            last = 127
+            last = N_PHASE_GROUPS-1
         else:
-            if max(groups) > 127:
-                groups = set([g // 16 for g in groups])  # convert channel to group
+            if max(groups) > N_PHASE_GROUPS-1:
+                groups = channel_to_phasegroup(groups)  # convert channel to group
             last = max(groups)
 
             if len(groups) % 2:
                 raise ValueError('Groups must be captured in multiples of two')
 
-            if max(groups) > 127 or min(groups) < 0:
-                raise ValueError(f'Groups must be in range 0-127')
+            if max(groups) > N_PHASE_GROUPS-1 or min(groups) < 0:
+                raise ValueError(f'Groups must be in range 0-{N_PHASE_GROUPS-1}')
 
             for g in groups:
                 i = g // 32  # (0-7)
@@ -415,7 +417,8 @@ class CaptureHierarchy(DefaultHierarchy):
         if not interrupt:
             time.sleep(duration)
         else:
-            do_asyncio_thing(self.axis2mm.o_int.wait())
+            _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
+            e.wait()
 
     def capture_phase(self, n, groups='all', duration=False, tap_location='filtphase', wait:(bool,dict)=True):
         """
