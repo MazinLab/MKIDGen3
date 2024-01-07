@@ -6,6 +6,86 @@ import pynq
 from mkidgen3.fixedpoint import FP16_15
 
 
+class DACTableURAM(pynq.DefaultHierarchy):
+    @staticmethod
+    def checkhierarchy(description):
+        # found = check_description_for(description, ('xilinx.com:axis_switch', 'mazinlab:mkidgen3:filter_iq',
+        #                                             'xilinx.com:module_ref:axis2mm'))
+        return description['fullpath'] == 'dactable'  # and bool(len(found['xilinx.com:module_ref:axis2mm']))
+
+    def __init__(self, description):
+        super().__init__(description)
+        self._buffer = None
+
+    def replay_ramp(self):
+        ramp = np.arange(2 ** 19, dtype=np.complex64)
+        ramp.real %= (2 ** 16)
+        ramp.imag = ramp.real
+        self.replay(ramp, fpgen=None)
+
+    def replay(self, data, fpgen=lambda x: [FP16_15(v).__index__() for v in x]):
+        """
+        data - an array of complex numbers, nominally 2^19 samples
+        fpgen - set to a function to convert floating point numbers to integers. must work on arrays of data
+        if None data will be truncated.
+        """
+        if fpgen == 'simple':
+            data = (data * 8192).round().clip(-8192, 8191) * 4
+            fpgen = None
+        # Data has right shape
+        if data.size < 2 ** 19:
+            getLogger(__name__).warning('Insufficient data, padding with zeros')
+            x = np.zeros(2 ** 19, dtype=np.complex64)
+            x[:data.size] = data
+            data = x
+
+        if data.size > 2 ** 19:
+            getLogger(__name__).warning('Data will be truncated to 2^19 samples')
+            data = data[:2 ** 19]
+
+        self._buffer = np.zeros(2 ** 20, dtype=np.uint16)
+        iload = fpgen(data.real) if fpgen is not None else data.real.astype(np.int16)
+        qload = fpgen(data.imag) if fpgen is not None else data.imag.astype(np.int16)
+        for i in range(8):
+            self._buffer[i:data.size * 2:16] = iload[i::8]
+            self._buffer[i + 8:data.size * 2:16] = qload[i::8]
+        self.axi_bram_ctrl_0.mmio.array[:] = np.frombuffer(self._buffer, dtype=np.uint32)
+        time.sleep(1)
+
+    def stop(self):
+        self._buffer = np.zeros(2 ** 20, dtype=np.uint16)
+        self.axi_bram_ctrl_0.mmio.array[:] = 0
+
+    def quiet(self):
+        """Replay 0s"""
+        self.stop()
+
+    def status(self)->dict:
+        """
+        Generate a dictionary with whether the core is running and a copy of the current buffer
+        Returns: dict with keys running and buffer
+        """
+        return {'running': True, 'buffer': self._buffer.copy() if self._buffer is not None else None}
+
+    def configure(self, waveform=None):
+        """
+        Args:
+            waveform_values: complex values quantized to integer real and imaginary parts
+            max val, min val: [2**15-1, -2**15] corresponding to [1.0, -1.0] & [max dac V, min dac V]
+        Returns: None
+        """
+        try:
+            waveform_values = waveform.output_waveform
+        except AttributeError:
+            getLogger(__name__).info('Interpreting waveform as array')
+            waveform_values = waveform
+
+        if waveform_values is None:
+            raise ValueError('waveform_values is None')
+
+        self.replay(waveform_values, fpgen=None)
+
+
 class DACTableAXIM(pynq.DefaultIP):
     bindto = ['mazinlab:mkidgen3:dac_table_axim:1.33']
 
