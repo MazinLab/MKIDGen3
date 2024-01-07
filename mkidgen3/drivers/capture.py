@@ -248,10 +248,8 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.len = n
         self.axis2mm.start(continuous=True, increment=True)
 
-        loop = asyncio.get_event_loop()
         while not self.terminate_looped_capture:
-            task = loop.create_task(self.o_int.wait())
-            loop.run_until_complete(task)
+            self.wait()
             stat = self.cmd_ctrl_reg
             if stat['r_err']:
                 getLogger(__name__).error(f'Aborting capture loop due to error: {stat}')

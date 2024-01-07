@@ -68,7 +68,7 @@ class ThreadedPLInterruptManager:
                 raise ValueError("name must either be an interrupt pin name "
                                  "or have _interrupts['interrupt']['fullpath']")
 
-        e = threading.Event() if id is None else m._event_by_id.get[f"{name}{id}"]
+        e = threading.Event() if id is None else m._event_by_id[f"{name}{id}"]
         m._events[name].append(e)
         try:
             q = m._queues[name]
@@ -100,7 +100,7 @@ class ThreadedPLInterruptManager:
                 pass
         if not name:
             return
-        for k, _  in filter(lambda k, v: v==event, m._event_by_id.items()):
+        for k, _ in filter(lambda kv: kv[1] == event, m._event_by_id.items()):
             m._event_by_id.pop(k)
         if not m._events[name]:
             ThreadedPLInterruptManager._queues.pop(name)  # no more events, kill the queue
