@@ -1,4 +1,5 @@
 import pynq
+from mkidgen3.interrupts import ThreadedPLInterruptManager
 
 
 class Quirk:
@@ -68,8 +69,14 @@ class Overlay(Quirk):
                     hier = getattr(hier, h)
                 setattr(hier, "ddccontrol_{:d}".format(num), ThreepartDDC(mmio))
 
+    def do_interrupts(self):
+        ThreadedPLInterruptManager.get_manager()
+
     def post_configure(self):
+        if not hasattr(self._ol, 'dac_table') and hasattr(self._ol, 'dactable'):
+            self._ol.dac_table = self._ol.dactable
         if self.interrupt_mangled:
             self.do_interrupt_mangled()
         if self.threepart_ddc:
             self.do_threepart_ddc()
+        self.do_interrupts()

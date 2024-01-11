@@ -10,6 +10,7 @@ from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureAbortedException, CaptureRequest
+from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
 import threading
@@ -196,14 +197,6 @@ class FeedlineHardware:
         Returns: None
 
         """
-        # try:
-        #     aio_eloop = asyncio.get_running_loop()
-        # except RuntimeError:
-        #     aio_eloop = asyncio.new_event_loop()
-            # t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
-            # t.start()
-        # asyncio.set_event_loop(aio_eloop)
-        # assert aio_eloop.is_running()
 
         failmsg = ''
         try:
@@ -327,11 +320,13 @@ class FeedlineHardware:
                         log.debug(f'Prep send @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
 
                     x = q.recv()
-                    photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE) if x else None
-                    toc = datetime.utcnow()
-                    if photons is None:
+                    if x == b'':
+                        toc = datetime.utcnow()
                         cr.finish()
                         break
+                    photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE)
+                    toc = datetime.utcnow()
+
                     cr.send_data(unpack_photons(photons) if unpack else photons, copy=False,
                                  compress=True)
             except Exception as e:
@@ -348,6 +343,7 @@ class FeedlineHardware:
         try:
             sender.start()
             fountain.start()
+            time.sleep(.2)
             photon_maxi.capture(buffer_time_ms=cr.nsamp)
             while not cr.completed:
                 try:
@@ -359,17 +355,14 @@ class FeedlineHardware:
         except CaptureAbortedException as e:
             getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
             stop.set()
-            # stop.send(b'')  # sender will finish up the CR
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
             stop.set()
-            # stop.send(b'')
         finally:
             self._ol.trigger_system.photon_maxi_0.stop_capture()
             fountain.join()
             sender.join()
             pipe.close()
-            # stop.close()
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
             if isinstance(q, zmq.Socket):
@@ -397,8 +390,11 @@ class FeedlineHardware:
 
         try:
             postage_filt.configure(monitor_channels=cr.channels)
-            postage_maxi.capture(max_events=cr.nsamp)
-            while not postage_maxi.register_map.CTRL.INTERRUPT:  # TODO postage_maxi.interrupt.is_set():
+            _, postdone = ThreadedPLInterruptManager.get_monitor(postage_maxi, id='frs_postage_cap')
+            postdone.clear()
+            postage_maxi.capture(max_events=cr.nsamp, wait=False)
+
+            while not postdone.is_set():
                 try:
                     abort = pipe.recv(zmq.NOBLOCK)
                     raise CaptureAbortedException(abort)
