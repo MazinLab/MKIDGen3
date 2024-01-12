@@ -18,7 +18,7 @@ import pynq
 import time
 import numpy as np
 from mkidgen3.mkidpynq import unpack_photons
-DEFAULT_BIT_FILE = '/home/xilinx/gen3_top.bit'
+DEFAULT_BIT_FILE = '/home/xilinx/gen3_top_final.bit'
 
 
 class FeedlineHardware:
@@ -52,7 +52,7 @@ class FeedlineHardware:
             self._ol = pynq.Overlay(self._default_bitstream.bitstream,
                                     ignore_version=self._default_bitstream.ignore_version, download=download)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
-            # asyncio.get_event_loop()
+
             if download:
                 self._ol.rfdc.enable_mts(*self._default_rfdc.mts)
 
