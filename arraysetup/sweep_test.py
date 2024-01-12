@@ -15,7 +15,7 @@ frsa = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_po
 frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 
 # Bitstream Config
-bitstream = BitstreamConfig(bitstream='/home/xilinx/gen3_top.bit', ignore_version=True)
+bitstream = BitstreamConfig(bitstream='/home/xilinx/gen3_top_final.bit', ignore_version=True)
 
 # RFDC Clocking Config
 rfdc_clk = RFDCClockingConfig(programming_key='4.096GSPS_MTS_dualloop', clock_source=None)  # clock source should default to external 10 MHz
