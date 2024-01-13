@@ -366,7 +366,7 @@ if __name__ == '__main__':
     context.linger = 1
 
     fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.ifboard,
-                               ignore_version=args.ignore_fpga_driver_version)
+                               ignore_version=args.ignore_fpga_driver_version, program_clock=True, mts=True, download=True)
 
     # Set up proxies for routing all the capture data and status
     cap_addr = f'tcp://*:{args.capture_port}'
