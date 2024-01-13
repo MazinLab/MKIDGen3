@@ -54,7 +54,7 @@ class FeedlineHardware:
             mkidgen3.quirks.Overlay(self._ol).post_configure()
 
             if download:
-                self._ol.rfdc.enable_mts(*self._default_rfdc.mts)
+                self._ol.rfdc.enable_mts(dac=self._default_rfdc.dac_mts, adc=self._default_rfdc.adc_mts)
 
         except RuntimeError as e:
             if 'No Devices Found' in str(e):
