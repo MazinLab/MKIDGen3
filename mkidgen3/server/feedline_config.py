@@ -551,7 +551,7 @@ class WaveformConfig(_FLConfigMixin):
         Default channel config is not available for tabulated waveforms."""
         bins = np.zeros(2048, dtype=int)
         bins[:self.waveform.freqs.size] = opfb_bin_number(self.waveform.freqs, ssr_raw_order=True)
-        return ChannelConfig(bins=bins)
+        return ChannelConfig(bins=bins, freqs=None)
 
     @property
     def default_ddc_config(self) -> DDCConfig:
