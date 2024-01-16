@@ -1,6 +1,8 @@
 import numpy as np
 from hashlib import md5
 import copy
+from mkidgen3.opfb import opfb_bin_number
+
 
 
 def _hasher(v, pass_none=False):
@@ -483,14 +485,16 @@ class TriggerConfig(_FLConfigMixin):
 
 
 class ChannelConfig(_FLConfigMixin):
-    _settings = ('frequencies',)
+    _settings = ('bins', 'freqs')
 
-    def __init__(self, frequencies=None, _hashed=None):
+    def __init__(self, freqs=None, bins=None, _hashed=None):
         self._hashed = _hashed
         if self._hashed:
             return
-
-        self.frequencies = frequencies
+        if bins.any():
+            self.bins = bins
+        else:
+            self.bins = opfb_bin_number(freqs, ssr_raw_order=True)
 
 
 class DDCConfig(_FLConfigMixin):
@@ -543,11 +547,19 @@ class WaveformConfig(_FLConfigMixin):
 
     @property
     def default_channel_config(self) -> ChannelConfig:
-        """A convenience method to get a ChannelConfig using all the waveform's frequencies
-        default channel config is not available for tabulated waveforms."""
-        f = np.zeros(2048, dtype=self.waveform.freqs.dtype)
-        f[:self.waveform.freqs.size] = self.waveform.freqs
-        return ChannelConfig(frequencies=f)
+        """A convenience method to get a ChannelConfig using all the waveform's frequencies.
+        Default channel config is not available for tabulated waveforms."""
+        bins = np.zeros(2048, dtype=int)
+        bins[:self.waveform.freqs.size] = opfb_bin_number(self.waveform.freqs, ssr_raw_order=True)
+        return ChannelConfig(bins=bins)
+
+    @property
+    def default_ddc_config(self) -> DDCConfig:
+        """A convenience method to get a DDCConfig using all the waveform's frequencies.
+        Default channel config is not available for tabulated waveforms."""
+        ddc_tones = np.zeros(2048)
+        ddc_tones[:self.waveform.freqs.size] = self.waveform.freqs
+        return DDCConfig(tones=ddc_tones)
 
 
 class FeedlineConfig(_FLMetaconfigMixin):

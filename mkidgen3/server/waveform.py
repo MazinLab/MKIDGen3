@@ -139,8 +139,8 @@ class FreqlistWaveform(Waveform):
                 "Max quantization error exceeded. The freq comb's relative phases may have added up sub-optimally."
                 "Calculating with new random phases")
             self._seed += 1
-            phases = np.random.default_rng(seed=self._seed).uniform(0., 2. * np.pi, len(self.freqs))
-            values = self._compute_waveform(phases)
+            self.phases = np.random.default_rng(seed=self._seed).uniform(0., 2. * np.pi, len(self.freqs))
+            values = self._compute_waveform(phases=self.phases)
             self.quant_vals, self.quant_error = quantize_to_int(values, resolution=DAC_RESOLUTION, signed=True,
                                                                 word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
                                                                 return_error=True)
@@ -149,7 +149,6 @@ class FreqlistWaveform(Waveform):
                 raise Exception("Process reach maximum attempts: Could not find solution below max quantization error.")
 
         self.__values = values
-        self.phases = phases
         self.quant_vals, self.quant_error = quant_vals, quant_error
 
 
