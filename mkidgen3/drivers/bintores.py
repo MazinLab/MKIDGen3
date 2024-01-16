@@ -71,5 +71,5 @@ class BinToResIP(DefaultIP):
         for i in range(256):
             self._write_group(i, bins[i * 8:i * 8 + 8])
 
-    def configure(self, frequencies=None):
-        self.bins = opfb_bin_number(frequencies, ssr_raw_order=True)
+    def configure(self, bins=None):
+        self.bins = bins
