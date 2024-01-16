@@ -491,9 +491,9 @@ class ChannelConfig(_FLConfigMixin):
         self._hashed = _hashed
         if self._hashed:
             return
-        if bins.any():
-            self.bins = bins
-        else:
+        self.bins = bins
+        self.freqs = freqs
+        if freqs is not None:
             self.bins = opfb_bin_number(freqs, ssr_raw_order=True)
 
 
