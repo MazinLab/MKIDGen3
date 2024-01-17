@@ -5,13 +5,104 @@ import yaml
 import importlib.resources
 from logging import getLogger
 
+getmask = lambda width: (1 << width) - 1
+def checkslice(sl, reg):
+    if not (sl.step is None) and sl.stride != 1:
+        raise IndexError("Access Stride must be 1 or None")
+    if sl.stop > reg.width:
+        raise IndexError("Access wider than register width ({:d}".format(reg.width))
+    if sl.stop < sl.start:
+        raise IndexError("Reverse indexing unsupported")
+    if sl.stop < 0 or sl.start < 0:
+        raise IndexError("Negative indicies unsupported")
+
+class Register:
+    def __init__(self, getreg):
+        self.getreg = getreg
+
+    def __get__(self, obj, objtype = None):
+        if obj is None or issubclass(objtype, Register):
+            return self
+        return self.getreg(obj)[:]
+
+    def __set__(self, obj, val: int):
+        self.getreg(obj)[:] = val
+
+    def __getitem__(self, obj, sl: int | slice):
+        if type(sl) == int:
+            val = self.__get__(obj)
+            return (val >> sl) & 1
+        checkslice(sl, self.getreg(obj))
+        if sl.start is None:
+            return self.__getitem__(obj, self.slice(0, sl.stop))
+        if sl.stop == sl.start:
+            return sel.__getitem__(obj, sl.start)
+        mask = getmask(sl.stop - sl.start)
+        val = self.__get__(obj)
+        return mask & (val >> sl.start)
+
+    def __setitem__(self, obj, sl: int | slice, val: int):
+        if type(sl) == int:
+            val_init = self.__get__(obj)
+            self.__set__(obj, (val_init & (getmask(32) ^ (1 < sl))) | (val << sl))
+            return
+        checkslice(sl, self.getreg(obj))
+        if sl.start is None:
+            return self.__setitem__(obj, self.slice(0, sl.stop), val)
+        if sl.stop == sl.start:
+            return self.__setitem__(obj, self.slice(0, sl.stop), val)
+        mask = getmask(sl.stop - sl.start)
+        val_init = self.__get__(obj)
+        self.__set__(obj, (val_init & (getmask(32) ^ (getmask(sl.end - sl.start) << sl.start))) | val << sl.start)
+
+class RegisterRO(Register):
+    def __set__(self, obj, val: int):
+        raise ValueError("Attempted to write read only register")
+
+class RegisterWO(Register):
+    def __get__(self, obj, objtype = None):
+        raise ValueError("Attempted to read write only register")
+
+class RegisterShadow(Register):
+    _shadow = None
+    def __set__(self, obj, val: int):
+        self._shadow = val
+        super().__set__(obj, val)
+    def __get__(self, obj, objtype = None):
+        if self._shadow is None:
+            raise ValueError("Shadow register not initilized and never written to")
+        return self._shadow
+
+def register(getreg):
+    return Register(getreg)
+def register_ro(getreg):
+    return RegisterRO(getreg)
+def register_rw(getreg):
+    return RegisterRW(getreg)
+def register_shadow(arg):
+    if type(arg) == int:
+        class RegisterShadowInit(RegisterShadow):
+            _shadow = arg
+        return lambda getreg: RegisterShadowInit(getreg)
+    return RegisterShadow(arg)
+
+class Field(Register):
+    def __init__(self, parent, slfunc):
+        self.parent = parent
+        self.slfunc = slfunc
+    def __get__(self, obj, objtype = None):
+        return self.parent.__getitem__(obj, self.slfunc(obj))
+    def __set__(self, obj, val):
+        self.parent.__setitem__(obj, self.slfunc(obj), val)
+
+def field(reg):
+    return lambda slfunc: Field(reg, slfunc)
 
 def delete_pynq_cache_file():
     try:
         os.remove('/usr/local/share/pynq-venv/lib/python3.10/site-packages/pynq/pl_server/_current_metadata.pkl')
     except Exception as e:
         return str(e)
-
 
 def buf2complex(b, free=True, unsigned=False, floating=True):
     """ Convert a pynq buffer to normal numpy array, copying it out of PL DDR4
