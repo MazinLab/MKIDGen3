@@ -19,26 +19,6 @@ def checkslice(sl, width):
         raise IndexError("Negative indicies unsupported")
 
 
-class Register:
-    def __init__(self, getreg):
-        self.getreg = getreg
-
-    def __len__(self):
-        # Return a sensible default, maybe should error
-        if self._objcache is None:
-            return 32
-        return self.getreg(self._objcache).width
-
-    def __get__(self, obj, objtype=None):
-        self._objcache = obj
-        if obj is None or ((not objtype is None) and issubclass(objtype, MetaRegister)):
-            return self
-        return self.getreg(obj)[:]
-
-    def __set__(self, obj, val: int):
-        self._objcache = obj
-        self.getreg(obj)[:] = val
-
 class MetaRegister:
     _objcache = None
 
@@ -79,6 +59,27 @@ class MetaRegister:
         mask = getmask(sl.stop - sl.start)
         val_init = self.__get__(obj)
         self.__set__(obj, (val_init & (getmask(32) ^ (getmask(sl.stop - sl.start) << sl.start))) | val << sl.start)
+
+
+class Register(MetaRegister):
+    def __init__(self, getreg):
+        self.getreg = getreg
+
+    def __len__(self):
+        # Return a sensible default, maybe should error
+        if self._objcache is None:
+            return 32
+        return self.getreg(self._objcache).width
+
+    def __get__(self, obj, objtype=None):
+        self._objcache = obj
+        if obj is None or ((not objtype is None) and issubclass(objtype, MetaRegister)):
+            return self
+        return self.getreg(obj)[:]
+
+    def __set__(self, obj, val: int):
+        self._objcache = obj
+        self.getreg(obj)[:] = val
 
 
 class RegisterRO(Register):
