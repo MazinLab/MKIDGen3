@@ -53,7 +53,7 @@ class Register:
             return self.__setitem__(obj, self.slice(0, sl.stop), val)
         mask = getmask(sl.stop - sl.start)
         val_init = self.__get__(obj)
-        self.__set__(obj, (val_init & (getmask(32) ^ (getmask(sl.end - sl.start) << sl.start))) | val << sl.start)
+        self.__set__(obj, (val_init & (getmask(32) ^ (getmask(sl.stop - sl.start) << sl.start))) | val << sl.start)
 
 class RegisterRO(Register):
     def __set__(self, obj, val: int):
@@ -95,8 +95,23 @@ class Field(Register):
     def __set__(self, obj, val):
         self.parent.__setitem__(obj, self.slfunc(obj), val)
 
+class FieldEnum(Field):
+    def __init__(self, parent, enum, slfunc):
+        self.enum = enum
+        self.parent = parent
+        self.slfunc = slfunc
+    def __get__(self, obj, objtype = None):
+        return self.enum(super().__get__(obj, objtype))
+    def __set__(self, obj, val):
+        if not isinstance(val, self.enum):
+            raise TypeError("Value passed must be of type {:s}".format(repr(self.enum)))
+        super().__set__(obj, val.value)
+
 def field(reg):
     return lambda slfunc: Field(reg, slfunc)
+
+def field_enum(reg, enum):
+    return lambda slfunc: FieldEnum(reg, enum, slfunc)
 
 def delete_pynq_cache_file():
     try:
