@@ -54,7 +54,9 @@ class FeedlineHardware:
             mkidgen3.quirks.Overlay(self._ol).post_configure()
 
             if download:
-                self._ol.rfdc.enable_mts(dac=self._default_rfdc.dac_mts, adc=self._default_rfdc.adc_mts)
+                ThreadedPLInterruptManager.get_manager()
+                self._ol.rfdc.enable_mts(dac=self._default_rfdc.dac_mts, adc=self._default_rfdc.adc_mts,
+                                         double_sync=mkidgen3.quirks.MTS.double_sync)
 
         except RuntimeError as e:
             if 'No Devices Found' in str(e):
@@ -137,10 +139,12 @@ class FeedlineHardware:
 
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
+            ThreadedPLInterruptManager.get_manager()
 
         if fl_setup.rfdc:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
-            self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
+            self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts,
+                                     double_sync=mkidgen3.quirks.MTS.double_sync)
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
         from mkidgen3.drivers.ppssync import PPSMode, PPSSource
@@ -219,11 +223,12 @@ class FeedlineHardware:
             return
 
         capture_atom_bytes = cr.dwid * cr.nchan
-        chunking_thresh = determine_max_chunk('pl', demands=None)
-        CHUNKING_THRESHOLD = 3 * 1024 ** 3
-        nchunks = cr.size_bytes // CHUNKING_THRESHOLD
-        partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
-        chunks = [CHUNKING_THRESHOLD // capture_atom_bytes] * nchunks
+        demands = None
+        chunking_thresh = determine_max_chunk('ps', demands=demands,
+                                              assume_compression=not cr.data_endpoint.startswith('file://'))
+        nchunks = cr.size_bytes // chunking_thresh
+        partial = cr.size_bytes - chunking_thresh * nchunks
+        chunks = [chunking_thresh // capture_atom_bytes] * nchunks
         if partial:
             chunks.append(partial // capture_atom_bytes)
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')

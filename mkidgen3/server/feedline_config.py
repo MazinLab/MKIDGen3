@@ -191,7 +191,7 @@ class _FLConfigMixin:
         """
         Return a new config of the same type in hashed form
 
-        In hashed form the settings values are used to compute a hash and it is stored instead of the settings values.
+        In hashed form the settings values are used to compute a hash, and it is stored instead of the settings values.
         """
         return type(self)(_hashed=hash(self))
 

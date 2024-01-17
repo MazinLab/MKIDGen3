@@ -260,7 +260,7 @@ class CaptureRequest:
 
     def send_data(self, data, status='', copy=False, compress=True):
         """
-        Send a (chunk) of data out. By default data is published as a blosc2 compressed array with the
+        Send a (chunk) of data out. By default, data is published as a blosc2 compressed array with the
         capture id as the subscription key. CaptureRequests created with a file destination  will be saved as
         uncompressed npy data, appended on successive calls, no data will be published.
 

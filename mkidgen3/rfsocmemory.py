@@ -1,19 +1,20 @@
 import psutil
 
-from mkidgen3.system_parameters import PL_TOTAL_BYTES, SYSTEM_OVERHEAD_BYTES
+from mkidgen3.system_parameters import PL_TOTAL_BYTES, SYSTEM_OVERHEAD_BYTES, COMPRESSION_OVERHEAD_BYTES
 
 
 def memfree_mib():
     return psutil.virtual_memory().available//1024**2
 
 
-def determine_max_chunk(domain: str, demands: list | tuple | None = None) -> int:
+def determine_max_chunk(domain: str, assume_compression=False, demands: list | tuple | None = None) -> int:
     """
     Attempt to estimate how big of a chunk of memory can be allocated w/o swapping.
 
     Args:
         domain: Are we working in the PS or the PL?
         demands: An iterable of numbers containing existing pressures on the memory
+        assume_compression (False) include enough memory for compression of the data in the ps side
 
     Returns: a number of
 
@@ -27,6 +28,11 @@ def determine_max_chunk(domain: str, demands: list | tuple | None = None) -> int
     if domain == 'ps':
         total -= SYSTEM_OVERHEAD_BYTES
 
-    left = int(total - sum(demands if demands else []))
+    demands = list(demands) if demands else []
+
+    if assume_compression:
+        demands.append(COMPRESSION_OVERHEAD_BYTES)
+
+    left = int(total - sum(demands))
 
     return left

@@ -1,5 +1,3 @@
-import logging
-
 import pynq
 from pynq import DefaultHierarchy
 from logging import getLogger
@@ -105,7 +103,7 @@ class RFDCHierarchy(DefaultHierarchy):
             return False
         return True
 
-    def enable_mts(self, dac=True, adc=False):
+    def enable_mts(self, dac=True, adc=False, double_sync=False):
         """Synchronizes all active ADC and DAC tiles
 
         Parameters
@@ -114,6 +112,8 @@ class RFDCHierarchy(DefaultHierarchy):
             Enables MTS on the DAC
         adc : Boolean
             Enables MTS on the ADC
+        double_sync : Boolean
+            Double sync the tiles
         """
         if not (dac or adc):
             return
@@ -134,7 +134,7 @@ class RFDCHierarchy(DefaultHierarchy):
             self.rfdc.mts_adc_config.RefTile = self.ADC_REF_TILE
 
         self.init_tile_sync(dac=dac, adc=adc)
-        self.sync_tiles(dac=dac, adc=adc)
+        self.sync_tiles(dac=dac, adc=adc, double_sync=double_sync)
 
     def init_tile_sync(self, reset_clockwiz=False, dac=True, adc=True):
         """Initilizes the ADCs and DACs for MTS
@@ -192,7 +192,7 @@ class RFDCHierarchy(DefaultHierarchy):
                         self.rfdc.adc_tiles[n].SetupFIFOBoth(toggleValue)
                     bitvector = bitvector >> 1
 
-    def sync_tiles(self, dac_target=-1, adc_target=-1, dac=True, adc=True):
+    def sync_tiles(self, dac_target=-1, adc_target=-1, dac=True, adc=True, double_sync=False):
         """Synchronize all the active ADC and DAC tiles in the design
 
         Parameters
@@ -207,10 +207,11 @@ class RFDCHierarchy(DefaultHierarchy):
             Enables MTS sync on the DAC
         adc : Boolean
             Enables MTS sync on the ADC
+        double_sync : Boolean
+            Double sync (e.g. in case of a quirk)
         """
         self._sync_tiles(dac_target, adc_target, dac, adc)
-        import mkidgen3.quirks
-        if mkidgen3.quirks.MTS.double_sync:
+        if double_sync:
             self._sync_tiles(dac_target, adc_target, dac, adc)
 
     def _sync_tiles(self, dac_target=-1, adc_target=-1, dac=True, adc=True):
