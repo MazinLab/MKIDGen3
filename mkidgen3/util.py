@@ -12,7 +12,7 @@ def checkslice(sl, width):
     if not (sl.step is None) and sl.stride != 1:
         raise IndexError("Access Stride must be 1 or None")
     if sl.stop > width or sl.start >= width:
-        raise IndexError("Access wider than register width ({:d}".format(reg.width))
+        raise IndexError("Access wider than register width ({:d}".format(width))
     if sl.stop < sl.start:
         raise IndexError("Reverse indexing unsupported")
     if sl.stop < 0 or sl.start < 0:
@@ -60,7 +60,7 @@ class MetaRegister:
         if sl.start is None:
             return self.__getitem__(obj, self.slice(0, sl.stop))
         if sl.stop == sl.start:
-            return sel.__getitem__(obj, sl.start)
+            return self.__getitem__(obj, sl.start)
         mask = getmask(sl.stop - sl.start)
         val = self.__get__(obj)
         return mask & (val >> sl.start)
@@ -112,8 +112,8 @@ def register_ro(getreg):
     return RegisterRO(getreg)
 
 
-def register_rw(getreg):
-    return RegisterRW(getreg)
+def register_wo(getreg):
+    return RegisterWO(getreg)
 
 
 def register_shadow(arg):
