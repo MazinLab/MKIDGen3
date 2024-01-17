@@ -96,51 +96,6 @@ def iq_find_phase(n_points=1024):
     return -phase.mean(0) / (2 * np.pi), iq
 
 
-def set_frequencies(freq, **kwargs):
-    """ Set the DAC waveform, OPFB bins, and DDC tones so that frequencies being fed through the photon pipeline.
-
-    The order of the frequencies is preserved (they are not sorted).
-
-    kwargs is passed on to set_waveform.
-
-    The device must be suitably configured.
-    """
-    global _frequencies
-    _frequencies = freq
-    getLogger(__name__).info('setting waveform')
-    set_waveform(freq, **kwargs)
-    getLogger(__name__).info('setting resonator channels')
-    set_channels(freq)
-    getLogger(__name__).info('setting ddc tones')
-    configure_ddc(freq)
-
-
-def enable_interrupts():
-    _gen3_overlay.axi_intc_0.register_map.IER = -1
-    _gen3_overlay.axi_intc_0.register_map.MER.HIE = True
-    _gen3_overlay.axi_intc_0.register_map.MER.ME = True
-
-
-def configure(bitstream, ignore_version=True, clocks=False, programming_key=False, download=True, mts=False):
-    import pynq
-    import mkidgen3
-
-    if clocks:
-        mkidgen3.drivers.rfdcclock.configure(programming_key=programming_key)
-        time.sleep(0.5)  # allow clocks to stabilize before loading overlay
-
-    global _gen3_overlay
-    ol = _gen3_overlay = mkidgen3._gen3_overlay = pynq.Overlay(bitstream, ignore_version=ignore_version, download=download)
-    getLogger(__name__).info(f"PL Bitfile: {pynq.PL.bitfile_name} ({ol.timestamp})  Loaded: {ol.is_loaded()}")
-
-    mkidgen3.quirks.Overlay(ol).post_configure()
-
-    if mts:
-        assert download, "Enable MTS after downloading the bitstream with ol.rfdc.enable_mts()"
-        ol.rfdc.enable_mts()
-
-    return _gen3_overlay
-
 def capture_opfb(ol, n=256, raw=False):
     """Capture the OPFB output, exercise caution with large n as the result is copied from PL to PS DDR4"""
     out = np.zeros((n, 4096, 2) if raw else (n, 4096), dtype=np.int16 if raw else np.complex64)
