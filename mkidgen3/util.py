@@ -21,7 +21,7 @@ class Register:
         self.getreg = getreg
 
     def __get__(self, obj, objtype = None):
-        if obj is None or issubclass(objtype, Register):
+        if obj is None or ((not objtype is None) and issubclass(objtype, Register)):
             return self
         return self.getreg(obj)[:]
 
