@@ -223,11 +223,12 @@ class FeedlineHardware:
             return
 
         capture_atom_bytes = cr.dwid * cr.nchan
-        chunking_thresh = determine_max_chunk('pl', demands=None)
-        CHUNKING_THRESHOLD = 3 * 1024 ** 3
-        nchunks = cr.size_bytes // CHUNKING_THRESHOLD
-        partial = cr.size_bytes - CHUNKING_THRESHOLD * nchunks
-        chunks = [CHUNKING_THRESHOLD // capture_atom_bytes] * nchunks
+        demands = None
+        chunking_thresh = determine_max_chunk('ps', demands=demands,
+                                              assume_compression=not cr.data_endpoint.startswith('file://'))
+        nchunks = cr.size_bytes // chunking_thresh
+        partial = cr.size_bytes - chunking_thresh * nchunks
+        chunks = [chunking_thresh // capture_atom_bytes] * nchunks
         if partial:
             chunks.append(partial // capture_atom_bytes)
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
