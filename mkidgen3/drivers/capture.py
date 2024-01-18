@@ -274,7 +274,7 @@ class CaptureHierarchy(DefaultHierarchy):
         getLogger(__name__).debug(f'Starting capture of {n} bytes ({n // 64} beats) to address {hex(buffer_addr)} from '
                                   f'source {source}')
         self.axis2mm.addr = buffer_addr
-        self.axis2mm.len = n
+        self.axis2mm.len = int(n)
         self.axis2mm.start(continuous=False, increment=True)
 
     def is_ready(self):
@@ -528,7 +528,7 @@ class _AXIS2MM:
         return self.read(0x18)
 
     @len.setter
-    def len(self, x):
+    def len(self, x: int) -> None:
         """A number of bytes, not beats!"""
         self.write(0x18, x)
 
