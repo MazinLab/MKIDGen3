@@ -271,7 +271,6 @@ class FeedlineHardware:
             pipe.close()
         except zmq.ZMQError:
             pass
-        # aio_eloop.close()
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
         """
