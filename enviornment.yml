@@ -17,6 +17,7 @@ dependencies:
 #  - mkl>=2021.4
   - matplotlib
 #  - multiprocessing-logging>=0.3.1
+  - NpyAppendArray
   - numpy>=1.21.2
   - pillow>=9.0.1
   - pip

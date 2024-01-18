@@ -220,7 +220,6 @@ class FeedlineHardware:
         if failmsg:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
-            # aio_eloop.close()
             return
 
         capture_atom_bytes = cr.dwid * cr.nchan
