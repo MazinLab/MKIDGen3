@@ -242,7 +242,7 @@ class FeedlineHardware:
                 check_zmq_abort_pipe(pipe)
                 times.append(time.time())
                 #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                data = self._ol.capture.capture(csize, cr.tap, groups=None)
+                data = self._ol.capture.capture(csize, cr.tap, groups=None, wait=True)
                 times.append(time.time())
                 #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 zmqtmp = zmq.COPY_THRESHOLD
