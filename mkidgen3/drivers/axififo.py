@@ -40,11 +40,10 @@ class AxisFIFO(DefaultIP):
 
         self.register_map.TLR.TXL = (data.size - 1) * 4 + last_bytes
         if wait:
-            from ..util import do_asyncio_thing
-            do_asyncio_thing(self.interrupt.wait())
-            # while not self.register_map.ISR.TC:
-            #     getLogger(__name__).info(f'Sleeping for .001')
-            #     time.sleep(.001)
+            from ..interrupts import ThreadedPLInterruptManager
+            _, event = ThreadedPLInterruptManager.get_monitor(self, id=repr(self)+'tx')
+            event.wait()
+            event.clear()
 
     def rx(self):
         """Pull all the data out of the FIFO"""
