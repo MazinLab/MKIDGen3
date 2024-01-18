@@ -222,7 +222,7 @@ class FeedlineHardware:
             cr.fail(failmsg, raise_exception=False)
             return
 
-        capture_atom_bytes = cr.dwid * cr.nchan
+        capture_atom_bytes = cr.capture_atom_bytes
         demands = None
         chunking_thresh = determine_max_chunk('ps', demands=demands,
                                               assume_compression=not cr.data_endpoint.startswith('file://'))

@@ -339,7 +339,7 @@ class CaptureRequest:
 
     @property
     def size_bytes(self):
-        return np.prod(self.buffer_shape).astype(int) * self.dwid
+        return self.nsamp*self.capture_atom_bytes
 
     @property
     def nchan(self):
@@ -352,18 +352,9 @@ class CaptureRequest:
         else:
             return 1
 
-    # @property
-    # def ngroup(self):
-    #     if self.tap == 'iq':
-    #         return len(channel_to_iqgroup(self.channels)) if self.channels else N_IQ_GROUPS
-    #     elif self.tap =='phase':
-    #         return len(channel_to_phasegroup(self.channels)) if self.channels else N_PHASE_GROUPS
-    #     else:
-    #         return 1
-
     @property
     def dwid(self):
-        """Data size of sample in bytes, for postage this is the size of a full IQ window"""
+        """Data size of a capture sample in bytes"""
         if self.tap in ('adc', 'iq', 'postage'):
             return 4
         elif self.tap == 'phase':
@@ -372,7 +363,12 @@ class CaptureRequest:
             return PHOTON_DTYPE.itemsize
 
     @property
+    def capture_atom_bytes(self):
+        return self.dwid*self.nchan
+
+    @property
     def buffer_shape(self):
+        """ (nsamples, nchannels, 1|2)  """
         n = int(np.ceil(self.nsamp * MAXIMUM_DESIGN_COUNTRATE_PER_S / 1000)) if self.tap == 'photon' else self.nsamp
 
         if self.tap == 'postage':
@@ -381,8 +377,10 @@ class CaptureRequest:
             return n, self.nchan, 2
         elif self.tap == 'photon':
             return (n,)
+        elif self.tap == 'phase':
+            return n, self.nchan
         else:
-            return (n, self.nchan)
+            raise RuntimeError('Unknown tap: {self.tap}')
 
 
 class CaptureSink(threading.Thread):
