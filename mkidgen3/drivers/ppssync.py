@@ -1,4 +1,4 @@
-import asyncio
+import threading
 import logging
 import time
 
@@ -116,11 +116,11 @@ class PPSSync(DefaultIP):
 
     def __init__(self, description):
         super().__init__(description=description)
-        self.capture_event = asyncio.Event()
-        self.started_event = asyncio.Event()
+        self.capture_event = threading.Event()
+        self.started_event = threading.Event()
 
     # High-level api
-    async def start_engine(
+    def start_engine(
         self,
         mode=PPSMode.PPS_SYNC,
         start_second=None,
@@ -141,17 +141,17 @@ class PPSSync(DefaultIP):
 
         If you have a reliable PPS Source with PPS edges on the second edge
         and assumptions about board clock accuracy are met then you can simply
-        do `await start_engine(skew = 0)` on all of the boards you want to
+        do `start_engine(skew = 0)` on all of the boards you want to
         synchronize.
 
         If your PPS Edges are not aligned then you will likely want go choose
         a board and measure the skew relative to the system clock using
         `PPSSync.sample_skew` and pass that skew to all the boards you want
-        to start with `await start_engine(skew = skew_measured)`. If you are
-        using only one board then `await start_engine()` will work
+        to start with `start_engine(skew = skew_measured)`. If you are
+        using only one board then `start_engine()` will work
 
         If you do not have a PPS Source available then using
-        `await start_engine(PPSMode.FORCE_START)` will start the PPS Engine
+        `start_engine(PPSMode.FORCE_START)` will start the PPS Engine
         with a the system time plus or minus around a dozen microseconds
 
         Parameters
@@ -218,7 +218,7 @@ class PPSSync(DefaultIP):
 
         if mode == PPSMode.PPS_SYNC or mode == PPSMode.PPS_FREERUN:
             if skew is None:
-                skew = await self.sample_skew(timeout, poll)
+                skew = self.sample_skew(timeout, poll)
             if start_second is None:
                 start_second = time.time() + 1
                 if start_second % 1.0 > 0.75:
@@ -260,7 +260,7 @@ class PPSSync(DefaultIP):
 
         if start_after is not None:
             while time.time_ns() < start_after:
-                await asyncio.sleep(poll)
+                time.sleep(poll)
 
         self.mode = mode
         if mode == PPSMode.STOPPED:
@@ -272,7 +272,7 @@ class PPSSync(DefaultIP):
             if self.started:
                 self.started_event.set()
                 return
-            await asyncio.sleep(poll)
+            time.sleep(poll)
         raise TimeoutError(
             "PPS Engine did not start before timeout, is the PPS source correct?"
         )
@@ -282,7 +282,7 @@ class PPSSync(DefaultIP):
         self.started_event.clear()
         self.mode = PPSMode.STOPPED
 
-    async def capture(
+    def capture(
         self, capture_mode=CaptureMode.PPS_EDGE, timeout=5, poll=0, fmt=float
     ):
         assert fmt in (
@@ -300,10 +300,10 @@ class PPSSync(DefaultIP):
                     return (self.captured_secs, self.captured_ns, self.captured_subns)
                 if fmt == float:
                     return self.captured_time_ns
-            await asyncio.sleep(poll)
+            time.sleep(poll)
         raise TimeoutError("Capture didn't occur before timeout")
 
-    async def sample_skew(self, timeout=5, poll=0):
+    def sample_skew(self, timeout=5, poll=0):
         """Captures the sub-second portion of the system time at a PPS Edge
         The PPS Engine should be stopped before you call this. Should be
         accurate to less than 50 microseconds with the system under reasonable
@@ -324,7 +324,7 @@ class PPSSync(DefaultIP):
         assert (
             self.mode == PPSMode.STOPPED and self.delay_ns == 0
         ), "Turn off the counter, and set the delay to zero"
-        await self.start_engine(PPSMode.PPS_SYNC, timeout, poll)
+        self.start_engine(PPSMode.PPS_SYNC, timeout, poll)
         pps_time = time.time_ns()
         self.stop_engine()
         return pps_time % NS_PER_SEC
