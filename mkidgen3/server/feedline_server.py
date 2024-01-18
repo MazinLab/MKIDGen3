@@ -184,6 +184,9 @@ class FeedlineReadoutServer:
         """
         context = context or zmq.Context().instance()
 
+        #THIS LOOP SEEMS TO ACTUALLY be getting used ONLY to be deleted with the pynq.UIO reader deletion
+        #when the threaded interrupt manager starts stuff up and nixes pynqs reader
+        # (that apparently exists in this thread)
         try:
             aio_eloop = asyncio.get_running_loop()
         except RuntimeError:
