@@ -417,6 +417,7 @@ class CaptureHierarchy(DefaultHierarchy):
         else:
             _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
             e.wait()
+            e.clear()
 
     def capture_phase(self, n, groups='all', duration=False, tap_location='filtphase', wait:(bool,dict)=True):
         """
