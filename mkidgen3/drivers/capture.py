@@ -289,6 +289,12 @@ class CaptureHierarchy(DefaultHierarchy):
             return self.filter_phase.keep_channels(channels)
 
     def capture(self, n, tap, groups='all', wait=True):
+        try:
+            assert (int(n)-n) == 0
+            n = int(n)
+        except:
+            raise TypeError('n must be effectively an integer')
+
         if tap in self.IQ_MAP:
             return self.capture_iq(n, tap_location=tap, duration=False, groups=groups, wait=wait)
         elif tap in self.PHASE_MAP:
@@ -388,7 +394,7 @@ class CaptureHierarchy(DefaultHierarchy):
         datarate_mbps = 32 * 512
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Capturing {datavolume_mb} MB of data @ {datarate_mbps} MB/s. "
+        msg = (f"Capturing {datavolume_mb:.1f} MB of data @ {datarate_mbps} MB/s. "
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
