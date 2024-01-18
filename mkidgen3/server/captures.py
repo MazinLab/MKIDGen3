@@ -24,9 +24,6 @@ from functools import cached_property
 from typing import Tuple
 PHOTON_DTYPE_PACKED = np.uint64
 
-class CaptureAbortedException(Exception):
-    pass
-
 
 class FRSClient:
     def __init__(self, url: str, command_port: int = 10000, data_port: int = 10001, status_port: int = 10002):

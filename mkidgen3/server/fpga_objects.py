@@ -9,7 +9,8 @@ from mkidgen3.mkidpynq import DummyOverlay
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
-from mkidgen3.server.captures import CaptureAbortedException, CaptureRequest
+from mkidgen3.server.captures import CaptureRequest
+from mkidgen3.util import check_zmq_abort_pipe, AbortedException
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
@@ -238,12 +239,7 @@ class FeedlineHardware:
         try:
             for i, csize in enumerate(chunks):
                 times = []
-                try:
-                    abort = pipe.recv(zmq.NOBLOCK)
-                    raise CaptureAbortedException(abort)
-                except zmq.ZMQError as e:
-                    if e.errno != zmq.EAGAIN:
-                        raise
+                check_zmq_abort_pipe(pipe)
                 times.append(time.time())
                 #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data = self._ol.capture.capture(csize, cr.tap, groups=None)
@@ -265,7 +261,7 @@ class FeedlineHardware:
                 getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
                                                    (np.diff(times) * 1000).astype(int))))
             cr.finish()
-        except CaptureAbortedException as e:
+        except AbortedException as e:
             cr.abort(e)
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
@@ -351,13 +347,8 @@ class FeedlineHardware:
             time.sleep(.2)
             photon_maxi.capture(buffer_time_ms=cr.nsamp)
             while not cr.completed:
-                try:
-                    abort = pipe.recv(zmq.NOBLOCK)
-                    raise CaptureAbortedException(abort)
-                except zmq.ZMQError as e:
-                    if e.errno != zmq.EAGAIN:
-                        raise
-        except CaptureAbortedException as e:
+                check_zmq_abort_pipe(pipe)
+        except AbortedException as e:
             getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
             stop.set()
         except Exception as e:
@@ -400,16 +391,11 @@ class FeedlineHardware:
             postage_maxi.capture(max_events=cr.nsamp, wait=False)
 
             while not postdone.is_set():
-                try:
-                    abort = pipe.recv(zmq.NOBLOCK)
-                    raise CaptureAbortedException(abort)
-                except zmq.ZMQError as e:
-                    if e.errno != zmq.EAGAIN:
-                        raise
+                check_zmq_abort_pipe(pipe)
                 time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
             cr.send_data(postage_maxi.get_postage(rawbuffer=True), copy=False)
             cr.finish()
-        except CaptureAbortedException as e:
+        except AbortedException as e:
             cr.abort(e, raise_exception=False)
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')

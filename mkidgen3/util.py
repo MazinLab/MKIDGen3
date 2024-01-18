@@ -4,6 +4,8 @@ import os
 import yaml
 import importlib.resources
 from logging import getLogger
+import zmq
+
 
 getmask = lambda width: (1 << width) - 1
 
@@ -339,3 +341,16 @@ def do_asyncio_thing(thing, use_new_thread=False):
     loop.run_until_complete(task)
     if newloop:
         loop.close()
+
+
+class AbortedException(Exception):
+    pass
+
+
+def check_zmq_abort_pipe(pipe):
+    try:
+        abort = pipe.recv(zmq.NOBLOCK)
+        raise AbortedException(abort)
+    except zmq.ZMQError as e:
+        if e.errno != zmq.EAGAIN:
+            raise
