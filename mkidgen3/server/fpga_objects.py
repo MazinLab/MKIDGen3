@@ -259,7 +259,7 @@ class FeedlineHardware:
                 zmq.COPY_THRESHOLD = zmqtmp
                 times.append(time.time())
                 #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                data.freebuffer()
+#                data.freebuffer()
                 times.append(time.time())
                 #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
