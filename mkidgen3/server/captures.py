@@ -307,7 +307,6 @@ class CaptureRequest:
         self._send_status('capturing', status)
         times.append(time.time())
         tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
-        self._data_socket.send_multipart([self.id, b'']) #TODO: What's going on
         times.append(time.time())
         # getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
         #                                    (np.diff(times) * 1000).astype(int))))
