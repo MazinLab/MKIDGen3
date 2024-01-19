@@ -75,7 +75,7 @@ class CaptureRequest:
     STATUS_ENDPOINT = 'inproc://cap_stat.xsub'
     DATA_ENDPOINT = 'inproc://cap_data.xsub'
     FINAL_STATUSES = ('finished', 'aborted', 'failed')
-    SUPPORTED_TAPS = ('postage', 'photon', 'adc', 'iq', 'phase')
+    SUPPORTED_TAPS = ('postage', 'photon', 'adc', 'iq', 'phase', 'ddciq')
 
     @staticmethod
     def validate_channels(tap: str, chan: list):
@@ -94,7 +94,7 @@ class CaptureRequest:
         Returns: True|False
         """
         tap = tap.lower()
-        if tap == 'iq':
+        if tap == 'iq' or 'ddc_iq':
             l = N_IQ_GROUPS
             m = N_IQ_GROUPS
         elif tap == 'phase':
@@ -175,7 +175,7 @@ class CaptureRequest:
 
     @property
     def type(self):
-        return 'engineering' if self.tap in ('adc', 'iq', 'phase') else self.tap
+        return 'engineering' if self.tap in ('adc', 'iq', 'ddciq', 'phase') else self.tap
 
     @property
     def id(self):
@@ -347,7 +347,7 @@ class CaptureRequest:
             return len(self.channels)
         elif self.tap == 'postage':
             return N_POSTAGE_CHANNELS
-        elif self.tap in ('iq', 'phase'):
+        elif self.tap in ('iq', 'ddciq', 'phase'):
             return N_CHANNELS
         else:
             return 1
@@ -355,7 +355,7 @@ class CaptureRequest:
     @property
     def dwid(self):
         """Data size of a capture sample in bytes"""
-        if self.tap in ('adc', 'iq', 'postage'):
+        if self.tap in ('adc', 'iq', 'ddciq', 'postage'):
             return 4
         elif self.tap == 'phase':
             return 2
@@ -373,7 +373,7 @@ class CaptureRequest:
 
         if self.tap == 'postage':
             return n, PHOTON_POSTAGE_WINDOW_LENGTH + 1, 2
-        elif self.tap in ('adc', 'iq'):
+        elif self.tap in ('adc', 'iq', 'ddciq'):
             return n, self.nchan, 2
         elif self.tap == 'photon':
             return (n,)
@@ -785,7 +785,7 @@ class CaptureJob:
 
         if request.tap == 'adc':
             datasink = ADCCaptureSink
-        elif request.tap == 'iq':
+        elif request.tap == 'iq' or 'ddciq':
             datasink = IQCaptureSink
         elif request.tap == 'phase':
             datasink = PhaseCaptureSink
