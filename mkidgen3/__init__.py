@@ -7,6 +7,7 @@ try:
     from .drivers.ddc import tone_increments
     from . import util
     from . import quirks
+    from . import registers
     from .overlay_helpers import *
 except ImportError:
     getLogger(__name__).info('pynq not available, functionality will be limited.')

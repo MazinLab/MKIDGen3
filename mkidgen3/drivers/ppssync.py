@@ -1,8 +1,8 @@
-import asyncio
+import threading
 import logging
 import time
 
-import mkidgen3.util as util
+import mkidgen3.registers as registers
 
 from enum import Enum, IntFlag
 from math import floor
@@ -116,11 +116,11 @@ class PPSSync(DefaultIP):
 
     def __init__(self, description):
         super().__init__(description=description)
-        self.capture_event = asyncio.Event()
-        self.started_event = asyncio.Event()
+        self.capture_event = threading.Event()
+        self.started_event = threading.Event()
 
     # High-level api
-    async def start_engine(
+    def start_engine(
         self,
         mode=PPSMode.PPS_SYNC,
         start_second=None,
@@ -141,17 +141,17 @@ class PPSSync(DefaultIP):
 
         If you have a reliable PPS Source with PPS edges on the second edge
         and assumptions about board clock accuracy are met then you can simply
-        do `await start_engine(skew = 0)` on all of the boards you want to
+        do `start_engine(skew = 0)` on all of the boards you want to
         synchronize.
 
         If your PPS Edges are not aligned then you will likely want go choose
         a board and measure the skew relative to the system clock using
         `PPSSync.sample_skew` and pass that skew to all the boards you want
-        to start with `await start_engine(skew = skew_measured)`. If you are
-        using only one board then `await start_engine()` will work
+        to start with `start_engine(skew = skew_measured)`. If you are
+        using only one board then `start_engine()` will work
 
         If you do not have a PPS Source available then using
-        `await start_engine(PPSMode.FORCE_START)` will start the PPS Engine
+        `start_engine(PPSMode.FORCE_START)` will start the PPS Engine
         with a the system time plus or minus around a dozen microseconds
 
         Parameters
@@ -218,7 +218,7 @@ class PPSSync(DefaultIP):
 
         if mode == PPSMode.PPS_SYNC or mode == PPSMode.PPS_FREERUN:
             if skew is None:
-                skew = await self.sample_skew(timeout, poll)
+                skew = self.sample_skew(timeout, poll)
             if start_second is None:
                 start_second = time.time() + 1
                 if start_second % 1.0 > 0.75:
@@ -260,7 +260,7 @@ class PPSSync(DefaultIP):
 
         if start_after is not None:
             while time.time_ns() < start_after:
-                await asyncio.sleep(poll)
+                time.sleep(poll)
 
         self.mode = mode
         if mode == PPSMode.STOPPED:
@@ -272,7 +272,7 @@ class PPSSync(DefaultIP):
             if self.started:
                 self.started_event.set()
                 return
-            await asyncio.sleep(poll)
+            time.sleep(poll)
         raise TimeoutError(
             "PPS Engine did not start before timeout, is the PPS source correct?"
         )
@@ -282,7 +282,7 @@ class PPSSync(DefaultIP):
         self.started_event.clear()
         self.mode = PPSMode.STOPPED
 
-    async def capture(
+    def capture(
         self, capture_mode=CaptureMode.PPS_EDGE, timeout=5, poll=0, fmt=float
     ):
         assert fmt in (
@@ -300,10 +300,10 @@ class PPSSync(DefaultIP):
                     return (self.captured_secs, self.captured_ns, self.captured_subns)
                 if fmt == float:
                     return self.captured_time_ns
-            await asyncio.sleep(poll)
+            time.sleep(poll)
         raise TimeoutError("Capture didn't occur before timeout")
 
-    async def sample_skew(self, timeout=5, poll=0):
+    def sample_skew(self, timeout=5, poll=0):
         """Captures the sub-second portion of the system time at a PPS Edge
         The PPS Engine should be stopped before you call this. Should be
         accurate to less than 50 microseconds with the system under reasonable
@@ -324,17 +324,17 @@ class PPSSync(DefaultIP):
         assert (
             self.mode == PPSMode.STOPPED and self.delay_ns == 0
         ), "Turn off the counter, and set the delay to zero"
-        await self.start_engine(PPSMode.PPS_SYNC, timeout, poll)
+        self.start_engine(PPSMode.PPS_SYNC, timeout, poll)
         pps_time = time.time_ns()
         self.stop_engine()
         return pps_time % NS_PER_SEC
 
     # Base Registers
-    @util.register_ro
+    @registers.register_ro
     def _counter_status_reg(self):
         return self.register_map.counter_status_reg
 
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def _mode_reg(self):
         """Provides a read write interface to the underlying mode register
         which is write-only, should not be called by user code as _mode_reg
@@ -342,108 +342,82 @@ class PPSSync(DefaultIP):
         what is set by PPSSync.mode, I'm very sorry."""
         return self.register_map.mode_reg
 
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def _counter_config_reg(self):
         return self.register_map.counter_config_reg
 
     # Quasi user-accessible registers
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def lockout(self):
         """The lockout interval in ns (See :py:class:`mkidgen3.drivers.ppssync.SanityMode`)"""
         return self.register_map.lockout_reg
 
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def rollover_thresh(self):
         """The rollover threshold in ns (See :py:class:`mkidgen3.drivers.ppssync.SanityMode`)"""
         return self.register_map.rollover_thresh_reg
 
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def load_secs(self):
         """The seconds counter value to load when we start the PPS engine"""
         return self.register_map.load_secs_reg
 
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def load_ns(self):
         """The ns counter value to load when we start the PPS engine"""
         return self.register_map.load_ns_reg
 
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def load_subns(self):
         """The subns counter value to load when we start the PPS engine"""
         return self.register_map.load_subns_reg
 
-    @util.register_shadow(0)
+    @registers.register_shadow(0)
     def delay_ns(self):
         """The time in ns to delay each PPS Edge"""
         return self.register_map.delay_ns_reg
 
-    @util.register_ro
+    @registers.register_ro
     def captured_subns(self):
         """The raw captured subns counter value"""
         return self.register_map.capture_subns_reg
 
-    @util.register_ro
+    @registers.register_ro
     def captured_ns(self):
         """The raw captured ns counter value"""
         return self.register_map.capture_ns_reg
 
-    @util.register_ro
+    @registers.register_ro
     def captured_secs(self):
         """The raw captured secs counter value"""
         return self.register_map.capture_secs_reg
 
-    @util.register_ro
+    @registers.register_ro
     def subns(self):
         """The raw current subns counter value"""
         return self.register_map.current_subns_reg
 
-    @util.register_ro
+    @registers.register_ro
     def ns(self):
         """The raw current ns counter value"""
         return self.register_map.current_ns_reg
 
-    @util.register_ro
+    @registers.register_ro
     def secs(self):
         """The raw current secs counter value"""
         return self.register_map.current_secs_reg
 
-    # Individual register fields, quasi user-accessible
-    @util.field(_counter_status_reg)
-    def started(self):
-        """Is 1 if the PPS counter engine is started, 0 otherwise"""
-        return 0
+    # Individual register fields, quasi user-accessible    
+    started = registers.field_bool(0, _counter_status_reg)
+    captured = registers.field_bool(8, _counter_status_reg)
 
-    @util.field(_counter_status_reg)
-    def captured(self):
-        """Is 1 if the capture engine has captured, 0 otherwise"""
-        return 8
+    mode = registers.field_enum(slice(0, 4), PPSMode, _mode_reg)
+    capture_mode = registers.field_enum(slice(8, 10), CaptureMode, _mode_reg)
+    sanity_mode = registers.field_enum(slice(16, 19), SanityMode, _mode_reg)
+    pps_source = registers.field_enum(slice(24, 27), PPSSource, _mode_reg)
 
-    @util.field_enum(_mode_reg, PPSMode)
-    def mode(self):
-        """This is the PPS Counter engines mode, of type :py:class:`mkidgen3.drivers.ppssync.PPSMode`"""
-        return slice(0, 4)
-
-    @util.field_enum(_mode_reg, CaptureMode)
-    def capture_mode(self):
-        """The Capture Mode of the capture engine, of type :py:class:`mkidgen3.drivers.ppssync.CaptureMode`"""
-        return slice(8, 10)
-
-    @util.field_enum(_mode_reg, SanityMode)
-    def sanity_mode(self):
-        """The Sanity Mode of the counter engine, of type :py:class:`mkidgen3.drivers.ppssync.SanityMode`"""
-        return slice(16, 19)
-
-    @util.field_enum(_mode_reg, PPSSource)
-    def pps_source(self):
-        return slice(24, 27)
-
-    @util.field(_counter_config_reg)
-    def ns_per_clk(self):
-        return slice(8, 14)
-
-    @util.field(_counter_config_reg)
-    def subns_per_clk(self):
-        return slice(0, 8)
+    ns_per_clk = registers.field(slice(8, 14), _counter_config_reg)
+    subns_per_clk = registers.field(slice(0, 8), _counter_config_reg)
 
     # Timer readout stuffs
     @property
