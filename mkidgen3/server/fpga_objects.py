@@ -233,8 +233,7 @@ class FeedlineHardware:
             chunks.append(partial // capture_atom_bytes)
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
 
-        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
-
+#        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all') #TOD): What is this for?
         try:
             for i, csize in enumerate(chunks):
                 times = []
