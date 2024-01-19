@@ -115,7 +115,7 @@ class CaptureRequest:
             return False
         return True
 
-    def __init__(self, n, tap: str, feedline_config: FeedlineConfig,
+    def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
                  feedline_server: FRSClient, channels: list = None, file: str = None):
         """
 
@@ -129,7 +129,7 @@ class CaptureRequest:
         """
         tap = tap.lower()
         assert tap in CaptureRequest.SUPPORTED_TAPS
-        self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
+        self.nsamp = int(n)  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
         if channels is not None:
             if not CaptureRequest.validate_channels(tap, channels):
@@ -353,7 +353,7 @@ class CaptureRequest:
             return 1
 
     @property
-    def dwid(self):
+    def dwid(self) -> int:
         """Data size of a capture sample in bytes"""
         if self.tap in ('adc', 'iq', 'ddciq', 'postage'):
             return 4
@@ -363,7 +363,7 @@ class CaptureRequest:
             return PHOTON_DTYPE.itemsize
 
     @property
-    def capture_atom_bytes(self):
+    def capture_atom_bytes(self) -> int:
         return self.dwid*self.nchan
 
     @property
