@@ -156,6 +156,18 @@ class FilterPhase(DefaultIP):
 
 
 class CaptureHierarchy(DefaultHierarchy):
+    """
+    Capture Hierarchy.
+
+    Driver supports capture at up to five locations. They are numbered 1-5 in the source map in accordance with their
+    position on the axis switch. TODO: Need to standardize these keys and names
+    1. raw adc data
+    2. connected to the output of bin to res, can be used to look at the OPFB bins before the DDC
+    3. connected to the output of the DDC before the lowpass
+    4. connected to the output of the cordic
+    5. connected to the output of the matched filters
+
+    """
     IQ_MAP = {'rawiq': 0, 'ddciq': 1, 'debugiq': 2}
     PHASE_MAP = {'filtphase': 0, 'debugphase': 1}
     SOURCE_MAP = dict(adc=0, rawiq=1, ddciq=2, filtphase=3, debugiq=4, debugphase=5)
@@ -284,7 +296,7 @@ class CaptureHierarchy(DefaultHierarchy):
         if isinstance(channels, str) and channels == 'all':
             channels = list(range(N_CHANNELS))
         if tap in self.IQ_MAP:
-            return self.filter_iq.keep_channels(channels)
+            return self.filter_iq.keep_channels(channels) #TODO: filter_iq is a dictionary--what is this supposed to do?
         elif tap in self.PHASE_MAP:
             return self.filter_phase.keep_channels(channels)
 
