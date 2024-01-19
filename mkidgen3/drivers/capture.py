@@ -296,9 +296,9 @@ class CaptureHierarchy(DefaultHierarchy):
         if isinstance(channels, str) and channels == 'all':
             channels = list(range(N_CHANNELS))
         if tap in self.IQ_MAP:
-            return self.filter_iq.keep_channels(channels) #TODO: filter_iq is a dictionary--what is this supposed to do?
+            return self.filter_iq[tap].keep_channels(channels)
         elif tap in self.PHASE_MAP:
-            return self.filter_phase.keep_channels(channels)
+            return self.filter_phase[tap].keep_channels(channels)
 
     def capture(self, n, tap, groups='all', wait=True):
         try:
