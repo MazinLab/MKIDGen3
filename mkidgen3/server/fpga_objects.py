@@ -149,8 +149,7 @@ class FeedlineHardware:
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
         from mkidgen3.drivers.ppssync import PPSMode, PPSSource
-        loop = asyncio.new_event_loop()
-        ppstask = loop.create_task(self._ol.pps_synchronization.pps_synchronizer_con_0.start_engine(
+        self._ol.pps_synchronization.pps_synchronizer_con_0.start_engine(
                 mode=PPSMode.FORCE_START,
                 start_second=None,
                 skew=None,
@@ -161,10 +160,7 @@ class FeedlineHardware:
                 load_time=None,
                 clk_period_ns=1.953125,
                 timeout=5,
-                poll=1000*1000*1000))
-        loop.run_until_complete(ppstask)
-        loop.close()
-
+                poll=1000*1000*1000)
         if fl_setup.if_board:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             try:
