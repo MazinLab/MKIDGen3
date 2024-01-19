@@ -94,7 +94,7 @@ class CaptureRequest:
         Returns: True|False
         """
         tap = tap.lower()
-        if tap == 'iq' or 'ddc_iq':
+        if tap == 'iq' or 'ddciq':
             l = N_IQ_GROUPS
             m = N_IQ_GROUPS
         elif tap == 'phase':
