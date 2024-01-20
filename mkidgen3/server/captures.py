@@ -116,7 +116,7 @@ class CaptureRequest:
         return True
 
     def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
-                 feedline_server: FRSClient, channels: list = None, file: str = None):
+                 feedline_server: FRSClient, channels: list = None, file: str = None, compressed: bool = True):
         """
 
         Args:
@@ -141,6 +141,7 @@ class CaptureRequest:
         self._status_socket = None
         self._data_socket = None
         self._established = False
+        self.compressed = compressed
         self.data_endpoint = file or type(self).DATA_ENDPOINT
 
     def __hash__(self):
@@ -255,7 +256,7 @@ class CaptureRequest:
             if raise_exception:
                 raise ez
 
-    def send_data(self, data, status='', copy=False, compress=True):
+    def send_data(self, data, status='', copy=False):
         """
         Send a (chunk) of data out. By default, data is published as a blosc2 compressed array with the
         capture id as the subscription key. CaptureRequests created with a file destination  will be saved as
@@ -295,7 +296,7 @@ class CaptureRequest:
         times = []
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        compressed = blosc2.compress(data) if compress else data
+        compressed = blosc2.compress(data) if self.compressed else data
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         lend = len(compressed) / 1024 ** 2
@@ -389,7 +390,7 @@ class CaptureRequest:
 class CaptureSink(threading.Thread):
     def __init__(self, req_nfo: [CaptureRequest, tuple], start=True):
         if isinstance(req_nfo, CaptureRequest):
-            id, buffer_shape, source_url = req_nfo.id, req_nfo.buffer_shape, req_nfo.server.data_url
+            id, buffer_shape, source_url, compressed = req_nfo.id, req_nfo.buffer_shape, req_nfo.server.data_url, req_nfo.compressed
         else:
             id, buffer_shape, source_url = req_nfo
         #        if isinstance(id, bytes):
@@ -399,6 +400,7 @@ class CaptureSink(threading.Thread):
         self.daemon = True
         self.cap_id = id
         self.data_source = source_url
+        self.compressed = compressed
         self.result = None
         self._pipe = zpipe(zmq.Context.instance())
         self._buf = []
@@ -431,7 +433,10 @@ class CaptureSink(threading.Thread):
         if not data:
             self.socket.close()
             return None
-        return blosc2.decompress(data)
+        if self.compressed:
+            return blosc2.decompress(data)
+        else:
+            return data
 
     def destablish(self):
         self.socket.close()
