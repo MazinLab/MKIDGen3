@@ -308,7 +308,10 @@ class CaptureRequest:
         # getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
         #                                    (np.diff(times) * 1000).astype(int))))
         cval = 100 * lend / (data.nbytes / 1024 ** 2) if data.nbytes else 100
-        getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
+        if lend > 1.0:
+            getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
+        else:
+            getLogger(__name__).debug(f'Sending {len(compressed)} Bytes, compressed to {cval:.1f}%')
         return tracker
 
     def _send_status(self, status, message=''):
@@ -457,8 +460,8 @@ class CaptureSink(threading.Thread):
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
-            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.shape} '
-                                     f'{self.result.dtype}: {self.result}')
+            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
+                                     f'{self.result.data.dtype}: {self.result}')
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
         except AttributeError:
