@@ -129,7 +129,7 @@ class CaptureRequest:
         """
         tap = tap.lower()
         assert tap in CaptureRequest.SUPPORTED_TAPS
-        self.nsamp = int(n)  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
+        self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
         if channels is not None:
             if not CaptureRequest.validate_channels(tap, channels):
