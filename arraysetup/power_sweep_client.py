@@ -46,7 +46,7 @@ fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
 #                    filter=FilterConfig(coefficients='unity20'),
 #                    trig=TriggerConfig(holdoffs=[20]*2048, thresholds=[0]*2048))
 gsm = StatusListener(b'', frsb.status_url)
-cr = CaptureRequest(2**15, 'ddciq', fc, frsb, compressed=False)
+cr = CaptureRequest(2**15, 'ddciq', fc, frsb)
 #cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/iq1024MiB.npz')
 #cr = CaptureRequest(1024**3//2//2048, 'phase', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/phase1024MiB.npz')
 #cr = CaptureRequest(3024**3//2//2048, 'phase', fc, frsa)

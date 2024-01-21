@@ -241,7 +241,7 @@ class FeedlineHardware:
                 #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 zmqtmp = zmq.COPY_THRESHOLD
                 zmq.COPY_THRESHOLD = 0
-                tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False)
+                tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
                 times.append(time.time())
                 #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 if tracker is not None:
@@ -321,8 +321,7 @@ class FeedlineHardware:
                     photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE)
                     toc = datetime.utcnow()
 
-                    cr.send_data(unpack_photons(photons) if unpack else photons, copy=False,
-                                 compress=True)
+                    cr.send_data(unpack_photons(photons) if unpack else photons, copy=False, compress=True)
             except Exception as e:
                 cr.abort(f'Uncaught exception in photon sender: {e}')
                 raise e
@@ -386,7 +385,7 @@ class FeedlineHardware:
             while not postdone.is_set():
                 check_zmq_abort_pipe(pipe)
                 time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
-            cr.send_data(postage_maxi.get_postage(rawbuffer=True), copy=False)
+            cr.send_data(postage_maxi.get_postage(rawbuffer=True), copy=False, compress=True)
             cr.finish()
         except AbortedException as e:
             cr.abort(e, raise_exception=False)

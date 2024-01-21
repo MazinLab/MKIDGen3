@@ -116,7 +116,8 @@ class CaptureRequest:
         return True
 
     def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
-                 feedline_server: FRSClient, channels: list = None, file: str = None, compressed: bool = True):
+                 feedline_server: FRSClient, channels: list = None, file: str = None,
+                 _compression_override: bool = None):
         """
 
         Args:
@@ -141,7 +142,7 @@ class CaptureRequest:
         self._status_socket = None
         self._data_socket = None
         self._established = False
-        self.compressed = compressed
+        self._compression_override = _compression_override
         self.data_endpoint = file or type(self).DATA_ENDPOINT
 
     def __hash__(self):
@@ -256,7 +257,7 @@ class CaptureRequest:
             if raise_exception:
                 raise ez
 
-    def send_data(self, data, status='', copy=False):
+    def send_data(self, data, status='', copy=False, compress=True):
         """
         Send a (chunk) of data out. By default, data is published as a blosc2 compressed array with the
         capture id as the subscription key. CaptureRequests created with a file destination  will be saved as
@@ -296,7 +297,10 @@ class CaptureRequest:
         times = []
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        compressed = blosc2.compress(data) if self.compressed else data
+        if self._compression_override is not None:
+            compressed = blosc2.compress(data) if self._compression_override else data
+        else:
+            compressed = blosc2.compress(data) if compress else data
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         lend = len(compressed) / 1024 ** 2
@@ -390,7 +394,7 @@ class CaptureRequest:
 class CaptureSink(threading.Thread):
     def __init__(self, req_nfo: [CaptureRequest, tuple], start=True):
         if isinstance(req_nfo, CaptureRequest):
-            id, buffer_shape, source_url, compressed = req_nfo.id, req_nfo.buffer_shape, req_nfo.server.data_url, req_nfo.compressed
+            id, buffer_shape, source_url = req_nfo.id, req_nfo.buffer_shape, req_nfo.server.data_url
         else:
             id, buffer_shape, source_url = req_nfo
         #        if isinstance(id, bytes):
@@ -400,7 +404,6 @@ class CaptureSink(threading.Thread):
         self.daemon = True
         self.cap_id = id
         self.data_source = source_url
-        self.compressed = compressed
         self.result = None
         self._pipe = zpipe(zmq.Context.instance())
         self._buf = []
@@ -433,10 +436,7 @@ class CaptureSink(threading.Thread):
         if not data:
             self.socket.close()
             return None
-        if self.compressed:
-            return blosc2.decompress(data)
-        else:
-            return data
+        return blosc2.decompress(data)
 
     def destablish(self):
         self.socket.close()
@@ -457,7 +457,7 @@ class CaptureSink(threading.Thread):
                 if self._pipe[1] in avail:
                     getLogger(__name__).debug(f'Received shutdown order, terminating data acq. of {self}')
                     break
-                data = self.receive()  #does decompression
+                data = self.receive()  # does decompression
                 if not data:
                     getLogger(__name__).debug(f'Received null, capture data stream over')
                     break
@@ -581,7 +581,7 @@ class PhotonCaptureSink(CaptureSink):
             frame = data.recv_multipart(copy=False)
             fl_id = frame[0]
             time_offset = frame[1]
-            d = blosc2.decompress(frame[1])
+            d = blosc2.decompress(frame[2])
             frame_duration = None  # todo time coverage of data
             # buffer is nchan*nmax+1 32bit: 16bit time(base2) 16bit phase
             # make array of to [nnmax+1, nchan, 2] uint16
