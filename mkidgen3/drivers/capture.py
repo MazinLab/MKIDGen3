@@ -287,6 +287,8 @@ class CaptureHierarchy(DefaultHierarchy):
                                   f'source {source}')
         self.axis2mm.addr = buffer_addr
         self.axis2mm.len = n
+        _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
+        e.clear()
         self.axis2mm.start(continuous=False, increment=True)
 
     def is_ready(self):
@@ -435,7 +437,8 @@ class CaptureHierarchy(DefaultHierarchy):
         else:
             _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
             e.wait()
-            e.clear()
+            # self.axis2mm.abort()
+            # e.clear()
 
     def capture_phase(self, n, groups='all', duration=False, tap_location='filtphase', wait:(bool,dict)=True):
         """
