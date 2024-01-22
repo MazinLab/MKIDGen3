@@ -56,7 +56,7 @@ class ThreadedPLInterruptManager:
     _futures = []
 
     _queues = {}
-    _events = defaultdict(list)
+    _events = defaultdict(set)
     _event_by_id = defaultdict(threading.Event)
     _aio_eventrepr_by_name = {}
     _interrupts = {}
@@ -75,7 +75,7 @@ class ThreadedPLInterruptManager:
         m = ThreadedPLInterruptManager.get_manager()  # starts up UIO monitoring loop thread first time
         name = _interrupt_name(name)
         e = threading.Event() if id is None else m._event_by_id[f"{name}{id}"]
-        m._events[name].append(e)
+        m._events[name].add(e)
         try:
             q = m._queues[name]
             log.debug(f"Ignoring maxq as have existing q")
