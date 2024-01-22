@@ -56,16 +56,14 @@ crs.append(CaptureRequest(2**14, 'ddciq', fcs[0], server))
 crs.append(CaptureRequest(2, 'ddciq', fcs[0], server))
 crs.append(CaptureRequest(2, 'ddciq', fcs[0], server, channels=[0, 2, 3]))
 crs.append(CaptureRequest(2**16, 'ddciq', fcs[1], server, channels=[0, 2, 3]))
-crs.append(CaptureRequest(2**14, 'filtphase', fcs[0], server))
+crs.append(CaptureRequest(2**14, 'filtphase', fcs[0], server, channels=[0, 1, 2, 3, 4, 5, 6, 7, 8]))
+crs.append(CaptureRequest(2**8, 'filtphase', fcs[1], server))
+crs.append(CaptureRequest(2**31, 'filtphase', fcs[0], server, channels=[8, 9, 10]))
 
-
-#cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/iq1024MiB.npz')
-#cr = CaptureRequest(1024**3//2//2048, 'phase', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/phase1024MiB.npz')
-#cr = CaptureRequest(3024**3//2//2048, 'phase', fc, frsa)
-#cr = CaptureRequest(2**19, 'adc', fc, frsa)
-
-j = CaptureJob(crs[-1])
-j.submit(True, True)
+jobs = []
+for i, cr in enumerate(crs):
+    jobs.append(CaptureJob(cr))
+    jobs[i].submit(True, True)
 
 print('hi')
 print('hi')
