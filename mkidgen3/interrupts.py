@@ -28,6 +28,16 @@ def create_uio_loop_thread() -> (asyncio.AbstractEventLoop, threading.Thread):
     return eventloop, thread
 
 
+def _interrupt_name(name):
+    try:
+        name = name._interrupts['interrupt']['fullpath']
+    except (AttributeError, KeyError):
+        if not isinstance(name, str) and name in PL.interrupt_pins:
+            raise ValueError("name must either be an interrupt pin name "
+                             "or have _interrupts['interrupt']['fullpath']")
+    return name
+
+
 class ThreadedPLInterruptManager:
     """
     A thread-safe way of getting interrupt events with pynq. pynq's asyncio interrupt approach requires that all
@@ -46,8 +56,9 @@ class ThreadedPLInterruptManager:
     _futures = []
 
     _queues = {}
-    _events = defaultdict(list)
+    _events = defaultdict(set)
     _event_by_id = defaultdict(threading.Event)
+    _aio_eventrepr_by_name = {}
     _interrupts = {}
 
     @staticmethod
@@ -58,18 +69,13 @@ class ThreadedPLInterruptManager:
             ThreadedPLInterruptManager._thread = thread
         return ThreadedPLInterruptManager
 
+
     @staticmethod
     def get_monitor(name, maxq=1, id=None):
         m = ThreadedPLInterruptManager.get_manager()  # starts up UIO monitoring loop thread first time
-        try:
-            name = name._interrupts['interrupt']['fullpath']
-        except (AttributeError, KeyError):
-            if not isinstance(name, str) and name in PL.interrupt_pins:
-                raise ValueError("name must either be an interrupt pin name "
-                                 "or have _interrupts['interrupt']['fullpath']")
-
+        name = _interrupt_name(name)
         e = threading.Event() if id is None else m._event_by_id[f"{name}{id}"]
-        m._events[name].append(e)
+        m._events[name].add(e)
         try:
             q = m._queues[name]
             log.debug(f"Ignoring maxq as have existing q")
@@ -78,11 +84,28 @@ class ThreadedPLInterruptManager:
             pass
         m._queues[name] = q = queue.Queue(maxsize=maxq)
 
-        coro = m.interrupt_monitor(name)
-        fut = asyncio.run_coroutine_threadsafe(coro, m._loop)
+        fut = asyncio.run_coroutine_threadsafe(m._interrupt_monitor(name), m._loop)
         m._futures.append(fut)
 
         return q, e
+
+    @staticmethod
+    def get_status(name):
+        """Return a dictionary of event state info for an interrupt"""
+        m = ThreadedPLInterruptManager.get_manager()
+        name = _interrupt_name(name)
+        try:
+            i = ThreadedPLInterruptManager._interrupts[name]
+        except KeyError:
+            i = Interrupt(name)
+        intc_mmio = i.parent().mmio
+        gi = intc_mmio.read(0x1C)
+        ie = bool(intc_mmio.read(0x08) & (1 << i.number))
+        iv = bool(intc_mmio.read(0x00) & (1 << i.number))
+
+        return {'axic': {'enabled': ie, 'set': iv, 'global_enable': gi},
+                'pynq_asyncio_event': m._aio_eventrepr_by_name.get(name, 'None'),  # None set unset
+                'events': {repr(e): e.is_set() for e in m._events[name]}}
 
     @staticmethod
     def remove_monitor(event):
@@ -106,14 +129,17 @@ class ThreadedPLInterruptManager:
             ThreadedPLInterruptManager._queues.pop(name)  # no more events, kill the queue
 
     @staticmethod
-    async def interrupt_monitor(name):
+    async def _interrupt_monitor(name):
         i = ThreadedPLInterruptManager._interrupts[name] = Interrupt(name)
-
+        ThreadedPLInterruptManager._aio_eventrepr_by_name[name] = repr(i.event)
         while True:
             t = time.perf_counter()
             log.info(f"Waiting on interrupt {name}:{i.event} @ {t}. \n"
                      f"  Present watchers: {ThreadedPLInterruptManager._events[name]}")
+            ThreadedPLInterruptManager._aio_eventrepr_by_name[name] = repr(i.event)
             await i.wait()
+            ThreadedPLInterruptManager._aio_eventrepr_by_name[name] = repr(i.event)
+            i.event.clear()
             t = time.perf_counter()
             log.info(f"Interrupt {name} @ {t}")
             for e in ThreadedPLInterruptManager._events[name]:

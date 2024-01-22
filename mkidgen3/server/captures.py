@@ -708,11 +708,11 @@ class ADCCaptureData:
 
     @property
     def dtype(self):
-        self.raw.dtype
+        return self.raw.dtype
 
     @property
     def shape(self):
-        self.raw.shape
+        return self.raw.shape
 
     @cached_property
     def data(self):
@@ -729,11 +729,11 @@ class IQCaptureData:
 
     @property
     def dtype(self):
-        self.raw.dtype
+        return self.raw.dtype
 
     @property
     def shape(self):
-        self.raw.shape
+        return self.raw.shape
 
     @cached_property
     def data(self):
@@ -746,11 +746,11 @@ class PhaseCaptureData:
 
     @property
     def dtype(self):
-        self.raw.dtype
+        return self.raw.dtype
 
     @property
     def shape(self):
-        self.raw.shape
+        return self.raw.shape
 
     @cached_property
     def data(self):
