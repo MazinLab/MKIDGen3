@@ -131,14 +131,15 @@ class ThreadedPLInterruptManager:
     @staticmethod
     async def _interrupt_monitor(name):
         i = ThreadedPLInterruptManager._interrupts[name] = Interrupt(name)
-        _aio_eventrepr_by_name[name] = repr(i.event)
+        ThreadedPLInterruptManager._aio_eventrepr_by_name[name] = repr(i.event)
         while True:
             t = time.perf_counter()
             log.info(f"Waiting on interrupt {name}:{i.event} @ {t}. \n"
                      f"  Present watchers: {ThreadedPLInterruptManager._events[name]}")
-            _aio_eventrepr_by_name[name] = repr(i.event)
+            ThreadedPLInterruptManager._aio_eventrepr_by_name[name] = repr(i.event)
             await i.wait()
-            _aio_eventrepr_by_name[name] = repr(i.event)
+            ThreadedPLInterruptManager._aio_eventrepr_by_name[name] = repr(i.event)
+            i.event.clear()
             t = time.perf_counter()
             log.info(f"Interrupt {name} @ {t}")
             for e in ThreadedPLInterruptManager._events[name]:
