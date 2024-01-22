@@ -100,8 +100,8 @@ class ThreadedPLInterruptManager:
             i = Interrupt(name)
         intc_mmio = i.parent().mmio
         gi = intc_mmio.read(0x1C)
-        ie = bool(intc_mmio.read(0x10) & (1 << i.number))
-        iv = bool(intc_mmio.read(0x04) & (1 << i.number))
+        ie = bool(intc_mmio.read(0x08) & (1 << i.number))
+        iv = bool(intc_mmio.read(0x00) & (1 << i.number))
 
         return {'axic': {'enabled': ie, 'set': iv, 'global_enable': gi},
                 'pynq_asyncio_event': m._aio_eventrepr_by_name.get(name, 'None'),  # None set unset
