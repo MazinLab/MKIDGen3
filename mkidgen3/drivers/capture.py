@@ -283,12 +283,15 @@ class CaptureHierarchy(DefaultHierarchy):
                           " Try calling .axis2mm.abort() followed by .axis2mm.clear_error()"
                           " then try a small throwaway capture (data order may not be aligned in the first capture "
                           "after a reset).")
-        getLogger(__name__).debug(f'Starting capture of {n} bytes ({n // 64} beats) to address {hex(buffer_addr)} from '
-                                  f'source {source}')
+
         self.axis2mm.addr = buffer_addr
         self.axis2mm.len = n
         _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
+        time.sleep(.2)
         e.clear()
+        getLogger(__name__).debug(f'Starting capture of {n} bytes ({n // 64} beats) to address {hex(buffer_addr)} from '
+                                  f'source {source}: \n Interrupt Status:' +
+                                  str(ThreadedPLInterruptManager.get_status(self.axis2mm._interrupts['o_int']['fullpath'])))
         self.axis2mm.start(continuous=False, increment=True)
 
     def is_ready(self):
