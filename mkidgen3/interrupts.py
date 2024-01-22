@@ -67,6 +67,7 @@ class ThreadedPLInterruptManager:
             loop, thread = create_uio_loop_thread()
             ThreadedPLInterruptManager._loop = loop
             ThreadedPLInterruptManager._thread = thread
+            time.sleep(1)
         return ThreadedPLInterruptManager
 
 
@@ -82,10 +83,14 @@ class ThreadedPLInterruptManager:
             return q, e
         except KeyError:
             pass
+
         m._queues[name] = q = queue.Queue(maxsize=maxq)
 
+        log.info(f"Starting new interrupt monitoring corot for {name} @ {time.perf_counter()}")
         fut = asyncio.run_coroutine_threadsafe(m._interrupt_monitor(name), m._loop)
         m._futures.append(fut)
+
+        time.sleep(.038*2)  # have seen it take at least 38 ms until the interrupt is waiting
 
         return q, e
 

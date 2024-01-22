@@ -287,7 +287,6 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.addr = buffer_addr
         self.axis2mm.len = n
         _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
-        time.sleep(.2)
         e.clear()
         getLogger(__name__).debug(f'Starting capture of {n} bytes ({n // 64} beats) to address {hex(buffer_addr)} from '
                                   f'source {source}: \n Interrupt Status:' +
