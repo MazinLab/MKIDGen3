@@ -12,6 +12,7 @@ from datetime import datetime
 import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
+from mkidgen3.util import print_bytes
 from mkidgen3.funcs import compute_lo_steps, convert_adc_raw_to_mv, raw_iq_to_unit, raw_phase_to_radian
 from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
@@ -297,10 +298,8 @@ class CaptureRequest:
         times = []
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        if self._compression_override is not None:
-            compressed = blosc2.compress(data) if self._compression_override else data
-        else:
-            compressed = blosc2.compress(data) if compress else data
+        do_compression = compress if self._compression_override is None else not self._compression_override
+        compressed = blosc2.compress(data) if do_compression else data
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         lend = len(compressed) / 1024 ** 2
@@ -316,7 +315,7 @@ class CaptureRequest:
         if lend > 1.0:
             getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
         else:
-            getLogger(__name__).debug(f'Sending {len(compressed)} Bytes, compressed to {cval:.1f}%')
+            getLogger(__name__).debug(f'Sending {print_bytes(len(compressed))} , compressed to {cval:.1f}%')
         return tracker
 
     def _send_status(self, status, message=''):
@@ -394,19 +393,21 @@ class CaptureRequest:
 class CaptureSink(threading.Thread):
     def __init__(self, req_nfo: [CaptureRequest, tuple], start=True):
         if isinstance(req_nfo, CaptureRequest):
-            id, buffer_shape, source_url = req_nfo.id, req_nfo.buffer_shape, req_nfo.server.data_url
+            id, buffer_shape, size_bytes, source_url, _compression_override = req_nfo.id, req_nfo.buffer_shape, req_nfo.size_bytes, req_nfo.server.data_url, req_nfo._compression_override
         else:
             id, buffer_shape, source_url = req_nfo
         #        if isinstance(id, bytes):
         #            id = id.decode()
         super(CaptureSink, self).__init__(name=f'cap_id={id}')
         self._expected_buffer_shape = buffer_shape
+        self._expected_bytes = size_bytes
         self.daemon = True
         self.cap_id = id
         self.data_source = source_url
         self.result = None
         self._pipe = zpipe(zmq.Context.instance())
         self._buf = []
+        self._compression_override = _compression_override
         self.socket = None
         if start:
             self.start()
@@ -436,7 +437,7 @@ class CaptureSink(threading.Thread):
         if not data:
             self.socket.close()
             return None
-        return blosc2.decompress(data)
+        return blosc2.decompress(data) if not self._compression_override else data
 
     def destablish(self):
         self.socket.close()
@@ -461,7 +462,7 @@ class CaptureSink(threading.Thread):
                 if not data:
                     getLogger(__name__).debug(f'Received null, capture data stream over')
                     break
-                getLogger(__name__).debug(f'Received data snippet for {self}')
+                getLogger(__name__).debug(f'Received {print_bytes(len(data))} of {print_bytes(self._expected_bytes)} for {self}')
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
@@ -486,13 +487,14 @@ class CaptureSink(threading.Thread):
 class StreamCaptureSink(CaptureSink):
     def _finalize_data(self):
         # raw adc data is i0q0 i1q1 int16
-        size = len(self._buf) / 2  # n int16
-        n = int(size // np.prod(self._expected_buffer_shape[1:]))
-        shape = (min(n, self._expected_buffer_shape[0]),) + self._expected_buffer_shape[1:]
-        if n > self._expected_buffer_shape[0]:
-            getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}')
-        elif n < self._expected_buffer_shape[0]:
-            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}')
+        bytes_recv = len(self._buf)
+        samples_recv = int(len(self._buf) / 2 // np.prod(self._expected_buffer_shape[1:]))  # / 2 for 2 bytes per I or Q
+        shape = (min(samples_recv, self._expected_buffer_shape[0]),) + self._expected_buffer_shape[1:]
+
+        if bytes_recv > self._expected_bytes:
+            getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}. Expected {print_bytes(self._expected_bytes)} got {print_bytes(bytes_recv)}.')
+        elif bytes_recv < self._expected_bytes:
+            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}. Expected {print_bytes(self._expected_bytes)} got {print_bytes(bytes_recv)}.')
         # TODO this might technically be a memory leak if we captured more data
         self.result = np.frombuffer(self._buf, count=np.prod(shape, dtype=int), dtype=np.int16).reshape(shape).squeeze()
 
