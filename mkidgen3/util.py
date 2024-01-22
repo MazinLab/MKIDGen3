@@ -7,6 +7,25 @@ from logging import getLogger
 import zmq
 
 
+def print_bytes(n_bytes: int) -> str:
+    """
+    Print the number of bytes with a convenient order of magnitude.
+    Args:
+        n_bytes: number of bytes
+
+    Returns:
+    For Ex: '129.2 MiB'
+    """
+    if n_bytes > 2 ** 30:
+        return f'{n_bytes / 2 ** 30:.1f} GiB'
+    elif n_bytes > 2 ** 20:
+        return f'{n_bytes / 2 ** 20:.1f} MiB'
+    elif n_bytes > 2 ** 10:
+        return f'{n_bytes / 2 ** 10:.1f} KiB'
+    else:
+        return f'{n_bytes} bytes'
+
+
 def delete_pynq_cache_file():
     try:
         os.remove('/usr/local/share/pynq-venv/lib/python3.10/site-packages/pynq/pl_server/_current_metadata.pkl')
