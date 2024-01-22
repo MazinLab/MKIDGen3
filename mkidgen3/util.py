@@ -11,7 +11,7 @@ def print_bytes(n_bytes: int) -> str:
     """
     Print the number of bytes with a convenient order of magnitude.
     Args:
-        n_bytes:
+        n_bytes: number of bytes
 
     Returns:
     For Ex: '129.2 MiB'
