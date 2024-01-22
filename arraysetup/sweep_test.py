@@ -66,7 +66,7 @@ cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsu, file='file:///home/xilinx/
 cr = CaptureRequest(1024**3//2//2048, 'phase', fc, frsu, file='file:///home/xilinx/wheatley/jbtest/phase1024MiB.npz')
 cr = CaptureRequest(3024**3//2//2048, 'phase', fc, frsu)
 cr = CaptureRequest(2**19, 'adc', fc, frsu)
-cr = CaptureRequest(3*1024**3//4, 'adc', fc, frsu)
+cr = CaptureRequest(100, 'ddciq', fc, frsu)
 
 j = CaptureJob(cr)
 j.submit(True, True)
@@ -81,9 +81,9 @@ j.submit(True, True)
 # j3.submit(True, True)
 
 
-cr4 = CaptureRequest(100, 'photon', fc2, frsu)
-j4 = CaptureJob(cr4)
-j4.submit(True, True)
+# cr4 = CaptureRequest(100, 'photon', fc2, frsu)
+# j4 = CaptureJob(cr4)
+# j4.submit(True, True)
 
 
 # import asyncio
