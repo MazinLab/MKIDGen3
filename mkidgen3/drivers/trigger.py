@@ -216,17 +216,8 @@ class PhotonPostageMAXI(DefaultIP):
         convert postage stamp capture data into rids and associated complex values,
         by default omit the first, garbage stamp
         """
-        buffer = np.asarray(buffer)  # ensures pulled out of pynqbuffer via copy
-
-        if complex:
-            events = buffer[:, 1:, 0] + buffer[:, 1:, 1] * 1j
-        else:
-            events = buffer[:, 1:]
-        if scaled:
-            events /= 2 ** 14
-
-        ids = buffer[:, 0, 0].astype(np.uint16)
-        return ids, events
+        from ..funcs import postage_buffer_to_data
+        return postage_buffer_to_data(buffer, complex=complex, scaled=scaled)
 
     @property
     def event_count(self):

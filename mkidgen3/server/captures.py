@@ -761,8 +761,10 @@ class PostageCaptureData:
         n = result.size//2//128
         shape = (n, 128, 2)
         result = result.reshape(shape)
-        self.ids = result[:, 0, 0].astype(np.uint16)
-        self.raw_iqs = result[:, 1:, :]
+        from ..funcs import postage_buffer_to_data
+        ids, events = postage_buffer_to_data(result, complex=True, scaled=True)
+        self.ids = ids  # result[:, 0, 0].astype(np.uint16)
+        self.iqs = events  # result[:, 1:, :]
         self.raw = result
 
     @property
@@ -771,11 +773,11 @@ class PostageCaptureData:
 
     @property
     def shape(self):
-        return self.raw_iqs.shape
+        return self.iqs.shape
 
-    @cached_property
+    @property
     def data(self):
-        return raw_iq_to_unit(self.raw_iqs[..., 0] + self.raw_iqs[..., 1] * 1j, word_length=PHASE_IQ_INPUT_FRACTIONAL_BITS)
+        return self.iqs
 
 
 class CaptureJob:

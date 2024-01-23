@@ -47,6 +47,24 @@ def raw_phase_to_radian(raw_data: np.ndarray, phase_fractional_bits=PHASE_FRACTI
     return x
 
 
+def postage_buffer_to_data(buffer: np.ndarray, complex=True, scaled=True):
+    """
+    convert postage stamp capture data into rids and associated complex values,
+    by default omit the first, garbage stamp
+    """
+    buffer = np.asarray(buffer)  # ensures pulled out of pynqbuffer via copy
+
+    if complex:
+        events = buffer[:, 1:, 0] + buffer[:, 1:, 1] * 1j
+    else:
+        events = buffer[:, 1:]
+    if scaled:
+        events /= 2 ** 14
+
+    ids = buffer[:, 0, 0].astype(np.uint16)
+    return ids, events
+
+
 def db2lin(values, mode='voltage'):
     """ Convert a value or values in dB to linear units.
     inputs:
