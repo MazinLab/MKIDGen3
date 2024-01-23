@@ -95,10 +95,10 @@ class CaptureRequest:
         Returns: True|False
         """
         tap = tap.lower()
-        if tap == 'iq' or 'ddciq':
+        if 'iq' in tap:
             l = N_IQ_GROUPS
             m = N_IQ_GROUPS
-        elif tap == 'phase' or 'filtphase':
+        elif 'phase' in tap:
             l = N_PHASE_GROUPS
             m = N_PHASE_GROUPS
         elif tap == 'postage':
@@ -178,7 +178,7 @@ class CaptureRequest:
 
     @property
     def type(self):
-        return 'engineering' if self.tap in ('adc', 'iq', 'ddciq', 'filtphase') else self.tap
+        return 'engineering' if self.tap not in ('photon', 'postage') else self.tap
 
     @property
     def id(self):
@@ -354,7 +354,7 @@ class CaptureRequest:
             return len(self.channels)
         elif self.tap == 'postage':
             return N_POSTAGE_CHANNELS
-        elif self.tap in ('iq', 'ddciq', 'filtphase'):
+        elif 'iq' in self.tap or 'phase' in self.tap:
             return N_CHANNELS
         else:
             return 1
@@ -362,9 +362,9 @@ class CaptureRequest:
     @property
     def dwid(self) -> int:
         """Data size of a capture sample in bytes"""
-        if self.tap in ('adc', 'iq', 'ddciq', 'postage'):
+        if 'iq' in self.tap or self.tap in ('adc', 'postage'):
             return 4
-        elif self.tap == 'phase' or 'filtphase':
+        elif 'phase' in self.tap:
             return 2
         else:
             return PHOTON_DTYPE.itemsize
@@ -380,11 +380,11 @@ class CaptureRequest:
 
         if self.tap == 'postage':
             return n, PHOTON_POSTAGE_WINDOW_LENGTH + 1, 2
-        elif self.tap in ('adc', 'iq', 'ddciq'):
+        elif 'iq' in self.tap or self.tap == 'adc':
             return n, self.nchan, 2
         elif self.tap == 'photon':
             return (n,)
-        elif self.tap == 'phase' or 'filtphase':
+        elif 'phase' in self.tap:
             return n, self.nchan
         else:
             raise RuntimeError('Unknown tap: {self.tap}')
@@ -795,9 +795,9 @@ class CaptureJob:
 
         if request.tap == 'adc':
             datasink = ADCCaptureSink
-        elif request.tap == 'iq' or 'ddciq':
+        elif 'iq' in request.tap:
             datasink = IQCaptureSink
-        elif request.tap == 'phase' or 'filtphase':
+        elif 'phase' in request.tap:
             datasink = PhaseCaptureSink
         elif request.tap == 'photon':
             datasink = SimplePhotonSink
