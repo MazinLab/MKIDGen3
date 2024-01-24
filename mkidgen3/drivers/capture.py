@@ -4,10 +4,11 @@ from pynq import allocate, DefaultIP, DefaultHierarchy
 import time
 import asyncio
 from logging import getLogger
+from typing import Iterable
 
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
     check_description_for  # config, overlay details
-from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup
+from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel
 from ..util import ps_ram_sane, print_bytes
 from ..interrupts import ThreadedPLInterruptManager
 
@@ -40,12 +41,13 @@ class FilterIQ(DefaultIP):
             ret += [j + 32 * i for j in range(32) if k & (1 << j)]
         return ret
 
-    def keep_channels(self, channels):
+    def keep_groups(self, channels):
         """Like keep= but assume channels"""
-        self.keep = set([g // 8 for g in channels])
+
+        self.keep = channel_to_iqgroup(channels)
 
     @keep.setter
-    def keep(self, groups):
+    def keep(self, groups: Iterable):
         """
         Tell the block to preserve IQ groups. Set to an iterable of resonator channel IQ group numbers (0-255). If
         iterable contains values > 255 it is assumed numbers indicate resonator channels and the necessary groups
@@ -66,14 +68,11 @@ class FilterIQ(DefaultIP):
             keep += 0xFFFFFFFF
             last = N_IQ_GROUPS-1
         else:
-
-            if max(groups) > N_IQ_GROUPS-1:
-                groups = channel_to_iqgroup(groups)
-            last = max(groups)
+            groups = set(groups)
 
             if len(groups) % 2:
-                raise ValueError('Groups must be captured in multiples of two')
-
+                groups.add(set(range(256)).difference(groups).pop())
+            last = max(groups)
             if max(groups) > N_IQ_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-{N_IQ_GROUPS-1}')
 
@@ -114,7 +113,7 @@ class FilterPhase(DefaultIP):
 
     def keep_channels(self, channels):
         """Like keep= but assume channels"""
-        self.keep = set([g // 16 for g in channels])
+        self.keep = channel_to_phasegroup(channels)
 
     @keep.setter
     def keep(self, groups):
@@ -136,12 +135,9 @@ class FilterPhase(DefaultIP):
             keep += 0xFFFFFFFF
             last = N_PHASE_GROUPS-1
         else:
-            if max(groups) > N_PHASE_GROUPS-1:
-                groups = channel_to_phasegroup(groups)  # convert channel to group
-            last = max(groups)
-
             if len(groups) % 2:
-                raise ValueError('Groups must be captured in multiples of two')
+                groups.add(set(range(512)).difference(groups).pop())
+            last = max(groups)
 
             if max(groups) > N_PHASE_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-{N_PHASE_GROUPS-1}')
@@ -296,13 +292,19 @@ class CaptureHierarchy(DefaultHierarchy):
     def is_ready(self):
         return self.axis2mm.ready
 
-    def keep_channels(self, tap, channels):
+    def keep_groups(self, tap, channels):
         if isinstance(channels, str) and channels == 'all':
             channels = list(range(N_CHANNELS))
         if tap in self.IQ_MAP:
-            return self.filter_iq[tap].keep_channels(channels)
+            return self.filter_iq[tap].keep_groups(channels)
         elif tap in self.PHASE_MAP:
-            return self.filter_phase[tap].keep_channels(channels)
+            return self.filter_phase[tap].keep_groups(channels)
+
+    def kept_channels(self, tap):
+        if tap in self.IQ_MAP:
+            return iqgroup_to_channel(self.filter_iq[tap].keep)
+        elif tap in self.PHASE_MAP:
+            return phasegroup_to_channel(self.filter_phase[tap].keep)
 
     def capture(self, n, tap, groups='all', wait=True):
         try:

@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Iterable
 
 DAC_MAX_OUTPUT_DBM = 1  # [dBm] see Xilinx DS926
 DAC_MAX_INT = 8191  # see PG269 p.219
@@ -34,17 +35,65 @@ ADC_MAX_VOLTAGE = 0.22360679774997896  # 0.5/np.sqrt(5) per p.
 from mkidgen3.drivers.ifboard import MAX_IN_ATTEN, IF_ATTN_STEP, MAX_OUT_ATTEN
 
 
-def channel_to_iqgroup(channels):
-    """convert channel number(s) to a set of axi groups in iq"""
+def channel_to_iqgroup(channels: Iterable | int) -> set:
+    """
+    Convert channels to IQ groups which contains those channels.
+    Args:
+        channels: resonator channels (0-2047)
+
+    Returns: set of IQ groups
+
+    """
     try:
         return set([g // 8 for g in channels])
     except TypeError:
-        return channels//8
+        return {channels//8}
 
 
-def channel_to_phasegroup(channels):
-    """convert channel number(s) to a set of axi groups in phase"""
+def iqgroup_to_channel(iq_group: Iterable | int) -> set:
+    """
+    Convert IQ groups to channels.
+    Args:
+        iq_group: (0-128)
+
+    Returns: set of corresponding channels (0-2047)
+
+    """
+    chan_per_group = N_CHANNELS // N_IQ_GROUPS
+    if isinstance(iq_group, int):
+        return set(np.arange(chan_per_group)+iq_group*chan_per_group)
+    else:
+        iq_group = np.fromiter(iq_group, int, len(iq_group))
+        return set((np.arange(chan_per_group)+(iq_group*chan_per_group)[:, np.newaxis]).flatten())
+
+
+def channel_to_phasegroup(channels: Iterable | int) -> set:
+    """
+    Convert phase channels to IQ groups which contains those channels.
+    Args:
+        channels: resonator channels (0-2047)
+
+    Returns: set of IQ groups (0-255)
+
+    """
     try:
         return set([g // 16 for g in channels])
     except TypeError:
-        return channels//16
+        return {channels//16}
+
+
+def phasegroup_to_channel(phase_group: Iterable | int) -> set:
+    """
+    Convert phase groups to channels.
+    Args:
+        phase_group: (0-127)
+
+    Returns: set of corresponding channels (0-2047)
+
+    """
+    chan_per_group = N_CHANNELS // N_PHASE_GROUPS
+    if isinstance(phase_group, int):
+        return set(np.arange(chan_per_group)+phase_group*chan_per_group)
+    else:
+        phase_group = np.fromiter(phase_group, int, len(phase_group))
+        return set((np.arange(chan_per_group)+(phase_group*chan_per_group)[:, np.newaxis]).flatten())

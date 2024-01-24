@@ -10,7 +10,7 @@ from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureRequest
-from mkidgen3.util import check_zmq_abort_pipe, AbortedException
+from mkidgen3.util import check_zmq_abort_pipe, AbortedException, print_bytes
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
@@ -218,18 +218,38 @@ class FeedlineHardware:
             cr.fail(failmsg, raise_exception=False)
             return
 
-        capture_atom_bytes = cr.capture_atom_bytes
+        self._ol.capture.keep_groups(cr.tap, cr.channels if cr.channels else 'all')
+        hw_channels = tuple(sorted(self._ol.capture.kept_channels(cr.tap)))
+
+        capture_atom_bytes = len(hw_channels)*cr.dwid
+        hw_size_bytes = capture_atom_bytes*cr.nsamp
         demands = None
         chunking_thresh = determine_max_chunk('ps', demands=demands,
                                               assume_compression=not cr.data_endpoint.startswith('file://'))
-        nchunks = cr.size_bytes // chunking_thresh
-        partial = cr.size_bytes - chunking_thresh * nchunks
+        nchunks = hw_size_bytes // chunking_thresh
+        partial = hw_size_bytes - chunking_thresh * nchunks
         chunks = [chunking_thresh // capture_atom_bytes] * nchunks
         if partial:
             chunks.append(partial // capture_atom_bytes)
+
+        channel_sel = None
+        ps_buf = None
+        if cr.channels is not None:  # channel-specific capture
+            usr_channels = cr.channels
+            if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
+                getLogger(__name__).debug(f'Requested channel capture of {print_bytes(cr.size_bytes)} '
+                                          f'requires {print_bytes(hw_size_bytes)}')
+                getLogger(__name__).debug(f'Requested channel subset of hardware capture '
+                                              f'will copy {print_bytes(cr.size_bytes)} '
+                                              f'PL buffer to PS RAM.')
+                channel_sel = np.where(np.in1d(hw_channels, usr_channels))[0]
+                buf_shape = (chunks[0], len(usr_channels))
+                if 'iq' in cr.tap:
+                    buf_shape += (2,)
+                ps_buf = np.empty(buf_shape,  dtype=np.int16)
+
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
 
-        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all') #TOD): What is this for?
         try:
             for i, csize in enumerate(chunks):
                 times = []
@@ -245,7 +265,12 @@ class FeedlineHardware:
                 #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 zmqtmp = zmq.COPY_THRESHOLD
                 zmq.COPY_THRESHOLD = 0
-                tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
+                if channel_sel is None:
+                    data_to_send = data
+                else:
+                    data_to_send = np.take(data, channel_sel, axis=1, out=ps_buf[:csize])
+
+                tracker = cr.send_data(data_to_send, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
                 times.append(time.time())
                 #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 if tracker is not None:
@@ -254,6 +279,7 @@ class FeedlineHardware:
                 times.append(time.time())
                 #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data.freebuffer()
+
                 times.append(time.time())
                 #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
@@ -266,6 +292,7 @@ class FeedlineHardware:
             cr.fail(f'Aborted due to {e}', raise_exception=False)
         finally:
             cr.destablish()
+            del ps_buf
         try:
             pipe.close()
         except zmq.ZMQError:
