@@ -10,7 +10,7 @@ from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureRequest
-from mkidgen3.util import check_zmq_abort_pipe, AbortedException
+from mkidgen3.util import check_zmq_abort_pipe, AbortedException, print_bytes
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
@@ -218,18 +218,24 @@ class FeedlineHardware:
             cr.fail(failmsg, raise_exception=False)
             return
 
-        capture_atom_bytes = cr.capture_atom_bytes
+        self._ol.capture.keep_groups(cr.tap, cr.channels if cr.channels else 'all')
+        kept = self._ol.capture.kept_channels(cr.tap)
+
+
+        capture_atom_bytes = len(kept)*cr.dwid
+        hw_size_bytes = capture_atom_bytes*cr.nsamp
         demands = None
         chunking_thresh = determine_max_chunk('ps', demands=demands,
                                               assume_compression=not cr.data_endpoint.startswith('file://'))
-        nchunks = cr.size_bytes // chunking_thresh
-        partial = cr.size_bytes - chunking_thresh * nchunks
+        nchunks = hw_size_bytes // chunking_thresh
+        partial = hw_size_bytes - chunking_thresh * nchunks
         chunks = [chunking_thresh // capture_atom_bytes] * nchunks
         if partial:
             chunks.append(partial // capture_atom_bytes)
+        if cr.channels is not None:
+            getLogger(__name__).debug(f'Requested channel capture of {print_bytes(cr.size_bytes)} requires {print_bytes(hw_size_bytes)}')
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
 
-        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all') #TOD): What is this for?
         try:
             for i, csize in enumerate(chunks):
                 times = []
@@ -245,6 +251,15 @@ class FeedlineHardware:
                 #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 zmqtmp = zmq.COPY_THRESHOLD
                 zmq.COPY_THRESHOLD = 0
+                req_channel_set = set(cr.channels if cr.channels else range(256 if 'iq' in cr.tap else 512))
+                if set(kept) - req_channel_set:  # strip off extra channels required by hardware capture
+                    chan_array = np.sort(np.fromiter(req_channel_set, int, len(req_channel_set)))
+                    if not np.diff(chan_array, n=2).any():  # array is sliceable, don't copy
+                        data_sl = data[:, chan_array[0]::chan_array[0], :]
+                    else:
+                        getLogger(__name__).debug(f'Requested channel subset of hardware capture buffer is not viewable, copying {print_bytes(cr.size_bytes)} PL buffer to PS RAM.')
+                        data_sl = data[:, chan_array, :]
+                #TODO: need to figure out if and how to free buffers
                 tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
                 times.append(time.time())
                 #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
