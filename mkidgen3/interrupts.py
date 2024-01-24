@@ -73,6 +73,17 @@ class ThreadedPLInterruptManager:
 
     @staticmethod
     def get_monitor(name, maxq=1, id=None):
+        """
+
+        Args:
+            name: an object supported by _interrupt_name(name), basically an HLS core or a pynq interrupt path.
+            maxq: how many interrupt events to store in the queue before it fills up and older events are pushed out
+                ignored on all but the initial call for a given name. The queue is common to all calls.
+            id: an optional hashable to be used as an id for the event (i.e. get the same event on subsequent calls)
+
+        Returns: a queue.Queue, threading.Event tuple. Event will be set each time the asyncio event fires.
+
+        """
         m = ThreadedPLInterruptManager.get_manager()  # starts up UIO monitoring loop thread first time
         name = _interrupt_name(name)
         e = threading.Event() if id is None else m._event_by_id[f"{name}{id}"]
