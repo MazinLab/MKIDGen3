@@ -218,7 +218,7 @@ class FeedlineHardware:
             cr.fail(failmsg, raise_exception=False)
             return
 
-        self._ol.capture.keep_groups(cr.tap, cr.channels if cr.channels else 'all')
+        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
         hw_channels = tuple(sorted(self._ol.capture.kept_channels(cr.tap)))
 
         capture_atom_bytes = len(hw_channels)*cr.dwid

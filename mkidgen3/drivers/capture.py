@@ -41,9 +41,8 @@ class FilterIQ(DefaultIP):
             ret += [j + 32 * i for j in range(32) if k & (1 << j)]
         return ret
 
-    def keep_groups(self, channels):
+    def keep_channels(self, channels):
         """Like keep= but assume channels"""
-
         self.keep = channel_to_iqgroup(channels)
 
     @keep.setter
@@ -292,19 +291,24 @@ class CaptureHierarchy(DefaultHierarchy):
     def is_ready(self):
         return self.axis2mm.ready
 
-    def keep_groups(self, tap, channels):
-        if isinstance(channels, str) and channels == 'all':
-            channels = list(range(N_CHANNELS))
+    def keep_channels(self, tap, channels):
+        if isinstance(channels, str):
+            if channels.lower() == 'all':
+                channels = list(range(N_CHANNELS))
+            else:
+                raise ValueError(f'Invalid channel type: {channels}')
         if tap in self.IQ_MAP:
-            return self.filter_iq[tap].keep_groups(channels)
+            return self.filter_iq[tap].keep_channels(channels)
         elif tap in self.PHASE_MAP:
-            return self.filter_phase[tap].keep_groups(channels)
+            return self.filter_phase[tap].keep_channels(channels)
 
     def kept_channels(self, tap):
         if tap in self.IQ_MAP:
             return iqgroup_to_channel(self.filter_iq[tap].keep)
         elif tap in self.PHASE_MAP:
             return phasegroup_to_channel(self.filter_phase[tap].keep)
+        else:
+            return (1,)
 
     def capture(self, n, tap, groups='all', wait=True):
         try:
