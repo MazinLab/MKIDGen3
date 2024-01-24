@@ -239,19 +239,14 @@ class FeedlineHardware:
             if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
                 getLogger(__name__).debug(f'Requested channel capture of {print_bytes(cr.size_bytes)} '
                                           f'requires {print_bytes(hw_size_bytes)}')
-                usr_channels_i = np.where(np.in1d(hw_channels, usr_channels))[0]
-                if not np.diff(usr_channels_i, n=2).any():  # array is sliceable, don't copy
-                    channel_sel = slice(usr_channels_i[0],usr_channels_i[-1]+1, np.diff(usr_channels_i)[0])
-                else:
-                    getLogger(__name__).debug(f'Requested channel subset of hardware capture '
-                                              f'buffer is not viewable, will copy {print_bytes(cr.size_bytes)} '
+                getLogger(__name__).debug(f'Requested channel subset of hardware capture '
+                                              f'will copy {print_bytes(cr.size_bytes)} '
                                               f'PL buffer to PS RAM.')
-                    channel_sel=usr_channels_i
-                    buf_shape =(chunks[0], len(usr_channels))
-                    if 'tap' in 'iq':
-                        buf_shape += (2,)
-                    ps_buf = np.empty(buf_shape,  dtype=np.int16)
-
+                channel_sel = np.where(np.in1d(hw_channels, usr_channels))[0]
+                buf_shape = (chunks[0], len(usr_channels))
+                if 'iq' in cr.tap:
+                    buf_shape += (2,)
+                ps_buf = np.empty(buf_shape,  dtype=np.int16)
 
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
 
@@ -272,8 +267,6 @@ class FeedlineHardware:
                 zmq.COPY_THRESHOLD = 0
                 if channel_sel is None:
                     data_to_send = data
-                elif isinstance(channel_sel, slice):
-                    data_to_send = data[channel_sel]
                 else:
                     data_to_send = np.take(data, channel_sel, axis=1, out=ps_buf[:csize])
 
