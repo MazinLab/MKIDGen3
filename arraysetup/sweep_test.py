@@ -4,10 +4,10 @@ import copy
 import zmq
 import matplotlib.pyplot as plt
 
-from mkidgen3.server.feedline_config import IFConfig, BitstreamConfig, RFDCClockingConfig, RFDCConfig, WaveformConfig, ChannelConfig, DDCConfig, FeedlineConfig, FilterConfig, TriggerConfig
-from mkidgen3.server.captures import CaptureJob, FRSClient, CaptureRequest,StatusListener
+from mkidgen3.server.feedline_config import (IFConfig, BitstreamConfig, RFDCClockingConfig, RFDCConfig, WaveformConfig,
+                                             ChannelConfig, DDCConfig, FeedlineConfig, FilterConfig, TriggerConfig)
+from mkidgen3.server.captures import CaptureJob, FRSClient, CaptureRequest, StatusListener
 from mkidgen3.server.waveform import WaveformFactory
-from mkidgen3.opfb import opfb_bin_number
 from mkidgen3.util import setup_logging
 
 setup_logging('feedlineclient')
@@ -15,21 +15,25 @@ setup_logging('feedlineclient')
 # ctx.linger = 0
 
 
-
 frsa = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
+
+
+large_job_test = False
+send_wave =''
+frsu=frsb
 
 
 def synthetic_photon_waveform_generator():
     import importlib.resources
     pulse_file = importlib.resources.path('mkidgen3.config', 'waveform_phase_pulse.npy')
     theta = np.load(pulse_file)
+    theta *= 2*np.pi
+    theta2 = theta.copy()
     theta[200_000:] += theta[:-200_000] / 2
     theta[100_000:] += theta[:-100_000] / 2
-    theta2 = np.load("pulse.npy")
     theta2[150_000:] += theta2[:-150_000] / 3
-    theta*=2*np.pi
-    theta2*=2*np.pi
+
     tones = np.array([250.0e6 + 107e3, 2.00062500e+08])
     amplitudes = np.full(tones.size, fill_value=0.8/tones.shape[0])
     phases = [-theta, -theta2]
@@ -37,9 +41,6 @@ def synthetic_photon_waveform_generator():
                                                        phases=phases, maximize_dynamic_range=False))
     return waveform
 
-
-send_wave =''
-frsu=frsb
 
 # Bitstream Config
 bitstream = BitstreamConfig(bitstream='/home/xilinx/gen3_top_final.bit', ignore_version=True)
@@ -55,14 +56,15 @@ waveforms['fake_photon'] = synthetic_photon_waveform_generator()
 waveforms['2tone'] = WaveformConfig(waveform=WaveformFactory(frequencies=[250.0e6 + 107e3, 2.00062500e+08]))
 
 # Channel config
-chan = waveforms['fake_photon'].default_ddc_config
+chan = waveforms['fake_photon'].default_channel_config
 ddc = waveforms['fake_photon'].default_ddc_config
 thresholds = -0.5*np.ones(2048)
 thresholds[2:] = -0.99
+
+# holdoffs = np.full(2048, fill_value=20, dtype=np.uint16)
 trig = TriggerConfig(holdoffs=[20]*2048, thresholds=thresholds)
 
 
-holdoffs = np.full(2048, fill_value=20, dtype=np.uint16)
 
 # Feedline Config
 for k in waveforms:
@@ -92,11 +94,13 @@ test_eng_jobs = list(map(CaptureJob, (CaptureRequest(1024, 'adc', fc, frsu),
 
 # gsm = StatusListener(b'', frsb.status_url)
 
-for j in test_large_file_jobs:
-    j.submit(True, True)
+
 for j in test_eng_jobs:
     j.submit(True, True)
 
+if large_job_test:
+    for j in test_large_file_jobs:
+        j.submit(True, True)
 
 channels_plt = [0, 1]
 
@@ -110,7 +114,7 @@ j.submit(True, True)
 
 # Compute Phase Needed to Move average to Zero
 phase = j.data()
-phase_offsets = -phase.mean(axis=0)
+phase_offsets = -phase.data.mean(axis=0)
 phase_offsets[2:] = 0
 
 # Capture phase with new offsets
@@ -130,8 +134,8 @@ moved_phase = j2.data()
 fig, axes = plt.subplots(1, len(channels_plt), figsize=(15, 5))
 for i, ax in zip(channels_plt,axes.T):
     plt.sca(ax)
-    plt.plot(phase[:600, i], label='unbiased')
-    plt.plot(moved_phase[:600, i], label='biased')
+    plt.plot(phase.data[:600, i], label='unbiased')
+    plt.plot(moved_phase.data[:600, i], label='biased')
     plt.ylim(-1, 1)
     plt.ylabel('Phase (Scaled Radians)')
     plt.xlabel('Samples (Scaled Radians)')
