@@ -81,6 +81,7 @@ def channel_to_phasegroup(channels: Iterable | int) -> set:
     except TypeError:
         return {channels//16}
 
+
 def phasegroup_to_channel(phase_group: Iterable | int) -> set:
     """
     Convert phase groups to channels.

@@ -4,6 +4,7 @@ import threading
 import time
 import numpy as np
 import zmq
+from typing import Iterable
 import blosc2
 from typing import List
 from npy_append_array import NpyAppendArray
@@ -117,7 +118,7 @@ class CaptureRequest:
         return True
 
     def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
-                 feedline_server: FRSClient, channels: list = None, file: str = None,
+                 feedline_server: FRSClient, channels: Iterable | int | None = None, file: str = None,
                  _compression_override: bool = None):
         """
 
@@ -134,9 +135,13 @@ class CaptureRequest:
         self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
         if channels is not None:
+            try:
+                channels = tuple(sorted(set(channels)))
+            except TypeError:
+                channels = (channels,)
             if not CaptureRequest.validate_channels(tap, channels):
                 raise ValueError('Invalid channels specification')
-        self.channels = list(channels) if channels else None
+        self.channels = channels
         self.tap = tap  # maybe add some error handling here
         self.feedline_config = feedline_config
         self.server = feedline_server

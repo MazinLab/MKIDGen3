@@ -219,10 +219,9 @@ class FeedlineHardware:
             return
 
         self._ol.capture.keep_groups(cr.tap, cr.channels if cr.channels else 'all')
-        kept = self._ol.capture.kept_channels(cr.tap)
+        hw_channels = tuple(sorted(self._ol.capture.kept_channels(cr.tap)))
 
-
-        capture_atom_bytes = len(kept)*cr.dwid
+        capture_atom_bytes = len(hw_channels)*cr.dwid
         hw_size_bytes = capture_atom_bytes*cr.nsamp
         demands = None
         chunking_thresh = determine_max_chunk('ps', demands=demands,
@@ -232,8 +231,28 @@ class FeedlineHardware:
         chunks = [chunking_thresh // capture_atom_bytes] * nchunks
         if partial:
             chunks.append(partial // capture_atom_bytes)
-        if cr.channels is not None:
-            getLogger(__name__).debug(f'Requested channel capture of {print_bytes(cr.size_bytes)} requires {print_bytes(hw_size_bytes)}')
+
+        channel_sel = None
+        ps_buf = None
+        if cr.channels is not None:  # channel-specific capture
+            usr_channels = cr.channels
+            if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
+                getLogger(__name__).debug(f'Requested channel capture of {print_bytes(cr.size_bytes)} '
+                                          f'requires {print_bytes(hw_size_bytes)}')
+                usr_channels_i = np.where(np.in1d(hw_channels, usr_channels))[0]
+                if not np.diff(usr_channels_i, n=2).any():  # array is sliceable, don't copy
+                    channel_sel = slice(usr_channels_i[0],usr_channels_i[-1]+1, np.diff(usr_channels_i)[0])
+                else:
+                    getLogger(__name__).debug(f'Requested channel subset of hardware capture '
+                                              f'buffer is not viewable, will copy {print_bytes(cr.size_bytes)} '
+                                              f'PL buffer to PS RAM.')
+                    channel_sel=usr_channels_i
+                    buf_shape =(chunks[0], len(usr_channels))
+                    if 'tap' in 'iq':
+                        buf_shape += (2,)
+                    ps_buf = np.empty(buf_shape,  dtype=np.int16)
+
+
         getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
 
         try:
@@ -251,16 +270,14 @@ class FeedlineHardware:
                 #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 zmqtmp = zmq.COPY_THRESHOLD
                 zmq.COPY_THRESHOLD = 0
-                req_channel_set = set(cr.channels if cr.channels else range(256 if 'iq' in cr.tap else 512))
-                if set(kept) - req_channel_set:  # strip off extra channels required by hardware capture
-                    chan_array = np.sort(np.fromiter(req_channel_set, int, len(req_channel_set)))
-                    if not np.diff(chan_array, n=2).any():  # array is sliceable, don't copy
-                        data_sl = data[:, chan_array[0]::chan_array[0], :]
-                    else:
-                        getLogger(__name__).debug(f'Requested channel subset of hardware capture buffer is not viewable, copying {print_bytes(cr.size_bytes)} PL buffer to PS RAM.')
-                        data_sl = data[:, chan_array, :]
-                #TODO: need to figure out if and how to free buffers
-                tracker = cr.send_data(data, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
+                if channel_sel is None:
+                    data_to_send = data
+                elif isinstance(channel_sel, slice):
+                    data_to_send = data[channel_sel]
+                else:
+                    data_to_send = np.take(data, channel_sel, axis=1, out=ps_buf[:csize])
+
+                tracker = cr.send_data(data_to_send, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
                 times.append(time.time())
                 #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 if tracker is not None:
@@ -269,6 +286,7 @@ class FeedlineHardware:
                 times.append(time.time())
                 #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 data.freebuffer()
+
                 times.append(time.time())
                 #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
                 getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
@@ -281,6 +299,7 @@ class FeedlineHardware:
             cr.fail(f'Aborted due to {e}', raise_exception=False)
         finally:
             cr.destablish()
+            del ps_buf
         try:
             pipe.close()
         except zmq.ZMQError:
