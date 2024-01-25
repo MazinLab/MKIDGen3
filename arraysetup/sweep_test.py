@@ -119,7 +119,7 @@ phase_offsets[2:] = 0
 
 # Capture phase with new offsets
 offset_ddc = copy.copy(no_offset_ddc)
-offset_ddc.phase_offsets = phase_offsets
+offset_ddc.phase_offset = phase_offsets
 offset_fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     filter=FilterConfig(coefficients='unity20'),
                     if_board=if_board, waveform=waveforms['fake_photon'], chan=chan, ddc=offset_ddc,

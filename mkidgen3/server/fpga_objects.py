@@ -252,38 +252,35 @@ class FeedlineHardware:
 
         try:
             for i, csize in enumerate(chunks):
-                times = []
+                times = [time.perf_counter()]
+
                 check_zmq_abort_pipe(pipe)
-                times.append(time.time())
-                #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                getLogger(__name__).debug(
-                    ThreadedPLInterruptManager.get_status(self._ol.capture.axis2mm._interrupts['o_int']['fullpath']))
+
+                times.append(time.perf_counter())
                 data = self._ol.capture.capture(csize, cr.tap, groups=None, wait=True)
-                getLogger(__name__).debug(
-                    ThreadedPLInterruptManager.get_status(self._ol.capture.axis2mm._interrupts['o_int']['fullpath']))
-                times.append(time.time())
-                #                getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                zmqtmp = zmq.COPY_THRESHOLD
-                zmq.COPY_THRESHOLD = 0
+                times.append(time.perf_counter())
+
                 if channel_sel is None:
                     data_to_send = data
                 else:
                     data_to_send = np.take(data, channel_sel, axis=1, out=ps_buf[:csize])
+                times.append(time.perf_counter())
 
+                zmqtmp = zmq.COPY_THRESHOLD
+                zmq.COPY_THRESHOLD = 0
                 tracker = cr.send_data(data_to_send, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
-                times.append(time.time())
-                #               getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
+                times.append(time.perf_counter())
+
                 if tracker is not None:
                     tracker.wait()
                 zmq.COPY_THRESHOLD = zmqtmp
-                times.append(time.time())
-                #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                data.freebuffer()
+                times.append(time.perf_counter())
 
-                times.append(time.time())
-                #              getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-                getLogger(__name__).debug(list(zip(('Cap', 'Send', 'Track'),
-                                                   (np.diff(times) * 1000).astype(int))))
+                data.freebuffer()
+                times.append(time.perf_counter())
+
+                getLogger(__name__).debug(list((np.diff(times) * 1000).astype(int)))
+
             cr.finish()
         except AbortedException as e:
             cr.abort(e)
