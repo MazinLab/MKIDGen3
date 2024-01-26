@@ -156,12 +156,13 @@ class CaptureHierarchy(DefaultHierarchy):
 
     Driver supports capture at up to five locations. They are numbered 1-5 in the source map in accordance with their
     position on the axis switch. TODO: Need to standardize these keys and names
-    1. raw adc data
-    2. connected to the output of bin to res, can be used to look at the OPFB bins before the DDC
-    3. connected to the output of the DDC before the lowpass
-    4. connected to the output of the cordic
-    5. connected to the output of the matched filters
-
+    switch port: tap_name: description:
+    0: 'adc': connected to the output of the adc
+    1: 'rawiq': connected to the output of bin to res, can be used to look at the OPFB bins before the DDC
+    2: 'ddciq': connected to the output of the DDC before the lowpass
+    3: 'filtphase': connected to the output of matched filters
+    4: 'debugiq': placeholder for a filter_iq IP connected to 4th switch port
+    5. 'debugpphase' placeholder for a filter_phase IP connected to 5th switch port
     """
     IQ_MAP = {'rawiq': 0, 'ddciq': 1, 'debugiq': 2}  #tap name MUST include 'iq' and shall not include 'phase'
     PHASE_MAP = {'filtphase': 0, 'debugphase': 1} #tap name MUST include 'phase' and shall not include 'iq'
@@ -513,7 +514,7 @@ class CaptureHierarchy(DefaultHierarchy):
         return riq, iq
 
     def cap_cordic_compare(self, n_points=1024):
-        """A helper function to capture data just after lowpass and after conversion to phase"""
+        """A helper function to capture data just after the ddc and after matched filters"""
         x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         riq = np.array(x)
         x.freebuffer()
