@@ -56,8 +56,7 @@ class FeedlineHardware:
 
             if download:
                 ThreadedPLInterruptManager.get_manager()
-                self._ol.rfdc.enable_mts(dac=self._default_rfdc.dac_mts, adc=self._default_rfdc.adc_mts,
-                                         double_sync=mkidgen3.quirks.MTS.double_sync)
+                self._ol.rfdc.enable_mts(dac=self._default_rfdc.dac_mts, adc=self._default_rfdc.adc_mts)
 
         except RuntimeError as e:
             if 'No Devices Found' in str(e):
