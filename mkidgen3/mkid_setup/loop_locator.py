@@ -1,4 +1,5 @@
 import logging
+import time
 
 import numpy as np
 import numpy.typing as nt
@@ -20,11 +21,12 @@ class SweepConfig:
     waveform: WaveformConfig
     lo_center: float | np.float64 = 6000.0
     average: int = 1024
-    tap: str = "ddc_iq"
+    tap: str = "ddciq"
 
     _idle = 0.01
     _flush = 64
 
+    @classmethod
     def from_bandwidth(
         cls,
         bandwidth: float | np.float64,
@@ -32,7 +34,7 @@ class SweepConfig:
         waveform: WaveformConfig,
         lo_center: float | np.float64 = 6000.0,
         average: int = 1024,
-    ) -> 'SweepConfig':
+    ) -> "SweepConfig":
         spacing = LO_QUANT * np.floor(((bandwidth / points) / LO_QUANT))
 
         # These are not going to be actually quantized properly because FP but the LO algo on the IF Board is FP too.
@@ -41,11 +43,27 @@ class SweepConfig:
 
         return SweepConfig(steps, waveform, lo_center, average)
 
-    def reset_ddc(self, ddccontrol) -> 'SweepConfig':
-        ddccontrol.configure(self.waveform.default_ddc_config)
+    @classmethod
+    def from_comb(
+        cls,
+        points: int,
+        waveform: WaveformConfig,
+        lo_center: float | np.float64 = 6000.0,
+        average: int = 1024,
+    ) -> "SweepConfig":
+        tones = waveform.waveform.freqs
+        assert np.allclose(
+            tones, tones[0] + np.arange(tones.size) * (tones[1] - tones[0])
+        ), "Expected waveform to have evenly spaced comb"
+
+        steps = np.linspace(0, tones[1] - tones[0], points, endpoint=False) / 1e6
+        return SweepConfig(steps, waveform, lo_center, average)
+
+    def reset_ddc(self, ddccontrol) -> "SweepConfig":
+        ddccontrol.configure(**self.waveform.default_ddc_config.settings_dict())
         return self
 
-    def run_sweep(self, ifboard, capture) -> 'Sweep':
+    def run_sweep(self, ifboard, capture) -> "Sweep":
         tones = self.waveform.waveform.freqs
         iq = np.empty((tones.size, self.steps.size), np.complex64)
         rms = np.empty((tones.size, self.steps.size), np.complex64)
@@ -68,6 +86,7 @@ class SweepConfig:
         tones = self.waveform.waveform.freqs
         freqs = np.zeros((tones.size, self.steps.size), dtype=np.float64)
         freqs += self.lo_center * 1e6
+        freqs += self.steps * 1e6
         freqs += tones.reshape((tones.size, 1))
         return freqs
 
@@ -78,21 +97,35 @@ class SweepConfig:
             how many points to average
         Returns: a single averaged iq data point captured from res channel 0
         """
-        tones = self.waveform.freqs
+        tones = self.waveform.waveform.freqs
         time.sleep(self._idle)
         if self._flush:
-            x = ol.capture.capture_iq(self._flush, self.tap)
-            x.freebuffer()
+            x = capture.capture_iq(self._flush, tap_location=self.tap)
             del x
 
-        x = ol.capture.capture_iq(n, tap_location="ddciq")
-        means = np.zeros((tones.size, 2))
-        rmses = np.zeros((tones.size, 2))
-        x[::, : tones.size, ::].mean(axis=0, out=means)
-        x[::, : tones.size, ::].std(axis=0, out=rmses)
-
-        x.freebuffer()
+        # CortexA53 is not good at math... try and keep to f32
+        x = capture.capture_iq(self.average, tap_location=self.tap)
+        ps_buf = np.empty((self.average, tones.size, 2), dtype=np.float32)
+        ps_buf[::, ::, ::] = np.ascontiguousarray(
+            x[::, : tones.size, ::], dtype=np.int16
+        )
+        if hasattr(self, "verify"):
+            ps_buf_old = np.copy(ps_buf)
         del x
+
+        means = np.sum(ps_buf, axis=0) / np.float32(self.average)
+        ps_buf -= means.reshape((1, tones.size, 2))
+        ps_buf *= ps_buf
+        rmses = np.sqrt(np.sum(ps_buf, axis=0) / np.float32(self.average))
+
+        if hasattr(self, "verify"):
+            means_golden = np.empty((tones.size, 2), dtype=np.float64)
+            rmses_golden = np.empty((tones.size, 2), dtype=np.float64)
+            ps_buf_old.mean(axis=0, out=means_golden)
+            ps_buf_old.std(axis=0, out=rmses_golden)
+            assert np.allclose(means_golden, means)
+            assert np.allclose(rmses_golden, rmses)
+
         return means[::, 0] + 1j * means[::, 1], rmses[::, 0] + 1j * rmses[::, 1]
 
 
@@ -100,10 +133,55 @@ class SweepConfig:
 class Sweep:
     iq: nt.NDArray[np.complex64]
     iqsigma: nt.NDArray[np.complex64]
-    config: 'SweepConfig'
+    config: "SweepConfig"
 
+    @property
     def frequencies(self) -> nt.NDArray[np.float64]:
         return self.config.frequencies()
+
+    def plot(
+        self,
+        ax,
+        stacked: bool = False,
+        newtones: Optional[list[float] | nt.NDArray[np.float64]] = None,
+    ):
+        for i in range(self.iq.shape[0]):
+            l = ax.semilogy(
+                (self.frequencies[i] / 1e6 if not stacked else self.config.steps),
+                np.abs(self.iq[i]),
+                label="Tone: {:.3f} MHz".format(
+                    self.config.waveform.default_ddc_config.tones[i] / 1e6
+                ),
+            )
+            if newtones:
+                if stacked:
+                    ax.axvline(
+                        newtones[i] / 1e6
+                        - self.config.waveform.default_ddc_config.tones[i] / 1e6,
+                        color=l[0].get_color(),
+                        linestyle="--",
+                    )
+                else:
+                    ax.axvline(
+                        newtones[i] / 1e6 + self.config.lo_center,
+                        color=l[0].get_color(),
+                        linestyle="--",
+                    )
+        if stacked:
+            ax.axvline(0, color="black", lw=0.1, label="LO")
+        ax.legend()
+        ax.set_ylabel("S21 (Magnitude)")
+        ax.set_xlabel("Frequency (MHz)")
+
+    def plot_loops(
+        self,
+        ax
+    ):
+        for i in range(self.iq.shape[0]):
+            ax.plot(self.iq[i].real, self.iq[i].imag)
+        ax.set_aspect('equal')
+        ax.set_xlabel('I')
+        ax.set_ylabel('Q')
 
 
 def pointslope_intersect(
@@ -178,7 +256,6 @@ def approximate_center(i, q, ir, qr, plot=None, holdoff=6):
         plot.errorbar(
             cestimates[::, 0], cestimates[::, 1], cestimaters[::, 0], cestimaters[::, 1]
         )
-        print(cestimates, cestimaters)
 
     cestimate = np.sum(cestimates / (cestimaters**2), axis=0) / np.sum(
         1 / (cestimaters**2), axis=0
@@ -267,9 +344,11 @@ def rotate_and_center(
 
         target = targets[t]
 
-        approxc, approxr = approximate_center(i, q, ri, rq, plot=plot)
+        approxc, approxr = approximate_center(i, q, ri, rq, plot=ax if plot else None)
         if fit:
-            center, radius = find_truecenter(i, q, ri, rq, approxc, approxr, plot=plot)
+            center, radius = find_truecenter(
+                i, q, ri, rq, approxc, approxr, plot=ax if plot else None
+            )
         else:
             center = approxc
             radius = approxr
