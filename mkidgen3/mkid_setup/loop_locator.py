@@ -300,6 +300,7 @@ def rotate_and_center(
         iq_offset = (rotated_center[0], rotated_center[1])
 
         phase_offsets[t] = rotation
+        rotation = ((rotation + np.pi) % (2 * np.pi)) - np.pi
         ddc_centers[t] = rotated_center[0] + rotated_center[1] * 1j
         if plot:
             plt.show()
