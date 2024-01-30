@@ -32,7 +32,7 @@ class SweepConfig:
         waveform: WaveformConfig,
         lo_center: float | np.float64 = 6000.0,
         average: int = 1024,
-    ) -> SweepConfig:
+    ) -> 'SweepConfig':
         spacing = LO_QUANT * np.floor(((bandwidth / points) / LO_QUANT))
 
         # These are not going to be actually quantized properly because FP but the LO algo on the IF Board is FP too.
@@ -41,11 +41,11 @@ class SweepConfig:
 
         return SweepConfig(steps, waveform, lo_center, average)
 
-    def reset_ddc(self, ddccontrol) -> SweepConfig:
+    def reset_ddc(self, ddccontrol) -> 'SweepConfig':
         ddccontrol.configure(self.waveform.default_ddc_config)
         return self
 
-    def run_sweep(self, ifboard, capture) -> Sweep:
+    def run_sweep(self, ifboard, capture) -> 'Sweep':
         tones = self.waveform.waveform.freqs
         iq = np.empty((tones.size, self.steps.size), np.complex64)
         rms = np.empty((tones.size, self.steps.size), np.complex64)
@@ -100,7 +100,7 @@ class SweepConfig:
 class Sweep:
     iq: nt.NDArray[np.complex64]
     iqsigma: nt.NDArray[np.complex64]
-    config: SweepConfig
+    config: 'SweepConfig'
 
     def frequencies(self) -> nt.NDArray[np.float64]:
         return self.config.frequencies()
