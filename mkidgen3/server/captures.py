@@ -119,7 +119,7 @@ class CaptureRequest:
 
     def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
                  feedline_server: FRSClient, channels: Iterable | int | None = None, file: str = None,
-                 _compression_override: bool = None):
+                 _compression_override: bool = None, numpy_metric: str=None):
         """
 
         Args:
@@ -129,6 +129,8 @@ class CaptureRequest:
             feedline_server: the FRS to capture from
             file: an optinal file
             channels: an optional (required for postage) specifier of which channels to monitor.
+            numpy_metric: the name of a numpy metricto evaluate on a per-channel basis e.g. sum, mean, mad, median,
+                capture will fail if chunked captures are required. Ignored for postage/photon taps
         """
         tap = tap.lower()
         assert tap in CaptureRequest.SUPPORTED_TAPS
@@ -149,6 +151,7 @@ class CaptureRequest:
         self._data_socket = None
         self._established = False
         self._compression_override = _compression_override
+        self.numpy_metric = str(numpy_metric) if numpy_metric else None
         self.data_endpoint = file or type(self).DATA_ENDPOINT
 
     def __hash__(self):
@@ -299,7 +302,12 @@ class CaptureRequest:
             raise RuntimeError('Data socket is not established.')
 
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        data = np.array(data) if copy else data
+        if self.numpy_metric is not None:
+            out = np.empty(data.shape[1:] if data.ndim >1 else (1,))
+            getattr(np, self.numpy_metric)(data, axis=0, out=out)
+            data = out
+        else:
+            data = np.array(data) if copy else data
         times = []
         times.append(time.time())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
