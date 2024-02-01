@@ -8,7 +8,7 @@ from typing import Iterable
 
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
     check_description_for  # config, overlay details
-from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel
+from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel, ADC_INPUT_WARN
 from ..util import ps_ram_sane, print_bytes
 from ..interrupts import ThreadedPLInterruptManager
 
@@ -377,7 +377,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         return buffer
 
-    def capture_adc(self, n, duration=False, complex=False, wait=True):
+    def capture_adc(self, n, duration=False, complex=False, wait=True, check_saturation=True):
         """
         samples are captured in multiples of 8 will be clipped as necessary
 
@@ -430,9 +430,14 @@ class CaptureHierarchy(DefaultHierarchy):
                 wait['duration'] = captime
             self.wait(**wait)
 
+        if check_saturation:
+            saturation = (buffer[:, 0] > ADC_INPUT_WARN).any() or (buffer[:, 0] < -ADC_INPUT_WARN).any() or (buffer[:, 1] > ADC_INPUT_WARN).any() or (buffer[:, 1] < -ADC_INPUT_WARN).any()
+            if saturation:
+                getLogger(__name__).warning(f'Detected I or Q values larger than {ADC_INPUT_WARN}. ADC may be saturated.')
+
         if complex:
             d = np.zeros(n, dtype=np.complex64)
-            d.real[:] = buffer[:,0]
+            d.real[:] = buffer[:, 0]
             d.imag[:] = buffer[:, 1]
             del buffer
             return d
