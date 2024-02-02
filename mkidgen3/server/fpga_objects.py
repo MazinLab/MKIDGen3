@@ -6,11 +6,12 @@ import mkidgen3.drivers.rfdc
 from pynq import Overlay
 from logging import getLogger
 from mkidgen3.mkidpynq import DummyOverlay
+from mkidgen3.system_parameters import ADC_INPUT_WARN
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureRequest
-from mkidgen3.util import check_zmq_abort_pipe, AbortedException, print_bytes
+from mkidgen3.util import check_zmq_abort_pipe, AbortedException, print_bytes, compute_max_val
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
@@ -216,6 +217,10 @@ class FeedlineHardware:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
             return
+        if cr.tap == 'adc':  # check for ADC saturation
+            max_val = compute_max_val(self._ol.capture.capture_adc(2**19, complex=True))
+            if max_val > ADC_INPUT_WARN:
+                getLogger(__name__).warning(f'ADC may be saturating max I or Q int is {max_val}.') #TODO: Should this be pushed through to the status listener?
 
         self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
         hw_channels = tuple(sorted(self._ol.capture.kept_channels(cr.tap)))

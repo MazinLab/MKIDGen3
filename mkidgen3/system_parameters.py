@@ -5,8 +5,10 @@ DAC_MAX_OUTPUT_DBM = 1  # [dBm] see Xilinx DS926
 DAC_MAX_INT = 8191  # see PG269 p.219
 ADC_RESOLUTION = 14 # bits see PG269 p.219
 ADC_DAC_INTERFACE_WORD_LENGTH = 16  # bits see PG269 p.219
-ADC_MAX_INT = 2**(ADC_RESOLUTION-1)-1 << (ADC_DAC_INTERFACE_WORD_LENGTH-ADC_RESOLUTION) # see PG269 Digital Data Format
-ADC_INPUT_WARN = 0.4*ADC_MAX_INT
+# This computes the max int the ADC can register, For the RFSOC4x2 this is 0x7FFC, which is given in the table titled
+# "RF-ADC and RF-DAC Word Interface" in PG269 under section "Digital Data Format"
+ADC_MAX_INT = 2**(ADC_RESOLUTION-1)-1 << (ADC_DAC_INTERFACE_WORD_LENGTH-ADC_RESOLUTION) # see above
+ADC_INPUT_WARN = 0.7*ADC_MAX_INT
 ADC_MAX_INPUT_DBM = 1  # [dBm] see Xilinx DS926
 ADC_MAX_V = 1/(2*np.sqrt(5))  # [V]. 1 dbM is 1 mW, using P = V^2/R where P is 1 mW and R is 100 ohms,
 # V is 1/sqrt(10) volts at the die termination which means the max-scale V is  1/2*sqrt(5) at the SMA input.

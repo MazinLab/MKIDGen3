@@ -430,11 +430,6 @@ class CaptureHierarchy(DefaultHierarchy):
                 wait['duration'] = captime
             self.wait(**wait)
 
-        if check_saturation:
-            saturation = (buffer[:, 0] > ADC_INPUT_WARN).any() or (buffer[:, 0] < -ADC_INPUT_WARN).any() or (buffer[:, 1] > ADC_INPUT_WARN).any() or (buffer[:, 1] < -ADC_INPUT_WARN).any()
-            if saturation:
-                getLogger(__name__).warning(f'Detected I or Q values larger than {ADC_INPUT_WARN}. ADC may be saturated.')
-
         if complex:
             d = np.zeros(n, dtype=np.complex64)
             d.real[:] = buffer[:, 0]

@@ -7,6 +7,33 @@ from logging import getLogger
 import zmq
 
 
+def compute_max_val(x: np.ndarray[np.complex64 | np.complex128]) -> float:
+    return max(x.real.max(), x.imag.max(), np.abs(x.imag.min()), np.abs(x.imag.min()))
+
+
+def print_time(fs: float, n_samp: int) -> str:
+    """
+    Print the time of some number of samples with a given sample rate in nice units.
+    Args:
+        fs: sample rate in Hz
+        n_samp: number of samples
+
+    Returns:
+    For Ex: '0.5 Seconds'
+
+    """
+    seconds = n_samp * (1 / fs)
+
+    if seconds > 0.1:
+        return f'{seconds:.2f} seconds'
+    elif seconds > 1e-3:
+        return f'{seconds / 1e-3:.2f} milliseconds'
+    elif seconds > 1e-6:
+        return f'{seconds / 1e-6:.2f} microseconds'
+    elif seconds > 1e-9:
+        return f'{seconds / 1e-9:.2f} nanoseconds'
+
+
 def print_bytes(n_bytes: int) -> str:
     """
     Print the number of bytes with a convenient order of magnitude.

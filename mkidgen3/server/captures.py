@@ -14,7 +14,7 @@ import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
 from mkidgen3.util import print_bytes
-from mkidgen3.funcs import compute_lo_steps, convert_adc_raw_to_mv, raw_iq_to_unit, raw_phase_to_radian
+from mkidgen3.funcs import convert_adc_raw_to_mv, raw_iq_to_unit, raw_phase_to_radian
 from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
