@@ -1,7 +1,8 @@
 import numpy as np
 from hashlib import md5
 import copy
-from mkidgen3.opfb import opfb_bin_number
+from mkidgen3.util import convert_freq_to_ddc_bin
+
 
 
 
@@ -494,7 +495,8 @@ class ChannelConfig(_FLConfigMixin):
         self.bins = bins
         self.freqs = freqs
         if freqs is not None:
-            self.bins = opfb_bin_number(freqs, ssr_raw_order=True)
+            bins = convert_freq_to_ddc_bin(freqs)
+            self.bins = bins
 
 
 class DDCConfig(_FLConfigMixin):
@@ -549,9 +551,9 @@ class WaveformConfig(_FLConfigMixin):
     def default_channel_config(self) -> ChannelConfig:
         """A convenience method to get a ChannelConfig using all the waveform's frequencies.
         Default channel config is not available for tabulated waveforms."""
-        bins = np.zeros(2048, dtype=int)
-        bins[:self.waveform.freqs.size] = opfb_bin_number(self.waveform.freqs, ssr_raw_order=True)
-        return ChannelConfig(bins=bins, freqs=None)
+        freqs = self.waveform.freqs
+        bins = convert_freq_to_ddc_bin(freqs)
+        return ChannelConfig(bins=bins, freqs=freqs)
 
     @property
     def default_ddc_config(self) -> DDCConfig:
