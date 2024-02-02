@@ -5,11 +5,26 @@ import yaml
 import importlib.resources
 from logging import getLogger
 import zmq
+from mkidgen3.opfb import opfb_bin_number
+from typing import Iterable
 
 
-def compute_max_val(x: np.ndarray[np.complex64 | np.complex128]) -> float:
+def compute_max_val(x) -> float:
     return max(x.real.max(), x.imag.max(), np.abs(x.imag.min()), np.abs(x.imag.min()))
 
+
+def convert_freq_to_ddc_bin(freqs: Iterable[float | int]) -> np.ndarray:
+    """
+    Convert frequecnies to bins coming out of the OPFB--useful for programming bin2res
+    Args:
+        freqs: list or array of frequencies [Hz]
+
+    Returns: np array of bins coming out of the opfb which will contain the frequencies
+
+    """
+    bins = np.zeros(2048, dtype=int)
+    bins[:freqs.size] = opfb_bin_number(freqs, ssr_raw_order=True)
+    return bins
 
 def print_time(fs: float, n_samp: int) -> str:
     """
