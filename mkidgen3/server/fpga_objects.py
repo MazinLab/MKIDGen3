@@ -6,7 +6,7 @@ import mkidgen3.drivers.rfdc
 from pynq import Overlay
 from logging import getLogger
 from mkidgen3.mkidpynq import DummyOverlay
-from mkidgen3.system_parameters import ADC_INPUT_WARN
+from mkidgen3.system_parameters import ADC_MAX_INT
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
@@ -211,16 +211,20 @@ class FeedlineHardware:
         try:
             cr.establish(context=context)
         except zmq.ZMQError as e:
-            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
+            failmsg += f"Unable to establish capture {cr.id} due to {e}, dropping request."
+
+        if not failmsg and cr.fail_saturation_frac:  # check for ADC saturation
+            buf = self._ol.capture.capture_adc(2**19, complex=False)
+            max_val = np.abs(buf).max()
+            del buf
+            if max_val >= ADC_MAX_INT*cr.fail_saturation_frac:
+                failmsg = (f"ADC levels ({max_val}) above saturation failure "
+                           f"level ({ADC_MAX_INT*cr.fail_saturation_frac:.0f})")
 
         if failmsg:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
             return
-        if cr.tap == 'adc':  # check for ADC saturation
-            max_val = compute_max_val(self._ol.capture.capture_adc(2**19, complex=True))
-            if max_val > ADC_INPUT_WARN:
-                getLogger(__name__).warning(f'ADC may be saturating max I or Q int is {max_val}.') #TODO: Should this be pushed through to the status listener?
 
         self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
         hw_channels = tuple(sorted(self._ol.capture.kept_channels(cr.tap)))

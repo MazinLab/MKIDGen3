@@ -377,7 +377,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         return buffer
 
-    def capture_adc(self, n, duration=False, complex=False, wait=True, check_saturation=True):
+    def capture_adc(self, n, duration=False, complex=False, wait=True):
         """
         samples are captured in multiples of 8 will be clipped as necessary
 

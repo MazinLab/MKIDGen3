@@ -119,6 +119,7 @@ class CaptureRequest:
 
     def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
                  feedline_server: FRSClient, channels: Iterable | int | None = None, file: str = None,
+                 fail_saturation_frac: None | float = None,
                  _compression_override: bool = None):
         """
 
@@ -127,11 +128,14 @@ class CaptureRequest:
             tap: the location to capture: adc|iq|phase|postage|photon
             feedline_config: the FL configuration required by the capture
             feedline_server: the FRS to capture from
-            file: an optinal file
+            file: an optional file
+            fail_saturation_frac: Take a pre-capture of ADC data and abort if the maximum I or Q magnitude is greater
+                than the fraction*ADC_MAX_INT. Set to None, 0, or >1 to disable.
             channels: an optional (required for postage) specifier of which channels to monitor.
         """
         tap = tap.lower()
         assert tap in CaptureRequest.SUPPORTED_TAPS
+        self.fail_saturation_frac = float(fail_saturation_frac) if fail_saturation_frac else None
         self.nsamp = n  # n is treated as the buffer time in ms for photons, and has limits enforced by the driver
         self._last_status = None
         if channels is not None:
