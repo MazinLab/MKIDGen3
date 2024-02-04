@@ -152,6 +152,10 @@ class CaptureRequest:
         self._established = False
         self._compression_override = _compression_override
         self.numpy_metric = str(numpy_metric) if numpy_metric else None
+        try:
+            getattr(np, self.numpy_metric)
+        except AttributeError:
+            raise ValueError('Not a good metric')
         self.data_endpoint = file or type(self).DATA_ENDPOINT
 
     def __hash__(self):

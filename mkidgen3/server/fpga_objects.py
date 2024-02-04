@@ -215,6 +215,10 @@ class FeedlineHardware:
         if failmsg:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
+            try:
+                pipe.close()
+            except zmq.ZMQError:
+                pass
             return
 
         self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
@@ -230,6 +234,17 @@ class FeedlineHardware:
         chunks = [chunking_thresh // capture_atom_bytes] * nchunks
         if partial:
             chunks.append(partial // capture_atom_bytes)
+
+        if len(chunks) > 1 and cr.numpy_metric:
+            failmsg = ('Reducing captures via numpy metrics is not supported chunked captures. '
+                       'Decrease the capture size or compute the metric client-side.')
+            getLogger(__name__).error(failmsg)
+            cr.fail(failmsg, raise_exception=False)
+            try:
+                pipe.close()
+            except zmq.ZMQError:
+                pass
+            return
 
         channel_sel = None
         ps_buf = None
