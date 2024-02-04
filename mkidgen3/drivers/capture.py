@@ -312,6 +312,19 @@ class CaptureHierarchy(DefaultHierarchy):
             return (1,)
 
     def capture(self, n, tap, groups='all', wait=True):
+        """
+        Do a capture to PL Ram
+        Args:
+            n: the number of samples to capture, will be truncated to the nearest capturable amount.
+            tap: an iq, phase, or adc capture tap location. 'adc' or see IQ_MAP and PHASE_MAP keys. Raises value error
+            if invalid.
+            groups: Which sample groups to capture (only relevant for iq and phase)
+            wait: wait for the capture to complete. If not waiting it is necessary to call axis2mm.errors()
+            to check for any capture errors. If there are errors axis2mm.clear_errors() will be called.
+
+        Returns: The capture buffer or a dictionary of capture errors
+
+        """
         try:
             assert (int(n)-n) == 0
             n = int(n)
@@ -319,14 +332,23 @@ class CaptureHierarchy(DefaultHierarchy):
             raise TypeError('n must be effectively an integer')
 
         if tap in self.IQ_MAP:
-            return self.capture_iq(n, tap_location=tap, duration=False, groups=groups, wait=wait)
+            buf = self.capture_iq(n, tap_location=tap, duration=False, groups=groups, wait=wait)
         elif tap in self.PHASE_MAP:
-            return self.capture_phase(n, tap_location=tap, duration=False, groups=groups, wait=wait)
+            buf = self.capture_phase(n, tap_location=tap, duration=False, groups=groups, wait=wait)
         elif tap == 'adc':
-            return self.capture_adc(n, complex=False, duration=False, wait=wait)
+            buf = self.capture_adc(n, complex=False, duration=False, wait=wait)
         else:
             valid = ('adc',) + tuple(self.IQ_MAP.keys()) + tuple(self.PHASE_MAP.keys())
             raise ValueError(f'{tap} is not a valid capture location from {valid}')
+
+        if wait:
+            errors = self.axis2mm.errors()
+            if errors:
+                del buf
+                self.axis2mm.clear_error()
+                return errors
+
+        return buf
 
     def capture_iq(self, n, groups='all', tap_location='ddciq', duration=False, wait=True):
         """
@@ -574,6 +596,14 @@ class _AXIS2MM:
 
     def clear_error(self):
         self.write(0, 0x40000000)
+
+    def errors(self):
+        """Return a dictionary of errors if there are errors else None"""
+        x = self._ol.capture.axis2mm.cmd_ctrl_reg
+        if x['r_err']:
+            return {k:x[k] for k in ('r_err', 'decode_error', 'slave_error', 'overflow_error')}
+        else:
+            return None
 
     def start(self, continuous=False, increment=True):
         if not self.ready:

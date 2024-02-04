@@ -282,7 +282,10 @@ class FeedlineHardware:
                 times.append(time.perf_counter())
                 data = self._ol.capture.capture(csize, cr.tap, groups=None, wait=True)
                 times.append(time.perf_counter())
-
+                if isinstance(data, dict):
+                    raise RuntimeError(f'PL axis2mm capture failed: {data}. '
+                                       f'Note decode errors are indicative of a memory address and '
+                                       f'should never happen issue.')
                 if channel_sel is None:
                     data_to_send = data
                 else:
