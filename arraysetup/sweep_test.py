@@ -21,7 +21,7 @@ frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=
 
 large_job_test = False
 send_wave =''
-frsu=frsb
+frsu=frsa
 
 
 def synthetic_photon_waveform_generator():
@@ -147,9 +147,10 @@ photon_job = CaptureJob(CaptureRequest(1200, 'photon', offset_fc, frsu))
 
 postage_job.submit(True, True)
 photon_job.submit(True, True)
-threading.Timer(15, lambda: photon_job.cancel(False, False))
+threading.Timer(15, lambda: photon_job.cancel(False, False)).start()
 
 
+print(0)
 
 
 # Visualize Thresholds and Holdoffs
