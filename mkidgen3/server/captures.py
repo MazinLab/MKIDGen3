@@ -119,7 +119,7 @@ class CaptureRequest:
 
     def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
                  feedline_server: FRSClient, channels: Iterable | int | None = None, file: str = None,
-                 fail_saturation_frac: None | float = None, numpy_metric: str=None,
+                 fail_saturation_frac: None | float = None, numpy_metric: None|str=None,
                  _compression_override: bool = None):
         """
 
@@ -155,11 +155,14 @@ class CaptureRequest:
         self._data_socket = None
         self._established = False
         self._compression_override = _compression_override
-        self.numpy_metric = str(numpy_metric) if numpy_metric else None
-        try:
-            getattr(np, self.numpy_metric)
-        except AttributeError:
-            raise ValueError('Not a good metric')
+        if numpy_metric:
+            try:
+                self.numpy_metric = str(numpy_metric)
+                getattr(np, self.numpy_metric)
+            except AttributeError:
+                raise ValueError('Not a good metric')
+        else:
+            self.numpy_metric = None
         self.data_endpoint = file or type(self).DATA_ENDPOINT
 
     def __hash__(self):
