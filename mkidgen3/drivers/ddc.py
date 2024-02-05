@@ -154,8 +154,9 @@ class DDC(DefaultIP):
         if raw_tone is None:
             raw_tone = raw
 
-        tone_fmt = (lambda x: x) if raw_tone else fp_factory(*self.TONE_FORMAT, include_index=True)
-        phase_fmt = (lambda x: x) if raw_phase else fp_factory(*self.PHASE0_FORMAT, include_index=True)
+        #NB the int() call is vital, as it must not wind up beoming a numpy int type
+        tone_fmt = (lambda x: int(x)) if raw_tone else fp_factory(*self.TONE_FORMAT, include_index=True)
+        phase_fmt = (lambda x: int(x)) if raw_phase else fp_factory(*self.PHASE0_FORMAT, include_index=True)
 
         t_bits = sum(self.TONE_FORMAT[:2])
         p_bits = sum(self.PHASE0_FORMAT[:2])
