@@ -323,7 +323,7 @@ class ThreepartDDC(CenteringDDC):
             increments = increments_bits.ravel()
 
         if offsets is not None:
-            raw_off = True
+            raw_off = False
             if offsets.shape != (2048,):
                 raise ValueError('offsets.shape !=(2048,)')
             if offsets.min() < -1 or offsets.max() >= 1:
