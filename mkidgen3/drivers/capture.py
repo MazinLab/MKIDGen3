@@ -599,7 +599,7 @@ class _AXIS2MM:
 
     def errors(self):
         """Return a dictionary of errors if there are errors else None"""
-        x = self._ol.capture.axis2mm.cmd_ctrl_reg
+        x = self.cmd_ctrl_reg
         if x['r_err']:
             return {k:x[k] for k in ('r_err', 'decode_error', 'slave_error', 'overflow_error')}
         else:
