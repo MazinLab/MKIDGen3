@@ -137,6 +137,8 @@ class FeedlineHardware:
             if fl_setup.bitstream:
                 x = copy.deepcopy(self._default_bitstream)
                 x.merge_with(fl_setup.bitstream)
+            else:
+                x = self._default_bitstream
 
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
@@ -144,8 +146,7 @@ class FeedlineHardware:
 
         if fl_setup.rfdc:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
-            self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts,
-                                     double_sync=mkidgen3.quirks.MTS.double_sync)
+            self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
         from mkidgen3.drivers.ppssync import PPSMode, PPSSource
