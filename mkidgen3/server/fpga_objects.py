@@ -414,7 +414,7 @@ class FeedlineHardware:
     def postage_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
         failmsg = ''
         postage_filt = self._ol.trigger_system.postage_filter_0
-        postage_maxi = self._ol.trigger_system.postage_maxi_1
+        postage_maxi = self._ol.trigger_system.postage_maxi_0
         try:
             assert cr.type == 'postage', 'Incorrect capture request type'
             assert postage_maxi.register_map.CTRL.AP_IDLE == 1, 'Postage MAXI is busy'
