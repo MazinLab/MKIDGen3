@@ -22,6 +22,7 @@ from ..mkidpynq import PHOTON_DTYPE
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTAGE_CHANNELS, \
     PHOTON_POSTAGE_WINDOW_LENGTH, MAXIMUM_DESIGN_COUNTRATE_PER_S, PHASE_IQ_INPUT_FRACTIONAL_BITS
 from functools import cached_property
+from mkidgen3.mkidpynq import unpack_photons
 
 from typing import Tuple
 PHOTON_DTYPE_PACKED = np.uint64
@@ -549,7 +550,7 @@ class SimplePhotonSink(CaptureSink):
         self._buf = b''.join(self._buf)
 
     def _finalize_data(self):
-        self.result = np.frombuffer(self._buf, dtype=PHOTON_DTYPE_PACKED)
+        self.result = PhotonCaptureData(self._buf)
 
 
 class PhotonCaptureSink(CaptureSink):
@@ -777,6 +778,24 @@ class PhaseCaptureData:
     @cached_property
     def data(self):
         return raw_phase_to_radian(self.raw, scaled=False)
+
+
+class PhotonCaptureData:
+    def __init__(self, buf):
+        self.raw = np.frombuffer(buf, dtype=PHOTON_DTYPE_PACKED)
+        self.photons = unpack_photons(self.raw)
+
+    @property
+    def data(self):
+        return self.photons
+
+    @property
+    def dtype(self):
+        return PHOTON_DTYPE
+
+    @property
+    def shape(self):
+        return self.photons.size
 
 
 class PostageCaptureData:
