@@ -486,17 +486,15 @@ class TriggerConfig(_FLConfigMixin):
 
 
 class ChannelConfig(_FLConfigMixin):
-    _settings = ('bins', 'freqs')
+    _settings = ('bins',)
 
     def __init__(self, freqs=None, bins=None, _hashed=None):
         self._hashed = _hashed
         if self._hashed:
             return
-        self.bins = bins
-        self.freqs = freqs
         if freqs is not None:
             bins = convert_freq_to_ddc_bin(freqs)
-            self.bins = bins
+        self.bins = bins
 
 
 class DDCConfig(_FLConfigMixin):
