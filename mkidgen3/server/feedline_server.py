@@ -230,8 +230,14 @@ class FeedlineReadoutServer:
             elif cmd == 'capture':
                 self.hardware.config_manager.learn(data.feedline_config)
                 unknown = self.hardware.config_manager.unlearned_hashes(data.feedline_config)
-                if unknown:
-                    data.abort({'resp': 'ERROR', 'data': unknown})  # We've never been sent the full config necessary
+                if unknown:  # We've never been sent the full config necessary
+                    try:
+                        data.establish()
+                        #TODO this code seems to imply json "{'resp': 'ERROR', 'data': unknown}"
+                        data.fail(f'ERROR: Full FeedlineConfig never sent: {unknown}')
+                    except zmq.ZMQError as e:
+                        getLogger(__name__).error(f'Unable to fail request with hashed config due to {e}. '
+                                                  f'Silently dropping request {data.id}')
                 elif (not self._to_check and self._tap_threads[data.type] is None and
                       self.hardware.config_compatible_with(data.feedline_config)):
                     cr = data  # this can be run and nothing else, so it will be done below
