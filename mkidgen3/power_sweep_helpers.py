@@ -4,6 +4,7 @@ import numpy as np
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_LUT_SIZE, N_CHANNELS, \
     SYSTEM_BANDWIDTH, IF_ATTN_STEP, ADC_MAX_V, PHASE_FRACTIONAL_BITS
 
+
 class Component:
     def __init__(self, name: str | None, gain: float):
         self.name = name
@@ -23,10 +24,10 @@ class Attenuator(Component):
         assert gain <= 0, "gain value should be negative for an attenutor"
 
     def output(self, input_power: float) -> float:
-        return input_power+self.gain
+        return input_power + self.gain
 
     def __repr__(self):
-        return f'{self.name} {self.gain} dB atten'
+        return f'{self.name} {self.gain} dB attn'
 
 
 class ProgrammableAttenuator(Attenuator):
@@ -42,15 +43,16 @@ class ProgrammableAttenuator(Attenuator):
         assert gain <= 0, "gain value should be negative for an attenutor"
         self._gain = gain
 
+
 class Device(Component):
     def __init__(self, name: str, gain: float):
         super().__init__(name, gain)
 
     def output(self, input_power: float) -> float:
-        return input_power+self.gain
+        return input_power + self.gain
 
     def __repr__(self):
-        return f"Device ({self.gain} dB atten)"
+        return f"Device ({self.gain} dB attn)"
 
 
 class Amplifier(Component):
@@ -71,7 +73,7 @@ class Amplifier(Component):
         Returns: output power in dBm
 
         """
-        return input_power+self.gain
+        return input_power + self.gain
 
     def is_saturated(self, input_power: float) -> bool:
         return self.output(input_power) > self.saturation
@@ -91,16 +93,19 @@ class ROChain:
         return next(i for i, v in enumerate(self.ro_chain) if isinstance(v, Device))
 
     @property
-    def dac_atten_idx(self) -> int:
-        return next(i for i, v in enumerate(self.ro_chain) if (isinstance(v, ProgrammableAttenuator) & ('dac' in v.name)))
+    def dac_attn_idx(self) -> int:
+        return next(
+            i for i, v in enumerate(self.ro_chain) if (isinstance(v, ProgrammableAttenuator) & ('dac' in v.name)))
 
     @property
-    def adc_atten1_idx(self) -> int:
-        return next(i for i, v in enumerate(self.ro_chain) if (isinstance(v, ProgrammableAttenuator) & ('adc' in v.name)))
+    def adc_attn1_idx(self) -> int:
+        return next(
+            i for i, v in enumerate(self.ro_chain) if (isinstance(v, ProgrammableAttenuator) & ('adc' in v.name)))
 
     @property
-    def adc_atten2_idx(self) -> int:
-        return len(self.ro_chain) - next(i for i, v in enumerate(self.ro_chain[::-1]) if (isinstance(v, ProgrammableAttenuator) & ('adc' in v.name)))-1
+    def adc_attn2_idx(self) -> int:
+        return len(self.ro_chain) - next(i for i, v in enumerate(self.ro_chain[::-1]) if
+                                         (isinstance(v, ProgrammableAttenuator) & ('adc' in v.name))) - 1
 
     def __repr__(self):
         string = ''
@@ -138,16 +143,17 @@ class ROChain:
         return gain
 
     def pre_device_gain(self):
-        return self.calculate_gain(self.dac_atten_idx+1, self.device_idx)
+        return self.calculate_gain(self.dac_attn_idx + 1, self.device_idx)
 
     def post_device_gain(self):
-        return self.calculate_gain(self.device_idx, self.adc_atten1_idx)
+        return self.calculate_gain(self.device_idx, self.adc_attn1_idx)
 
-    def post_adc_atten2_gain(self):
-        return self.calculate_gain(self.adc_atten2_idx, len(self.ro_chain))
+    def post_adc_attn2_gain(self):
+        return self.calculate_gain(self.adc_attn2_idx, len(self.ro_chain))
 
 
-def calculate_adc_dac_atten(dac_output_power: float, device_power: float, signal_chain: ROChain, adc_input_power: float) -> tuple[float, tuple[float, float]]:
+def calculate_adc_dac_attn(dac_output_power: float, device_power: float, signal_chain: ROChain,
+                            adc_input_power: float) -> tuple[float, tuple[float, float]]:
     """
     Args:
         dac_output_power: dac output power [dBm]
@@ -161,79 +167,84 @@ def calculate_adc_dac_atten(dac_output_power: float, device_power: float, signal
 
     """
     chain = copy.deepcopy(signal_chain)
-    dac_atten = -device_power + dac_output_power + chain.pre_device_gain()
-    if dac_atten < 0:
-        getLogger(__name__).warning(f'Cannot acheive device power {device_power} dBm, setting DAC atten to 0, device power will be {dac_output_power+chain.pre_device_gain()} dBm')
-        dac_atten = 0
-    chain[chain.dac_atten_idx].gain = -dac_atten
-    post_adc_attens = adc_input_power - chain.post_adc_atten2_gain()
-    pre_adc_attens = device_power + chain.post_device_gain()
-    total_adc_attenuation = pre_adc_attens - post_adc_attens
+    dac_attn = -device_power + dac_output_power + chain.pre_device_gain()
+    if dac_attn < 0:
+        getLogger(__name__).warning(
+            f'Cannot acheive device power {device_power} dBm, setting DAC attn to 0, device power will be {dac_output_power + chain.pre_device_gain()} dBm')
+        dac_attn = 0
+    chain[chain.dac_attn_idx].gain = -dac_attn
+    post_adc_attns = adc_input_power - chain.post_adc_attn2_gain()
+    pre_adc_attns = device_power + chain.post_device_gain()
+    total_adc_attenuation = pre_adc_attns - post_adc_attns
 
-    amp_between_adc_attens = chain.ro_chain[chain.adc_atten1_idx+1]
-    assert isinstance(amp_between_adc_attens, Amplifier), "adc attenuator 1 needs to be followed by amplifier"
-    if pre_adc_attens > amp_between_adc_attens.max_input:
-        chain.ro_chain[chain.adc_atten1_idx].gain = pre_adc_attens-amp_between_adc_attens.max_input
-        chain.ro_chain[chain.adc_atten2_idx].gain = -total_adc_attenuation + chain.ro_chain[chain.adc_atten1_idx].gain
+    amp_between_adc_attns = chain.ro_chain[chain.adc_attn1_idx + 1]
+    assert isinstance(amp_between_adc_attns, Amplifier), "adc attenuator 1 needs to be followed by amplifier"
+    if pre_adc_attns > amp_between_adc_attns.max_input:
+        chain.ro_chain[chain.adc_attn1_idx].gain = pre_adc_attns - amp_between_adc_attns.max_input
+        chain.ro_chain[chain.adc_attn2_idx].gain = -total_adc_attenuation + chain.ro_chain[chain.adc_attn1_idx].gain
     else:
-        chain.ro_chain[chain.adc_atten1_idx].gain = 0
-        chain.ro_chain[chain.adc_atten2_idx].gain = -total_adc_attenuation
+        chain.ro_chain[chain.adc_attn1_idx].gain = 0
+        chain.ro_chain[chain.adc_attn2_idx].gain = -total_adc_attenuation
 
     chain.validate(dac_output_power)
+    adc_attn = -chain.ro_chain[chain.adc_attn1_idx].gain + -chain.ro_chain[chain.adc_attn2_idx].gain  # It may make sense to return these separately
 
-    return -chain.ro_chain[chain.dac_atten_idx].gain, (-chain.ro_chain[chain.adc_atten1_idx].gain, -chain.ro_chain[chain.adc_atten2_idx].gain)
+    return -chain.ro_chain[chain.dac_attn_idx].gain, adc_attn
 
 
-def compute_power_sweep_attenuations(dac_atten_start: float, adc_atten_start: float, dac_atten_stop: float | None = None, points: int | None = None, step_size=IF_ATTN_STEP) -> list[tuple[float, float]]:
+def compute_power_sweep_attenuations(dac_attn_start: float, adc_attn_start: float,
+                                     dac_attn_stop: float | None = None, points: int | None = None,
+                                     step_size=IF_ATTN_STEP) -> list[tuple[float | int, float | int]]:
     """
     Args:
-        dac_atten_start: starting dac attenuation [dB]
-        adc_atten_start: starting adc attenuation [dB]
-        dac_atten_stop: *last dac attenuation [dB]
+        dac_attn_start: starting dac attenuation [dB]
+        adc_attn_start: starting adc attenuation [dB]
+        dac_attn_stop: *last dac attenuation [dB]
         points: *number of attenuation steps, overrides step_size
         step_size: *attenuation step size
 
-    Returns: list of tuples containing DAC and ADC attens
-    For Ex: [(dac_atten0, adc_atten0), (dac_atten1, adc_atten1), ...]
+    Returns: list of tuples containing DAC and ADC attns
+    For Ex: [(dac_attn0, adc_attn0), (dac_attn1, adc_attn1), ...]
 
     *A subset of these is required. Precedence is resolved like so:
-    If dac_atten_stop:
+    If dac_attn_stop:
         if points:
-            dac_atten_stop and points determine the list and step_size is ignored
+            dac_attn_stop and points determine the list and step_size is ignored
         elif step_size:
-            dac_atten_stop and step_size determine the list
+            dac_attn_stop and step_size determine the list
     else:
         step size and points determine the list
 
 
     """
-    for atten in [dac_atten_start, adc_atten_start, dac_atten_stop]:
-        if atten:
-            assert atten >= 0, "attenuation must be positive"
+    for attn in [dac_attn_start, adc_attn_start, dac_attn_stop]:
+        if attn:
+            assert attn >= 0, "attenuation must be positive"
 
-    if dac_atten_stop:
+    if dac_attn_stop:
         if points:
-            dac_attens, step = np.linspace(dac_atten_start, dac_atten_stop, points, retstep=True)
-            adc_attens = np.linspace(adc_atten_start, adc_atten_start - step*len(dac_attens), points) # TODO: NEEDS WORK adc diff does not match dac
+            dac_attns, step = np.linspace(dac_attn_start, dac_attn_stop, points, retstep=True)
+            adc_attns = np.linspace(adc_attn_start, adc_attn_start - step * (len(dac_attns) - 1), points)
         else:
-            dac_attens = np.arange(dac_atten_start, dac_atten_stop + step_size, step_size)
-            adc_attens = np.arange(adc_atten_start, adc_atten_start - step_size*len(dac_attens), -step_size)
+            dac_attns = np.arange(dac_attn_start, dac_attn_stop + step_size, step_size)
+            adc_attns = np.arange(adc_attn_start, adc_attn_start - step_size * len(dac_attns), -step_size)
     else:
-        dac_attens = np.arange(dac_atten_start, step_size*(dac_atten_start-points+1), step_size)
-        adc_attens = np.arange(adc_atten_start, adc_atten_start - step_size * len(dac_attens), -step_size)
+        dac_attns = np.arange(dac_attn_start, dac_attn_start + step_size * points, step_size)
+        adc_attns = np.arange(adc_attn_start, adc_attn_start - step_size * points, -step_size)
 
-    return [(dac, adc) for dac, adc in zip(dac_attens, adc_attens)]
+    return [(dac, adc) for dac, adc in zip(dac_attns, adc_attns)]
 
 
-def compute_lo_steps(center, resolution, bandwidth):
+def compute_lo_steps(center: float | int, resolution: float | int, bandwidth: float | int) -> np.ndarray[float | int]:
     """
-    inputs:
-    - center: float
-        center frequency in Hz of the sweep bandwidth
-    - resolution: float
-        frequency resolution in Hz for the LO sweep
-    - bandwidth: float
-        bandwidth in Hz for the LO to sweep through
+    Compute LO steps.
+    Args:
+        center: center frequency of the sweep bandwidth [Hz]
+        resolution: frequency resolution in for the LO sweep [Hz]
+        bandwidth: bandwidth for the LO to sweep through [Hz]
+
+    Returns: list of LO settings
+
     """
     n_steps = np.round(bandwidth / resolution).astype('int')
     return np.linspace(-bandwidth / 2, bandwidth / 2, n_steps) + center
