@@ -6,6 +6,7 @@ import zmq
 from mkidgen3.server.feedline_config import IFConfig, FeedlineConfig, BitstreamConfig, RFDCClockingConfig, RFDCConfig, WaveformConfig, ChannelConfig, DDCConfig, FeedlineConfig, FilterConfig, TriggerConfig
 from mkidgen3.server.captures import CaptureJob, FRSClient, CaptureRequest,StatusListener
 from mkidgen3.server.waveform import WaveformFactory
+from mkidgen3.server.feedline_config import FeedlineConfigManager
 from mkidgen3.power_sweep_helpers import *
 from mkidgen3.opfb import opfb_bin_number
 import numpy as np
@@ -15,8 +16,6 @@ setup_logging('feedlineclient')
 # ctx = zmq.Context.instance()
 # ctx.linger = 0
 import pickle
-
-
 
 frsa = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
@@ -46,11 +45,12 @@ ddc = waveform.default_ddc_config
 # Filter Config
 filtercfg=FilterConfig(coefficients=f'unity{2048}')
 
+trigconfig = TriggerConfig()
+
 # Feedline Config
 fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     if_board=if_board, waveform=waveform, chan=chan, ddc=ddc,
-                    filter=filtercfg,
-                    trig=TriggerConfig())
+                    filter=filtercfg, trig=trigconfig)
 #gsm = StatusListener(b'', frsb.status_url)
 #cr = CaptureRequest(2**14, 'ddciq', fc, frsa)
 #cr = CaptureRequest(1024**3//4//2048, 'iq', fc, frsa, file='file:///home/xilinx/wheatley/jbtest/iq1024MiB.npz')
@@ -108,17 +108,17 @@ class PowerSweepJob:
         result = np.zeros((self._nchannels, len(self.lo_sweep_freqs), len(self.attns)), dtype=np.complex64)
         for atten_i, attn in enumerate(self.attns):
             for lo_i, lo in enumerate(self.lo_sweep_freqs):
-                IFConfig(lo=lo, dac_attn=attn[0], adc_attn=attn[1])
-                self.fc.if_board = IFConfig
-                j = CaptureJob(CaptureRequest(self.iq_avg, 'ddciq', self.fc, self.server, file=self.endpoint))
+                ifc = IFConfig(lo=lo, dac_attn=attn[0], adc_attn=attn[1])
+                self.fc.if_board = ifc
+                j = CaptureJob(CaptureRequest(self.iq_avg, 'ddciq', self.fc, self.server, channels=np.arange(self._nchannels), numpy_metric='mean', file=self.endpoint))
                 try:
                     while n < n_jobs:
                         getLogger(__name__).debug(f'submitting job {n} / {n_jobs}')
                         j.submit(True, True)
-                        while j.datasink.result is None:
-                            pass
-                        result[:, lo_i, atten_i] = j.result.data
+                        j.data(timeout=1)  # block until data is received
+                        result[:, lo_i, atten_i] = j.data().data
                         n += 1
+                        break
                 except KeyboardInterrupt:
                     getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
                     j.cancel()
@@ -127,9 +127,9 @@ class PowerSweepJob:
 
 lo_sweep_freqs = [6001,6000]
 attns=[(50,50), (40,40)]
-jen = PowerSweepJob(lo_sweep_freqs, attns, fc, server=frsa)
-j = CaptureJob(CaptureRequest(1024, 'ddciq', fc, frsa, file=None))
+psj = PowerSweepJob(lo_sweep_freqs, attns, fc, server=frsa)
+j_norm = CaptureJob(CaptureRequest(512, 'ddciq', fc, frsa,  channels=np.arange(psj._nchannels), numpy_metric='mean', file=None))
+j_norm.submit(True, True)
+psj.start()
 
 print('hi')
-print('hi')
-running=True
