@@ -121,22 +121,26 @@ class CaptureRequest:
 
     def __init__(self, n: int, tap: str, feedline_config: FeedlineConfig,
                  feedline_server: FRSClient, channels: Iterable | int | None = None, file: str = None,
-                 fail_saturation_frac: None | float = None, numpy_metric: None|str=None,
+                 fail_saturation_frac: None | float | int = None, numpy_metric: None | str = None,
                  _compression_override: bool = None):
         """
 
         Args:
             n: the number of samples to capture, for photons n is the buffer rotation interval request in ms
-            tap: the location to capture: adc|iq|phase|postage|photon
+            tap: the location to capture: 'adc'|'iq'|'phase'|'postage'|'photon'
             feedline_config: the FL configuration required by the capture
             feedline_server: the FRS to capture from
-            file: an optional file
+            channels: the phase, IQ, or postage resonator channels to capture
+            file: an optional file to save the result to
             fail_saturation_frac: Take a pre-capture of ADC data and abort if the maximum I or Q magnitude is greater
-                than the fraction*ADC_MAX_INT. Set to None, 0, or >1 to disable.
-            channels: an optional (required for postage) specifier of which channels to monitor.
-            numpy_metric: the name of a numpy metricto evaluate on a per-channel basis e.g. sum, mean, mad, median,
-                capture will fail if chunked captures are required. Ignored for postage/photon taps
+                                  than the fraction*ADC_MAX_INT. Set to None, 0, or > 1 to disable.
+            numpy_metric: a numpy function to apply across samples on a channel by channel basis. Must have `out` and
+                          `axis` as input parameters. Math is done to I and Q respectively (complex math not supported).
+                          For example: 'mean' will return a mean of the values for each channel for IQ and phase data.
+            _compression_override: skips blosc compression on the server if True. False or None (default) results in
+                                   data being compressed before sending.
         """
+
         tap = tap.lower()
         assert tap in CaptureRequest.SUPPORTED_TAPS
         self.fail_saturation_frac = float(fail_saturation_frac) if fail_saturation_frac else None
@@ -375,7 +379,10 @@ class CaptureRequest:
 
     @property
     def size_bytes(self):
-        return self.nsamp*self.capture_atom_bytes
+        if self.numpy_metric:
+            return self.capture_atom_bytes
+        else:
+            return self.nsamp*self.capture_atom_bytes
 
     @property
     def nchan(self):
@@ -391,6 +398,8 @@ class CaptureRequest:
     @property
     def dwid(self) -> int:
         """Data size of a capture sample in bytes"""
+        if self.numpy_metric:
+            return 2 * 8  ## numpy math returns float64 (8 bytes) * 2 for IQ
         if 'iq' in self.tap or self.tap in ('adc', 'postage'):
             return 4
         elif 'phase' in self.tap:
@@ -410,11 +419,17 @@ class CaptureRequest:
         if self.tap == 'postage':
             return n, PHOTON_POSTAGE_WINDOW_LENGTH + 1, 2
         elif 'iq' in self.tap or self.tap == 'adc':
-            return n, self.nchan, 2
+            if self.numpy_metric:
+                return self.nchan, 2
+            else:
+                return n, self.nchan, 2
         elif self.tap == 'photon':
             return (n,)
         elif 'phase' in self.tap:
-            return n, self.nchan
+            if self.numpy_metric:
+                return self.nchan
+            else:
+                return n, self.nchan
         else:
             raise RuntimeError('Unknown tap: {self.tap}')
 
@@ -518,12 +533,21 @@ class StreamCaptureSink(CaptureSink):
         samples_recv = int(len(self._buf) / 2 // np.prod(self._expected_buffer_shape[1:]))  # / 2 for 2 bytes per I or Q
         shape = (min(samples_recv, self._expected_buffer_shape[0]),) + self._expected_buffer_shape[1:]
 
+        dtype_bytes = self._expected_bytes // np.prod(shape, dtype=int)
+        if dtype_bytes == 8:
+            dtype = np.float64
+        else:
+            dtype = np.int16
+            if dtype_bytes != 2:
+                getLogger(__name__).warning(
+                f'Received data has {dtype_bytes} bytes per sample. Data may be lost in cast to int16 (2 bytes).')
+
         if bytes_recv > self._expected_bytes:
             getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}. Expected {print_bytes(self._expected_bytes)} got {print_bytes(bytes_recv)}.')
         elif bytes_recv < self._expected_bytes:
             getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}. Expected {print_bytes(self._expected_bytes)} got {print_bytes(bytes_recv)}.')
         # TODO this might technically be a memory leak if we captured more data
-        self.result = np.frombuffer(self._buf, count=np.prod(shape, dtype=int), dtype=np.int16).reshape(shape).squeeze()
+        self.result = np.frombuffer(self._buf, count=np.prod(shape, dtype=int), dtype=dtype).reshape(shape).squeeze()
 
 
 class ADCCaptureSink(StreamCaptureSink):
