@@ -324,7 +324,9 @@ class CaptureRequest:
             try:
                 getattr(np, self.numpy_metric)(data, axis=0, out=out)
             except TypeError as e:
-                raise RuntimeError(f'function: {self.numpy_metric} failed with {e}')
+                raise RuntimeError(f'numpy metric: {self.numpy_metric} failed with {e}')
+            except Exception as e:
+                raise RuntimeError(f'Encountered unexpected error related to numpy metric {e}')
             data = out
         else:
             data = np.array(data) if copy else data
