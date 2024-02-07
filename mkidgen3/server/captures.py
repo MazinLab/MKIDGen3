@@ -84,7 +84,7 @@ class CaptureRequest:
     @staticmethod
     def validate_channels(tap: str, chan: list):
         """
-        Verify that the channel/group selection is compatible with the driver.
+        Verify that the channel selection is compatible with the driver.
 
         Note that this is not done dynamically, no driver discovery is performed
 
@@ -92,18 +92,18 @@ class CaptureRequest:
         for details about groups and monitor channels.
 
         Args:
-            chan: A list of channels/groups to monotor
+            chan: A list of channels
             tap: A capture location
 
         Returns: True|False
         """
         tap = tap.lower()
         if 'iq' in tap:
-            l = N_IQ_GROUPS
-            m = N_IQ_GROUPS
+            l = N_CHANNELS
+            m = N_CHANNELS
         elif 'phase' in tap:
-            l = N_PHASE_GROUPS
-            m = N_PHASE_GROUPS
+            l = N_CHANNELS
+            m = N_CHANNELS
         elif tap == 'postage':
             l = N_POSTAGE_CHANNELS
             m = N_CHANNELS
@@ -114,7 +114,7 @@ class CaptureRequest:
         try:
             assert len(chan) <= l
             for c in chan:
-                assert type(c) == int and 0 <= c < m
+                assert 0 <= c < m
         except AssertionError:
             return False
         return True
@@ -317,7 +317,10 @@ class CaptureRequest:
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         if self.numpy_metric is not None:
             out = np.empty(data.shape[1:] if data.ndim >1 else (1,))
-            getattr(np, self.numpy_metric)(data, axis=0, out=out)
+            try:
+                getattr(np, self.numpy_metric)(data, axis=0, out=out)
+            except TypeError as e:
+                raise RuntimeError(f'function: {self.numpy_metric} failed with {e}')
             data = out
         else:
             data = np.array(data) if copy else data
