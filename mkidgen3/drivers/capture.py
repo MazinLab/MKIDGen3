@@ -71,7 +71,7 @@ class FilterIQ(DefaultIP):
 
             if len(groups) % 2:
                 groups.add(set(range(256)).difference(groups).pop())
-            last = max(groups)
+            last = int(max(groups))
             if max(groups) > N_IQ_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-{N_IQ_GROUPS-1}')
 
@@ -136,7 +136,7 @@ class FilterPhase(DefaultIP):
         else:
             if len(groups) % 2:
                 groups.add(set(range(512)).difference(groups).pop())
-            last = max(groups)
+            last = int(max(groups))
 
             if max(groups) > N_PHASE_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-{N_PHASE_GROUPS-1}')
