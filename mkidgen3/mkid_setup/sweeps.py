@@ -4,15 +4,15 @@ import copy
 import numpy as np
 import numpy.typing as nt
 
-from typing import Optional, Type
+from typing import Optional, Type, NewType
 from dataclasses import dataclass
 
 from mkidgen3.server.feedline_config import WaveformConfig
 
 LO_QUANT = 0.596
 
-type InputAtten = float
-type OutputAtten = float
+InputAtten = NewType("InputAtten", float)
+OutputAtten = NewType("OutputAtten", float)
 
 
 @dataclass
