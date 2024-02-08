@@ -244,7 +244,7 @@ class PowerSweepConfig:
         steps: int,
         sweep_config: Type[SweepConfig],
     ):
-        attens = []
+        attens = {}
         for i in range(steps):
             attens[starting_output + output_step * i] = min(
                 max(starting_input - output_step * i, 0), 31.75 * 2
