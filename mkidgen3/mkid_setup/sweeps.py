@@ -1,4 +1,5 @@
 import time
+import copy
 
 import numpy as np
 import numpy.typing as nt
@@ -10,6 +11,9 @@ from mkidgen3.server.feedline_config import WaveformConfig
 
 LO_QUANT = 0.596
 
+type InputAtten = float
+type OutputAtten = float
+
 
 @dataclass
 class SweepConfig:
@@ -17,8 +21,8 @@ class SweepConfig:
     waveform: WaveformConfig
     lo_center: float | np.float64 = 6000.0
     average: int = 1024
-    output_atten: Optional[float] = None
-    input_atten: Optional[float] = None
+    output_atten: Optional[OutputAtten] = None
+    input_atten: Optional[InputAtten] = None
     tap: str = "ddciq"
 
     _idle = 0.01
@@ -32,8 +36,8 @@ class SweepConfig:
         waveform: WaveformConfig,
         lo_center: float | np.float64 = 6000.0,
         average: int = 1024,
-        output_atten: Optional[float] = None,
-        input_atten: Optional[float] = None,
+        output_atten: Optional[OutputAtten] = None,
+        input_atten: Optional[InputAtten] = None,
     ) -> "SweepConfig":
         spacing = LO_QUANT * np.floor(((bandwidth / points) / LO_QUANT))
 
@@ -138,8 +142,8 @@ class CombSweepConfig(SweepConfig):
         waveform: WaveformConfig,
         lo_center: float | np.float64 = 6000.0,
         average: int = 1024,
-        output_atten: Optional[float] = None,
-        input_atten: Optional[float] = None,
+        output_atten: Optional[OutputAtten] = None,
+        input_atten: Optional[InputAtten] = None,
     ) -> "SweepConfig":
         if overlap > points:
             raise ValueError("overlap must be less than points")
@@ -214,3 +218,53 @@ class Sweep:
 @dataclass
 class CombSweep(Sweep):
     config: "CombSweepConfig"
+
+
+@dataclass
+class PowerSweepConfig:
+    attens: dict[OutputAtten, InputAtten]
+    sweep_config: Type[SweepConfig]
+
+    def __post_init__(self):
+        # TODO: Check attens valid
+        if (
+            self.sweep_config.output_atten is not None
+            or self.sweep_config.input_atten is not None
+        ):
+            raise ValueError(
+                "Input and Output attens must be unset in the template config"
+            )
+
+    @classmethod
+    def from_matched(
+        cls,
+        starting_output: OutputAtten,
+        starting_input: InputAtten,
+        output_step: OutputAtten,
+        steps: int,
+        sweep_config: Type[SweepConfig],
+    ):
+        attens = []
+        for i in range(steps):
+            attens[starting_output + output_step * i] = min(
+                max(starting_input - output_step * i, 0), 31.75 * 2
+            )
+        return PowerSweepConfig(attens, sweep_config)
+
+    def run_powersweep(self, ifboard, capture) -> "PowerSweep":
+        sweeps = {}
+        for output_atten, input_atten in self.attens.items():
+            this_sweepconfig = copy.copy(self.sweep_config)
+            this_sweepconfig.output_atten = output_atten
+            this_sweepconfig.input_atten = input_atten
+            sweeps[output_atten] = (
+                input_atten,
+                this_sweepconfig.run_sweep(ifboard, capture),
+            )
+        return PowerSweep(self, sweeps)
+
+
+@dataclass
+class PowerSweep:
+    config: "PowerSweepConfig"
+    sweeps: dict[OutputAtten, tuple[InputAtten, Type[Sweep]]]
