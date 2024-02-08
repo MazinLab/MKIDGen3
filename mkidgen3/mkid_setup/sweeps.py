@@ -251,9 +251,14 @@ class PowerSweepConfig:
             )
         return PowerSweepConfig(attens, sweep_config)
 
-    def run_powersweep(self, ifboard, capture) -> "PowerSweep":
+    def run_powersweep(self, ifboard, capture, progress=False) -> "PowerSweep":
         sweeps = {}
-        for output_atten, input_atten in self.attens.items():
+        iter = self.attens.items()
+        if progress:
+            import tqdm
+
+            iter = tqdm.tqdm(iter)
+        for output_atten, input_atten in iter:
             this_sweepconfig = copy.copy(self.sweep_config)
             this_sweepconfig.output_atten = output_atten
             this_sweepconfig.input_atten = input_atten
