@@ -21,8 +21,7 @@ class SweepConfig:
     waveform: WaveformConfig
     lo_center: float | np.float64 = 6000.0
     average: int = 1024
-    output_atten: Optional[OutputAtten] = None
-    input_atten: Optional[InputAtten] = None
+    attens: Optional[tuple[OutputAtten, InputAtten]] = None
     tap: str = "ddciq"
 
     _idle = 0.01
@@ -36,8 +35,7 @@ class SweepConfig:
         waveform: WaveformConfig,
         lo_center: float | np.float64 = 6000.0,
         average: int = 1024,
-        output_atten: Optional[OutputAtten] = None,
-        input_atten: Optional[InputAtten] = None,
+        attens: Optional[tuple[OutputAtten, InputAtten]] = None,
     ) -> "SweepConfig":
         spacing = LO_QUANT * np.floor(((bandwidth / points) / LO_QUANT))
 
@@ -45,9 +43,7 @@ class SweepConfig:
         # We will probably want to fix both of these at some point in the near future as the IF Board is FP32
         steps = (np.arange(points) * spacing - spacing * points // 2) / 1e6
 
-        return SweepConfig(
-            steps, waveform, lo_center, average, output_atten, input_atten
-        )
+        return SweepConfig(steps, waveform, lo_center, average, attens)
 
     def reset_ddc(self, ddccontrol) -> "SweepConfig":
         ddccontrol.configure(**self.waveform.default_ddc_config.settings_dict())
@@ -57,10 +53,10 @@ class SweepConfig:
         tones = self.waveform.waveform.freqs
         iq = np.empty((tones.size, self.steps.size), np.complex64)
         rms = np.empty((tones.size, self.steps.size), np.complex64)
-        if self.input_atten:
-            ifboard.set_attens(input_attens=self.input_atten)
-        if self.output_atten:
-            ifboard.set_attens(output_attens=self.output_atten)
+        if self.attens:
+            ifboard.set_attens(
+                input_attens=self.attens[1], output_attens=self.attens[0]
+            )
         for i, step in enumerate(self.steps):
             ifboard.set_lo(
                 step + self.lo_center,
@@ -142,8 +138,7 @@ class CombSweepConfig(SweepConfig):
         waveform: WaveformConfig,
         lo_center: float | np.float64 = 6000.0,
         average: int = 1024,
-        output_atten: Optional[OutputAtten] = None,
-        input_atten: Optional[InputAtten] = None,
+        attens: Optional[tuple[OutputAtten, InputAtten]] = None,
     ) -> "SweepConfig":
         if overlap > points:
             raise ValueError("overlap must be less than points")
@@ -154,9 +149,7 @@ class CombSweepConfig(SweepConfig):
         steps_overlap = steps[:overlap] + (tones[1] - tones[0]) / 1e6
         steps = np.concatenate((steps, steps_overlap))
 
-        return CombSweepConfig(
-            steps, waveform, lo_center, average, output_atten, input_atten
-        )
+        return CombSweepConfig(steps, waveform, lo_center, average, attens)
 
     def run_sweep(self, ifboard, capture) -> "CombSweep":
         s = super().run_sweep(ifboard, capture)
@@ -227,10 +220,7 @@ class PowerSweepConfig:
 
     def __post_init__(self):
         # TODO: Check attens valid
-        if (
-            self.sweep_config.output_atten is not None
-            or self.sweep_config.input_atten is not None
-        ):
+        if self.sweep_config.attens is not None:
             raise ValueError(
                 "Input and Output attens must be unset in the template config"
             )
@@ -260,8 +250,7 @@ class PowerSweepConfig:
             iter = tqdm.tqdm(iter)
         for output_atten, input_atten in iter:
             this_sweepconfig = copy.copy(self.sweep_config)
-            this_sweepconfig.output_atten = output_atten
-            this_sweepconfig.input_atten = input_atten
+            this_sweepconfig.attens = (output_atten, input_atten)
             sweeps[output_atten] = (
                 input_atten,
                 this_sweepconfig.run_sweep(ifboard, capture),
