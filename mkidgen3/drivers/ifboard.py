@@ -161,6 +161,8 @@ class SerialDevice:
                 getLogger(__name__).debug(f"Send failed {e}")
                 raise IOError(e)
 
+class TRF3765:
+    pass
 
 class IFBoard(SerialDevice):
     def __init__(self, port='/dev/ifboard', timeout=0.1, connect=True):
@@ -323,6 +325,13 @@ class IFBoard(SerialDevice):
         self.power_on()
         self.set_lo(lo)
         self.set_attens(dac_attn, adc_attn)
+
+    def _trf_get_reg(self, address):
+        resp = self.send("RR{:d}".format(address))
+        return int(resp.strip(), 16)
+
+    def _trf_set_reg(self, address, value):
+        self.send("WR{:d}{:s}", address, hex(value)[2:])
 
 class IFStatus:
     def __init__(self, jsonstr):
