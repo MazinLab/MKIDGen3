@@ -1,14 +1,23 @@
 import json
-from logging import getLogger
 import threading
+import math
 import serial
-from typing import Tuple, List
-import numpy as np
 import time
+import numpy as np
+
+from logging import getLogger
+from typing import Tuple, List
+from enum import IntFlag, auto
+from secrets import token_bytes
+from dataclasses import dataclass
+from fractions import Fraction
+
+from mkidgen3.registers import MetaRegister, field, field_bool, field_enum
 
 MAX_OUT_ATTEN = 31.75  # dB
 MAX_IN_ATTEN = 31.75  # dB
 IF_ATTN_STEP = 0.25  # dB IF attenuator step size (minimum dB attenuation step, limited by a single attenuator)
+
 
 
 def _escape_nline_creturn(x):
@@ -161,8 +170,6 @@ class SerialDevice:
                 getLogger(__name__).debug(f"Send failed {e}")
                 raise IOError(e)
 
-class TRF3765:
-    pass
 
 class IFBoard(SerialDevice):
     def __init__(self, port='/dev/ifboard', timeout=0.1, connect=True):
@@ -172,6 +179,7 @@ class IFBoard(SerialDevice):
         self._initialized = False
         self.initialized_at_last_connect = False
         self.rebooted = None
+        self.trf_control = TRF3765((lambda a: self._trf_get_reg(a), lambda a, v: self._trf_set_reg(a, v)), 10)
         if connect:
             self.connect(raise_errors=False)
 
@@ -331,7 +339,7 @@ class IFBoard(SerialDevice):
         return int(resp.strip(), 16)
 
     def _trf_set_reg(self, address, value):
-        self.send("WR{:d}{:s}", address, hex(value)[2:])
+        self.send("WR{:d}{:s}".format(address, hex(value)[2:]))
 
 class IFStatus:
     def __init__(self, jsonstr):
@@ -354,6 +362,278 @@ class IFStatus:
         return stat.format('Powered' if self.power else 'Unpowered', self.boot,
                            ', freshly booted' if self.fresh_boot else '',
                            self.lo_mode, self.dac_attens, self.adc_attens)
+
+
+# It's ugly but its the best we can reasonably do atm
+class _TRFReg(MetaRegister):
+    def __init__(self, address, rwhandle):
+        self.address = address
+        self.rwhandle = rwhandle
+
+    def __len__(self):
+        return 32
+
+    def __get__(self, obj, objtype=None):
+        if obj is None or ((objtype is not None) and issubclass(objtype, MetaRegister)):
+            return self
+        return self.rwhandle[0](self.address)
+
+    def __set__(self, obj, val: int):
+        self.rwhandle[1](self.address, val)
+
+class TRFPowerDown(IntFlag):
+    PLL = auto()
+    CP = auto()
+    VCO = auto()
+    VCOMUX = auto()
+    DIV124 = auto()
+    PRESC = auto()
+    LO_DIV = auto()
+    BUFF1 = auto()
+    BUFF2 = auto()
+    BUFF3 = auto()
+    BUFF4 = auto()
+
+@dataclass
+class TRFCalibration:
+    vco_sel: int
+    vco_trim: int
+
+@dataclass
+class TRFDividerConfig:
+    lo_div_sel: int
+    pll_div_sel: int
+    rdiv: int
+    nint: int
+    nfrac: int
+    prsc_sel: int
+    f_ref: int | Fraction
+    
+    @property
+    def frequency(self) -> Fraction:
+        base = Fraction(self.f_ref * 1 * (1 << self.pll_div_sel), self.rdiv)
+        integer = base*self.nint
+        fractional = base*Fraction(self.nfrac, 1<<25)
+        return integer + fractional
+
+    @property
+    def step(self) -> Fraction:
+        return TRFDividerConfig(
+            self.lo_div_sel,
+            self.pll_div_sel,
+            self.rdiv,
+            self.nint,
+            self.nfrac + 1,
+            self.prsc_sel,
+            self.f_ref
+        ).frequency - self.frequency
+
+    @classmethod
+    def from_target(cls, freq_unscaled: np.float64 | Fraction, f_ref: int | Fraction = 10) -> "TRFDividerConfig":
+        if freq_unscaled is np.float64:
+            freq = Fraction(freq_unscaled)
+        else:
+            freq = freq_unscaled
+
+        if freq > 4800 or freq < 300:
+            raise ValueError("TRF3765 (undoubled) output frequency not in [300, 4800] MHz")
+        if freq >= 2400:
+            lo_div_sel = 0
+        elif freq >= 1200:
+            lo_div_sel = 1
+        elif freq >= 600:
+            lo_div_sel = 2
+        else:
+            lo_div_sel = 3
+        f_vco_target = freq * (1 << lo_div_sel)
+
+        pll_div_sel = 0
+        if f_vco_target > 3000:
+            pll_div_sel = 1
+        if f_vco_target / 2 > 3000:
+            pll_div_sel = 2
+        if f_vco_target / 4 > 3000:
+            raise ValueError(
+                "Unable to compute pll_div_sel (see TRF3765 datasheet section 7.4.4.1 b ) with lo_div_sel = {:d}, freq_unscaled = {:f}, f_ref = {:d}".format(
+                    lo_div_sel,
+                    float(freq_unscaled),
+                    f_ref
+                )
+            )
+
+        rdiv = 1
+        if f_ref >=  48:
+            rdiv = math.ceil(48 / f_ref)
+            if rdiv > (1 << 13) - 1:
+                raise ValueError("Reference out of range, cannot make f_pfd <= 48MHz using rdiv")
+
+        while pll_div_sel <= 2:
+            pll_div = 1 << pll_div_sel
+            nint = math.floor(f_vco_target * rdiv / (f_ref * pll_div))
+            nfrac = round((f_vco_target * rdiv / (f_ref * pll_div) - nint) * (1 << 25))
+
+            if nint >= 75:
+                prsc_sel = 1
+                p = 8
+            elif nint >= 23:
+                prsc_sel = 0
+                p = 4
+            else:
+                pll_div_sel += 1
+                continue
+
+            f_n = f_vco_target / (p * pll_div)
+            if f_n <= 375:
+                return TRFDividerConfig(
+                    lo_div_sel,
+                    pll_div_sel,
+                    rdiv,
+                    nint,
+                    nfrac,
+                    prsc_sel,
+                    f_ref
+                )
+        raise ValueError("Couldn't make digital divider frequency (f_N) <= 375 MHz, see TRF3765 Datasheet section 7.4.4.1 c.")
+
+@dataclass
+class TRFCalibrationCertificate:
+    token: int
+    divider_config: TRFDividerConfig
+    calibration: TRFCalibration
+
+    @property
+    def frequency(self) -> Fraction:
+        return self.divider_config.frequency
+
+class TRF3765:
+    def __init__(self, rwhandle, f_ref):
+        self.r0 = _TRFReg(0, rwhandle)
+        self.r1 = _TRFReg(1, rwhandle)
+        self.r2 = _TRFReg(2, rwhandle)
+        self.r3 = _TRFReg(3, rwhandle)
+        self.r4 = _TRFReg(4, rwhandle)
+        self.r5 = _TRFReg(5, rwhandle)
+        self.r6 = _TRFReg(6, rwhandle)
+
+        self.__token = int.from_bytes(token_bytes(16), byteorder='big')
+        self.f_ref = f_ref
+
+    def get_certificate(self) -> TRFCalibrationCertificate:
+        return TRFCalibrationCertificate(
+            self.__token,
+            TRFDividerConfig(
+                self.lo_div_sel,
+                self.pll_div_sel,
+                self.rdiv,
+                self.nint,
+                self.nfrac,
+                self.prsc_sel,
+                self.f_ref
+            ),
+            TRFCalibration(
+                self.vco_sel_readback,
+                self.vco_trim_readback,
+            )
+        )
+
+    def program(self, divider_config: TRFDividerConfig):
+        assert divider_config.f_ref == self.f_ref
+        old_power = self.powerdown_parts
+        self.powerdown_parts = old_power | TRFPowerDown.BUFF1 | TRFPowerDown.BUFF2 | TRFPowerDown.BUFF3 | TRFPowerDown.BUFF4
+        self.lo_div_sel = divider_config.lo_div_sel
+        self.pll_div_sel = divider_config.pll_div_sel
+        self.rdiv = divider_config.rdiv
+        self.nint = divider_config.nint
+        self.nfrac = divider_config.nfrac
+        self.prsc_sel = divider_config.prsc_sel
+        self.en_cal = True
+        while self.en_cal:
+            pass
+        self.powerdown_parts = old_power
+
+    @field(slice(5, 18))
+    def rdiv(self):
+        return self.r1
+
+    @field_bool(19)
+    def ref_inv(self):
+        return self.r1
+
+    @field_bool(20)
+    def neg_vco(self):
+        return self.r1
+
+    @field(slice(21, 26))
+    def icp(self):
+        return self.r1
+
+    @field_bool(26)
+    def icpdouble(self):
+        return self.r1
+
+    @field(slice(27, 31))
+    def cal_clk_sel(self):
+        return self.r1
+
+    @field(slice(5, 21))
+    def nint(self):
+        return self.r2
+
+    @field(slice(21, 23))
+    def pll_div_sel(self):
+        return self.r2
+
+    @field(slice(23, 24))
+    def prsc_sel(self):
+        return self.r2
+
+    @field(slice(26, 28))
+    def vco_sel(self):
+        return self.r2
+
+    @field_bool(28)
+    def vco_sel_mode(self):
+        return self.r2
+
+    @field(slice(29, 31))
+    def cal_acc(self):
+        return self.r2
+
+    @field_bool(31)
+    def en_cal(self):
+        return self.r2
+
+    @field(slice(5, 30))
+    def nfrac(self):
+        return self.r3
+
+    @field_enum(slice(5, 16), TRFPowerDown)
+    def powerdown_parts(self):
+        return self.r4
+
+    @field_bool(18)
+    def isource(self):
+        return self.r4
+
+    @field_bool(31)
+    def en_frac(self):
+        return self.r4
+
+    @field(slice(7, 13))
+    def vco_trim(self):
+        return self.r6
+
+    @field(slice(23, 25))
+    def lo_div_sel(self):
+        return self.r6
+
+    @field(slice(15, 21))
+    def vco_trim_readback(self):
+        return self.r0
+
+    @field(slice(22, 24))
+    def vco_sel_readback(self):
+        return self.r0
 
 # import logging
 # logging.basicConfig()
