@@ -7,7 +7,7 @@ from logging import getLogger
 import zmq
 from mkidgen3.opfb import opfb_bin_number
 from typing import Iterable
-
+import subprocess
 
 def compute_max_val(x) -> float:
     return max(x.real.max(), x.imag.max(), np.abs(x.imag.min()), np.abs(x.imag.min()))
@@ -26,7 +26,8 @@ def convert_freq_to_ddc_bin(freqs: Iterable[float | int]) -> np.ndarray:
     bins[:freqs.size] = opfb_bin_number(freqs, ssr_raw_order=True)
     return bins
 
-def print_time(fs: float, n_samp: int) -> str:
+
+def format_sample_duration(fs: float, n_samp: int) -> str:
     """
     Print the time of some number of samples with a given sample rate in nice units.
     Args:
@@ -49,7 +50,7 @@ def print_time(fs: float, n_samp: int) -> str:
         return f'{seconds / 1e-9:.2f} nanoseconds'
 
 
-def print_bytes(n_bytes: int) -> str:
+def format_bytes(n_bytes: int) -> str:
     """
     Print the number of bytes with a convenient order of magnitude.
     Args:
@@ -256,3 +257,9 @@ def check_zmq_abort_pipe(pipe):
     except zmq.ZMQError as e:
         if e.errno != zmq.EAGAIN:
             raise
+
+
+def check_active_jupyter_notebook():
+    """Get a list of jupyter notebooks that are running and return true if any have 'http' in the listing """
+    x = subprocess.run(['jupyter', 'notebook', 'list'], capture_output=True)
+    return 'http' in x.stdout.decode()

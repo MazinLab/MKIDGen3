@@ -8,6 +8,7 @@ from mkidgen3.server.captures import CaptureRequest
 from mkidgen3.server.feedline_config import RFDCConfig
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 from mkidgen3.server.misc import zpipe
+from mkidgen3.util import check_active_jupyter_notebook
 import asyncio
 import zmq
 import threading
@@ -369,6 +370,9 @@ if __name__ == '__main__':
     os.environ['TZ'] = 'right/UTC'
     time.tzset()
     setup_logging('feedlinereadoutserver')
+
+    if check_active_jupyter_notebook():
+        raise RuntimeError('Jupyter notebooks are running, shut them down first.')
 
     args = parse_cl()
 
