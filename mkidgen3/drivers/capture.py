@@ -9,7 +9,7 @@ from typing import Iterable
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
     check_description_for  # config, overlay details
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel, ADC_INPUT_WARN
-from ..util import ps_ram_sane, print_bytes
+from ..util import ps_ram_sane, format_bytes
 from ..interrupts import ThreadedPLInterruptManager
 
 
@@ -284,7 +284,7 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.len = n
         _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
         e.clear()
-        getLogger(__name__).debug(f'Starting capture of {print_bytes(n)} ({n // 64} beats) to address {hex(buffer_addr)} from '
+        getLogger(__name__).debug(f'Starting capture of {format_bytes(n)} ({n // 64} beats) to address {hex(buffer_addr)} from '
                                   f'source {source}: \n Interrupt Status:' +
                                   str(ThreadedPLInterruptManager.get_status(self.axis2mm._interrupts['o_int']['fullpath'])))
         self.axis2mm.start(continuous=False, increment=True)
@@ -384,7 +384,7 @@ class CaptureHierarchy(DefaultHierarchy):
         datarate_mbps = 32 * 512 * n_groups / 256
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Capturing {print_bytes(capture_bytes)} of data @ {datarate_mbps:.1f} MiBps. "
+        msg = (f"Capturing {format_bytes(capture_bytes)} of data @ {datarate_mbps:.1f} MiBps. "
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
