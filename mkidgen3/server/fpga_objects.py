@@ -162,6 +162,9 @@ class FeedlineHardware:
                 clk_period_ns=1.953125,
                 timeout=5,
                 poll=1000*1000*1000)
+
+        #NB these if comparisons must not be "is None" as an empty config can't be used to trigger reconfiguration
+
         if fl_setup.if_board:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             try:
@@ -169,7 +172,7 @@ class FeedlineHardware:
             except Exception as e:
                 getLogger(__name__).warning(f"Unable to connect to IF board: {e}, proceeding without IF board.")
 
-        if fl_setup.waveform is not None:
+        if fl_setup.waveform:
             getLogger(__name__).debug(f'Configure DAC with {fl_setup.waveform.settings_dict()}')
             self._ol.dac_table.configure(**fl_setup.waveform.settings_dict())
 

@@ -20,7 +20,7 @@ frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=
 
 
 large_job_test = False
-send_wave =''
+send_wave = ''
 frsu=frsa
 
 
@@ -73,11 +73,14 @@ for k in waveforms:
     elif send_wave == 'computed':
         waveforms[k]=waveforms[k].output_waveform  # trigger waveform computation
 
+fc_adconly=FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc)
+
+test_adc_only_job = CaptureJob(CaptureRequest(2**19, 'adc', fc_adconly, frsu))
+
 fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     filter=FilterConfig(coefficients='unity20'),
                     if_board=if_board, waveform=waveforms['fake_photon'], chan=chan, ddc=ddc,
                     trig=trig)
-
 
 test_large_file_jobs = list(map(CaptureJob, (CaptureRequest(5*1024**3//4, 'adc', fc, frsu,
                                                             file='file:///nfs/wheatley/adc5GiB.npz'),
@@ -86,13 +89,15 @@ test_large_file_jobs = list(map(CaptureJob, (CaptureRequest(5*1024**3//4, 'adc',
                                              CaptureRequest(5*1024**3//2//2048, 'filtphase', fc, frsu,
                                                             file='file:///nfs/wheatley/phase5GiB.npz'))))
 
-
 test_eng_jobs = list(map(CaptureJob, (CaptureRequest(1024, 'adc', fc, frsu),
                                       CaptureRequest(1024, 'ddciq', fc, frsu),
                                       CaptureRequest(1024, 'filtphase', fc, frsu))))
 
 
 # gsm = StatusListener(b'', frsb.status_url)
+
+
+test_adc_only_job.submit(True, True)
 
 
 for j in test_eng_jobs:

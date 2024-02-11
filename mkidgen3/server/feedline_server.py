@@ -281,6 +281,7 @@ class FeedlineReadoutServer:
             try:
                 self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
+                self.hardware.derequire_config(id)  # Not  necessary as we are dying, but let's die in a clean house
                 getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
                 self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False, also=cr)
                 break

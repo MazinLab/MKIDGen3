@@ -590,15 +590,15 @@ class FeedlineConfig(_FLMetaconfigMixin):
         self.filter = FilterConfig(**filter) if isinstance(filter, dict) else filter
         self.trig = TriggerConfig(**trig) if isinstance(trig, dict) else trig
 
-        assert isinstance(self.bitstream,BitstreamConfig)
-        assert isinstance(self.rfdc_clk, RFDCClockingConfig)
-        assert isinstance(self.rfdc, RFDCConfig)
-        assert isinstance(self.if_board, IFConfig)
-        assert isinstance(self.waveform, WaveformConfig)
-        assert isinstance(self.chan, ChannelConfig)
-        assert isinstance(self.ddc, DDCConfig)
-        assert isinstance(self.filter, FilterConfig)
-        assert isinstance(self.trig, TriggerConfig)
+        assert isinstance(self.bitstream, (type(None), BitstreamConfig))
+        assert isinstance(self.rfdc_clk, (type(None), RFDCClockingConfig))
+        assert isinstance(self.rfdc, (type(None), RFDCConfig))
+        assert isinstance(self.if_board, (type(None), IFConfig))
+        assert isinstance(self.waveform, (type(None), WaveformConfig))
+        assert isinstance(self.chan, (type(None), ChannelConfig))
+        assert isinstance(self.ddc, (type(None), DDCConfig))
+        assert isinstance(self.filter, (type(None), FilterConfig))
+        assert isinstance(self.trig, (type(None), TriggerConfig))
         # TODO to support captures of less than all groups we need to add a self.capture_setup which has group
         # settings for iq and phase
 
