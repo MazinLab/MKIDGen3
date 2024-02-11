@@ -20,7 +20,7 @@ from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTAGE_CHANNELS, \
-    PHOTON_POSTAGE_WINDOW_LENGTH, MAXIMUM_DESIGN_COUNTRATE_PER_S, PHASE_IQ_INPUT_FRACTIONAL_BITS
+    PHOTON_POSTAGE_WINDOW_LENGTH, MAXIMUM_DESIGN_COUNTRATE_PER_S
 from functools import cached_property
 from mkidgen3.mkidpynq import unpack_photons
 
@@ -350,7 +350,8 @@ class CaptureRequest:
         if lend > 1.0:
             getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
         else:
-            getLogger(__name__).debug(f'Sending {format_bytes(len(compressed))} , compressed to {cval:.1f}%')
+            getLogger(__name__).debug(f'Sending {format_bytes(len(compressed))}, '
+                                      f'compressed {cval:.1f}% from {format_bytes(data.nbytes)}.')
         return tracker
 
     def _send_status(self, status, message=''):

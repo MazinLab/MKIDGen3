@@ -139,13 +139,13 @@ moved_phase = j2.data()
 fig, axes = plt.subplots(1, len(channels_plt), figsize=(15, 5))
 for i, ax in zip(channels_plt,axes.T):
     plt.sca(ax)
-    plt.plot(phase.data[:600, i], label='unbiased')
-    plt.plot(moved_phase.data[:600, i], label='biased')
+    plt.plot(phase.data[:600, i]/np.pi, label='unbiased')
+    plt.plot(moved_phase.data[:600, i]/np.pi, label='biased')
     plt.ylim(-1, 1)
     plt.ylabel('Phase (Scaled Radians)')
     plt.xlabel('Samples (Scaled Radians)')
 axes.ravel()[-1].legend()
-
+plt.show()
 
 postage_job = CaptureJob(CaptureRequest(6730, 'postage', offset_fc, frsu, channels=[0,1,2]))
 photon_job = CaptureJob(CaptureRequest(1200, 'photon', offset_fc, frsu))

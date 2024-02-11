@@ -22,8 +22,13 @@ N_IQ_GROUPS = 256  # See HLS and the iq drivers, the AXI streams are 8 channels 
 N_POSTAGE_CHANNELS = 8  # see HLS and the postage filter driver
 SYSTEM_BANDWIDTH = 4.096e9  # Hz Full readout bandwidth
 OS = 2  # OPFB Overlap factor
-PHASE_IQ_INPUT_FRACTIONAL_BITS = 14
-PHASE_FRACTIONAL_BITS = 14  #cordic output is 16 bits, signed, 3 integer, 14 fractional
+
+
+# PHASE_IQ_INPUT_FRACTIONAL_BITS = 14  #commented as no clear meaning, no doc, and no usage in codebase
+
+# cordic output scaled radians [-1,1] is 18 bits, signed, 3 integer, 15 fractional, truncated to the low 16 bits
+PHASE_FRACTIONAL_BITS = 15
+
 PL_TOTAL_BYTES = 4 * 1024 ** 3
 SYSTEM_OVERHEAD_BYTES = 2 * 768 * 1024 ** 2
 COMPRESSION_OVERHEAD_BYTES = 128 * 1024 ** 2  #this is complete speculation

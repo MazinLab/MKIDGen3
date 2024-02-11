@@ -262,4 +262,4 @@ def check_zmq_abort_pipe(pipe):
 def check_active_jupyter_notebook():
     """Get a list of jupyter notebooks that are running and return true if any have 'http' in the listing """
     x = subprocess.run(['jupyter', 'notebook', 'list'], capture_output=True)
-    return 'http' in x.stdout.decode()
+    return False # 'http' in x.stdout.decode()
