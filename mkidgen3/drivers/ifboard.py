@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 from logging import getLogger
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 from enum import IntFlag, auto
 from secrets import token_bytes
 from dataclasses import dataclass
@@ -195,20 +195,12 @@ class IFBoard(SerialDevice):
         # Per Aled/Jenny 150us is the maximum settling time
         time.sleep(.000150)
 
-    def set_lo(self, freq_mhz, fractional: bool = True, full_calibration=True, g2_mode=False):
-        try:
-            freq_mhz = float(freq_mhz)
-            assert 9600 > float(freq_mhz) > 0
-        except (TypeError, AssertionError):
-            raise ValueError('Frequency must be a float in (0, 9600)')
-
-        self.send('G2' + ('T' if g2_mode else 'F'))
-        self.send('FM' + ('T' if fractional else 'F'))
-        self.send('CA' + ('T' if full_calibration else 'F'))
-        resp = self.send(f'LO{freq_mhz}')
-        if 'ERROR' in resp:
-            getLogger(__name__).error(resp)
-            raise ValueError(resp)
+    def set_lo(self, freq_mhz, fractional: Optional[bool] = None, full_calibration=True, g2_mode=False):
+        if g2_mode:
+            raise DeprecationWarning("No longer implemented")
+        if full_calibration == False:
+            raise DeprecationWarning("To set lo without full calibration obtain a calibration certificate")
+        self.trf_control.set_output(freq_mhz / 2, fractional)
 
     def set_attens(self, output_attens: (float, Tuple[float], List[float], None) = None,
                    input_attens: (float, Tuple[float], List[float], None) = None):
@@ -417,12 +409,51 @@ class TRFDividerConfig:
     prsc_sel: int
     f_ref: int | Fraction
     
+    def __post_init__(self):
+        self.validate(False)
+
+    def validate(self, calibrate: bool):
+        if self.prsc_sel < 0 or self.prsc_sel > 1:
+            raise ValueError("PRSC_SEL must be 0 or 1")
+        if self.rdiv < 1 or self.rdiv > (1 << 13) - 1:
+            raise ValueError("RDIV is not in [1, 1 << 13 - 1]")
+        if self.nint < 1 or self.nint > (1 << 16) - 1:
+            raise ValueError("NINT is not int [1, 1 << 16 - 1]")
+        if self.nfrac < 0 or self.nfrac > (1 << 25) - 1:
+            raise ValueError("NFRAC is not in [0, 1 << 25 - 1]")
+        if self.pll_div_sel < 0 or self.pll_div_sel > 2:
+            raise ValueError("PLL_DIV_SEL must be 0 1 or 2")
+        if self.lo_div_sel < 0 or self.lo_div_sel > 3:
+            raise ValueError("LO_DIV_SEL must be 0 1 2 or 3")
+
+        if self.frequency > 4800 or self.frequency < 300:
+            raise ValueError("Frequency {:f} out of range [300, 4800] MHz".format(float(self.frequency)))
+        if self.f_vco / self.pll_div > 3000:
+            raise ValueError("PLL Input frequency {:f} > 3000 MHz".format(float(self.f_vco / self.pll_div)))
+        if self.f_pfd > 48:
+            raise ValueError("Phase detector frequency ({:f} MHz) > 48 MHz".format(float(self.f_pfd)))
+        if self.f_ref < 0.5 or self.f_ref > 350:
+            raise ValueError("Reference frequency ({:f} MHz) < 0.5MHz or < 350 MHz".format(float(self.f_ref)))
+        if self.f_n > 375:
+            raise ValueError("Integer divider frequency (f_n = {:f}) > 375 MHz".format(float(self.f_n)))
+
+        if self.prsc_p == 8:
+            if self.nfrac == 0 and self.nint < 72:
+                raise ValueError("PRSC is 8/9 with NINT < 72 in integer mode")
+            elif self.nfrac != 0 and self.nint < 75:
+                raise ValueError("PRSC is 8/9 with nint < 75 in fractional mode")
+        if self.prsc_p == 4:
+            if self.nfrac == 0 and (self.nint >= 72 or self.nint < 20):
+                raise ValueError("PRSC is 4/5 with nint not in [20, 72)")
+            if self.nfrac == 1 and (self.nint >= 75 or self.nint < 23):
+                raise ValueError("PRSC is 4/5 with nint not in [23, 75)")
+
+        if calibrate:
+            _ = self.cal_clk
+
     @property
     def frequency(self) -> Fraction:
-        base = Fraction(self.f_ref * 1 * (1 << self.pll_div_sel), self.rdiv)
-        integer = base*self.nint
-        fractional = base*Fraction(self.nfrac, 1<<25)
-        return integer + fractional
+        return self.f_vco / self.lo_div
 
     @property
     def step(self) -> Fraction:
@@ -436,9 +467,66 @@ class TRFDividerConfig:
             self.f_ref
         ).frequency - self.frequency
 
+    @property
+    def prsc_p(self) -> int:
+        if self.prsc_sel:
+            return 8
+        return 4
+
+    @property
+    def pll_div(self) -> int:
+        return 1 << self.pll_div_sel
+
+    @property
+    def lo_div(self) -> int:
+        return 1 << self.lo_div_sel
+
+    @property
+    def f_vco(self) -> Fraction:
+        base = Fraction(self.f_ref * self.pll_div, self.rdiv)
+        integer = base*self.nint
+        fractional = base*Fraction(self.nfrac, 1<<25)
+        return integer + fractional
+
+    @property
+    def f_pfd(self) -> Fraction:
+        return self.f_vco / (self.nint * self.pll_div)
+
+    @property
+    def f_n(self) -> Fraction:
+        return self.f_vco / (self.prsc_p * self.pll_div)
+
+    @property
+    def cal_clk_factor(self) -> Fraction:
+        pfd = self.f_pfd
+        ref = self.f_ref
+        factor = Fraction(128, 1)
+        while pfd * factor > Fraction(6, 10):
+            factor = factor / 2
+            if factor < Fraction(1, 128):
+                raise ValueError("Unable to produce a cal_clk frequency < 600 KHz")
+        while ref * factor > Fraction(1, 100) and pfd * factor > Fraction(5, 100) and factor >= Fraction(1, 128):
+            if ref / (pfd * factor) < 8000:
+                return factor
+            factor = factor / 2
+        raise ValueError("Unable to find valid cal clk")
+
+    @property
+    def cal_clk(self) -> Fraction:
+        return self.cal_clk_factor * self.f_pfd
+
+    @property
+    def cal_clk_sel(self) -> int:
+        n, d = self.cal_clk_factor.as_integer_ratio()
+        if n == d and n == 1:
+            return 0b1000
+        if n == 1:
+            return 0b1000 + round(math.log2(d))
+        return 0b1000 - round(math.log2(n))
+
     @classmethod
-    def from_target(cls, freq_unscaled: np.float64 | Fraction, f_ref: int | Fraction = 10) -> "TRFDividerConfig":
-        if freq_unscaled is np.float64:
+    def from_target(cls, freq_unscaled: float | Fraction, f_ref: int | Fraction = 10) -> "TRFDividerConfig":
+        if freq_unscaled is float:
             freq = Fraction(freq_unscaled)
         else:
             freq = freq_unscaled
@@ -456,18 +544,16 @@ class TRFDividerConfig:
         f_vco_target = freq * (1 << lo_div_sel)
 
         pll_div_sel = 0
-        if f_vco_target > 3000:
-            pll_div_sel = 1
-        if f_vco_target / 2 > 3000:
-            pll_div_sel = 2
-        if f_vco_target / 4 > 3000:
-            raise ValueError(
-                "Unable to compute pll_div_sel (see TRF3765 datasheet section 7.4.4.1 b ) with lo_div_sel = {:d}, freq_unscaled = {:f}, f_ref = {:d}".format(
-                    lo_div_sel,
-                    float(freq_unscaled),
-                    f_ref
+        while f_vco_target / (1 << pll_div_sel) > 3000:
+            pll_div_sel += 1
+            if pll_div_sel > 2:
+                raise ValueError(
+                    "Unable to compute pll_div_sel (see TRF3765 datasheet section 7.4.4.1 b ) with lo_div_sel = {:d}, freq_unscaled = {:f}, f_ref = {:f}".format(
+                        lo_div_sel,
+                        float(freq_unscaled),
+                        float(f_ref)
+                    )
                 )
-            )
 
         rdiv = 1
         if f_ref >=  48:
@@ -514,7 +600,7 @@ class TRFCalibrationCertificate:
         return self.divider_config.frequency
 
 class TRF3765:
-    def __init__(self, rwhandle, f_ref):
+    def __init__(self, rwhandle, f_ref, outputs = TRFPowerDown.BUFF1 | TRFPowerDown.BUFF2):
         self.r0 = _TRFReg(0, rwhandle)
         self.r1 = _TRFReg(1, rwhandle)
         self.r2 = _TRFReg(2, rwhandle)
@@ -525,6 +611,16 @@ class TRF3765:
 
         self.__token = int.from_bytes(token_bytes(16), byteorder='big')
         self.f_ref = f_ref
+        self.outputs = outputs
+
+    def set_output(self, frequency: float | Fraction | TRFCalibrationCertificate, wait_for_lock: bool = True, fractional: Optional[bool] = None):
+        if frequency is TRFCalibrationCertificate:
+            raise ValueError("Currently unimplemented")
+        else:
+            divider_config = TRFDividerConfig.from_target(frequency, self.f_ref)
+            self.__program(divider_config, True, True, fractional)     
+            if wait_for_lock:
+                raise ValueError("Currently unimplemented")
 
     def get_certificate(self) -> TRFCalibrationCertificate:
         return TRFCalibrationCertificate(
@@ -544,22 +640,44 @@ class TRF3765:
             )
         )
 
-    def program(self, divider_config: TRFDividerConfig):
-        assert divider_config.f_ref == self.f_ref
-        old_power = self.powerdown_parts
-        self.powerdown_parts = old_power | TRFPowerDown.BUFF1 | TRFPowerDown.BUFF2 | TRFPowerDown.BUFF3 | TRFPowerDown.BUFF4
+    def __program_divider(self, divider_config: TRFDividerConfig):
         self.lo_div_sel = divider_config.lo_div_sel
         self.pll_div_sel = divider_config.pll_div_sel
         self.rdiv = divider_config.rdiv
         self.nint = divider_config.nint
         self.nfrac = divider_config.nfrac
         self.prsc_sel = divider_config.prsc_sel
-        self.en_cal = True
-        while self.en_cal:
-            pass
-        self.powerdown_parts = old_power
 
-    def _set_fractional_cal(self, frac_calibration: TRFFractionalCalibration):
+    def __program(
+        self,
+        divider_config: TRFDividerConfig,
+        calibrate: bool = True,
+        powerdown: bool = True,
+        fractional: Optional[bool] = None,
+        fractional_cal: Optional[TRFFractionalCalibration] = None,
+    ):
+        assert divider_config.f_ref == self.f_ref
+        if calibrate:
+            self.cal_clk_sel = divider_config.cal_clk_sel
+        if fractional is not None and not fractional:
+            if divider_config.nfrac != 0:
+                raise ValueError("Requested integer calibration with nfrac != 0")
+        if fractional is None:
+            fractional = divider_config.nfrac != 0
+        self.powerdown_parts = TRFPowerDown.BUFF1 | TRFPowerDown.BUFF2 | TRFPowerDown.BUFF3 | TRFPowerDown.BUFF4
+        self.__program_divider(divider_config)
+        if fractional_cal is not None:
+            self.__set_fractional_cal(fractional_cal)
+        else:
+            self.__set_fractional_cal(DEFAULT_FRACCAL)
+        self.en_frac = fractional
+        if calibrate:
+            self.en_cal = True
+            while self.en_cal:
+                pass
+        self.powerdown_parts = (TRFPowerDown.BUFF1 | TRFPowerDown.BUFF2 | TRFPowerDown.BUFF3 | TRFPowerDown.BUFF4) ^ self.outputs
+
+    def __set_fractional_cal(self, frac_calibration: TRFFractionalCalibration):
         self.isource = True
         self.dith = True
         self.mod_ord = frac_calibration.mod_ord
