@@ -7,6 +7,8 @@
       <env name="PYTHONUNBUFFERED" value="1" />
       <env name="BOARD" value="RFSoC4x2" />
       <env name="XILINX_XRT" value="/usr" />
+      <env name="VIRTUAL_ENV" value="/usr/local/share/pynq-venv" />
+      <env name="PATH" value="/usr/local/share/pynq-venv/bin:$PATH " />
     </envs>
     <option name="SDK_HOME" value="sftp://xilinx@rfsoc4x2b.physics.ucsb.edu:22/usr/local/share/pynq-venv/bin/python" />
     <option name="SDK_NAME" value="RFSoC b 3.10.4" />
