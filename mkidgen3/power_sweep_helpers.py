@@ -84,7 +84,7 @@ class Amplifier(Component):
 
 
 class ROChain:
-    def __init__(self, ro_chain: list):
+    def __init__(self, *ro_chain):
         self.ro_chain = ro_chain
         self._index = 0
 

@@ -13,6 +13,7 @@ import numpy as np
 from mkidgen3.util import setup_logging
 from typing import Iterable
 setup_logging('feedlineclient')
+import threading
 # ctx = zmq.Context.instance()
 # ctx.linger = 0
 import pickle
@@ -78,7 +79,7 @@ device_attn = Device("mkid", gain=-3)
 attn20 = Attenuator("4K", gain=-20)
 attn10 = Attenuator("cable atten", gain=-10)
 
-signal_chain = ROChain([dac_attn, attn20, attn10, attn30, device_attn, paramp, hemt, if1, adc_attn1, if2, adc_attn2, if3, if4, if5, attn1, if6])
+signal_chain = ROChain(dac_attn, attn20, attn10, attn30, device_attn, paramp, hemt, if1, adc_attn1, if2, adc_attn2, if3, if4, if5, attn1, if6)
 dev_pow_start, dev_pow_stop = -95, -110
 adc_input_pow = -1
 dac_output_pow = -33 #  This depends on N tones
@@ -89,47 +90,63 @@ dac_attn_stop, _ = calculate_adc_dac_attn(dac_output_pow, dev_pow_stop, signal_c
 
 # COMPUTE ATTEN AND LO LISTS
 attns = compute_power_sweep_attenuations(dac_attn_start, adc_attn_start, dac_attn_stop)
-lo_sweep_freqs = compute_lo_steps(center=0, resolution=7.14e3, bandwidth=2e6) # TODO what is the right resolution
+lo_sweep_freqs = compute_lo_steps(center=0, resolution=7.14e3, bandwidth=2e6)
 
 
 class PowerSweepJob:
-    def __init__(self, lo_sweep_freqs: Iterable[float | int], attns: list[tuple[float | int, float | int]], fc: FeedlineConfig, iq_avg: int = 1024, server=None, endpoint=None):
+    """
+    This class is responsible for gathering power seep data.
+    """
+    def __init__(self, lo_sweep_freqs: Iterable[float | int], attns: list[tuple[float | int, float | int]], fc: FeedlineConfig, iq_avg: int = 1024, server=None, save_as=None):
         self.lo_sweep_freqs = lo_sweep_freqs
         self.attns = attns
         self.iq_avg = iq_avg
         self.server = server
-        self.endpoint = endpoint
-        self.fc = fc
+        self.save_as = save_as
+        self._fc = fc
         self._nchannels = len(fc.waveform.waveform.freqs)
+        self._thread = None
+        self.die = threading.Event()
 
     def start(self):
-        n_jobs = len(lo_sweep_freqs) * len(attns)
-        n = 0
+        if self._thread is not None:
+            raise RuntimeError('May only start once!')
+        self._thread = threading.Thread(target=self._run)
+        self._thread.daemon = False
+        self.die.clear()
+        self._thread.start()
+
+    def _run(self):
+        self._complete = False
         result = np.zeros((self._nchannels, len(self.lo_sweep_freqs), len(self.attns)), dtype=np.complex64)
+        chan = np.arange(self._nchannels)
         for atten_i, attn in enumerate(self.attns):
             for lo_i, lo in enumerate(self.lo_sweep_freqs):
-                ifc = IFConfig(lo=lo, dac_attn=attn[0], adc_attn=attn[1])
-                self.fc.if_board = ifc
-                j = CaptureJob(CaptureRequest(self.iq_avg, 'ddciq', self.fc, self.server, channels=np.arange(self._nchannels), numpy_metric='mean', file=self.endpoint))
+                self._fc.if_board = IFConfig(lo=lo, dac_attn=attn[0], adc_attn=attn[1])
+                j = CaptureJob(CaptureRequest(self.iq_avg, 'ddciq', self._fc, self.server,
+                                              channels=chan, numpy_metric='mean'))
                 try:
-                    while n < n_jobs:
-                        getLogger(__name__).debug(f'submitting job {n} / {n_jobs}')
-                        j.submit(True, True)
-                        j.data(timeout=1)  # block until data is received
-                        result[:, lo_i, atten_i] = j.data().data
-                        n += 1
-                        break
+                    print('submitting job')
+                    j.submit(True, True)
+                    result[:, lo_i, atten_i] = j.data(timeout=60).data  # block until data is received
                 except KeyboardInterrupt:
                     getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
                     j.cancel()
                     break
-        return result
+                if self.die.is_set():
+                    print('die is set')
+                    break
+                if not lo_i:
+                    self._fc = self._fc.hashed_form
+        self._complete = True
+        print('completed')
+        self.result = result
 
 lo_sweep_freqs = [6001,6000]
 attns=[(50,50), (40,40)]
-psj = PowerSweepJob(lo_sweep_freqs, attns, fc, server=frsa)
-j_norm = CaptureJob(CaptureRequest(512, 'ddciq', fc, frsa,  channels=np.arange(psj._nchannels), numpy_metric='mean', file=None))
-j_norm.submit(True, True)
+psj = PowerSweepJob(lo_sweep_freqs, attns, fc, server=frsb)
+j_norm = CaptureJob(CaptureRequest(512, 'ddciq', fc, frsb,  channels=np.arange(psj._nchannels), numpy_metric='mean', file=None))
+#
 psj.start()
-
+j_norm.submit(True, True)
 print('hi')
