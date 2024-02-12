@@ -161,7 +161,17 @@ for i, (chan, ax) in enumerate(zip(monitor_channels, ax.ravel())):
     plt.imshow(np.abs(postage.iqs[postage.ids == chan][:200]), origin='lower')
     plt.ylabel('Event #')
     plt.xlabel('t (us)')
-    plt.tight_layout()
+plt.tight_layout()
+plt.show()
+
+photons = photon_job.data(timeout=20)
+from mkidgen3.server.aggregator import make_image, PixelMap
+map = PixelMap(np.arange(2048, dtype=int), 2048)
+image = make_image(map, photons.data, timestep_us=1000)
+
+photons.data.shape,set(photons.data['phase']/(2**15-1)), set(np.diff(photons.data['time']))
+
+
 
 print(0)
 

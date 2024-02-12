@@ -96,6 +96,32 @@ class PhotonAggregator:
         for job in self._jobs:
             job.datasink.destablish()
 
+
+def make_image(map, photons, timestep_us=None, rate=False):
+    """ Build an image out of the current photon data, specify a timestep (in us) to make a timecube"""
+
+    first, last = photons['time'][[0, -1]]
+    duration_s = (last - first) / 1e6
+    if first >= last:
+        raise ValueError('Last photon time is not after the first!')
+
+    if timestep_us:
+        timebins = (np.arange(first, last + timestep_us, timestep_us, dtype=type(timestep_us)),)
+    else:
+        timebins = tuple()
+    imbins = map.map_bins
+
+    val = map.map[photons['id']]
+    val = (val,) if map.map.ndim == 1 else (val[0], val[1])
+    coord = val + (photons['time'],) if timestep_us else val
+
+    hist, _ = np.histogramdd(coord, bins=imbins + timebins, density=rate)
+    if rate:
+        hist *= photons.size
+        hist /= duration_s if timestep_us is None else 1e6
+
+    return hist
+
 from mkidgen3.mkidpynq import PHOTON_DTYPE
 class PhotonAccumulator:
     def __init__(self, max_ram=100, pixelmap: PixelMap = None, n_channels=None):
@@ -140,28 +166,7 @@ class PhotonAccumulator:
 
     def image(self, timestep_us=None, rate=False):
         """ Build an image out of the current photon data, specify a timestep (in us) to make a timecube"""
-
-        first, last = self.data['time'][[0, -1]]
-        duration_s = (last - first) / 1e6
-        if first >= last:
-            raise ValueError('Last photon time is not after the first!')
-
-        if timestep_us:
-            timebins = (np.arange(first, last + timestep_us, timestep_us, dtype=type(timestep_us)),)
-        else:
-            timebins = tuple()
-        imbins = self.map.map_bins
-
-        val = self.map.map[self.data['id']]
-        val = (val,) if self.map.map.ndim == 1 else (val[0], val[1])
-        coord = val + (self.data['time'],) if timestep_us else val
-
-        hist, _ = np.histogramdd(coord, bins=imbins + timebins, density=rate)
-        if rate:
-            hist *= self.n
-            hist /= duration_s if timestep_us is None else 1e6
-
-        return hist
+        return make_image(self.map, self.data[:self.n], timestep_us=timestep_us, rate=rate)
 
 
 
