@@ -395,9 +395,17 @@ class TRFPowerDown(IntFlag):
     BUFF4 = auto()
 
 @dataclass
-class TRFCalibration:
+class TRFVCOCalibration:
     vco_sel: int
     vco_trim: int
+
+@dataclass
+class TRFFractionalCalibration:
+    mod_ord: int
+    isource_sink: bool
+    isource_trim: int
+
+DEFAULT_FRACCAL = TRFFractionalCalibration(0b10, False, 0b100)
 
 @dataclass
 class TRFDividerConfig:
@@ -499,7 +507,7 @@ class TRFDividerConfig:
 class TRFCalibrationCertificate:
     token: int
     divider_config: TRFDividerConfig
-    calibration: TRFCalibration
+    vco_calibration: TRFVCOCalibration
 
     @property
     def frequency(self) -> Fraction:
@@ -530,7 +538,7 @@ class TRF3765:
                 self.prsc_sel,
                 self.f_ref
             ),
-            TRFCalibration(
+            TRFVCOCalibration(
                 self.vco_sel_readback,
                 self.vco_trim_readback,
             )
@@ -550,6 +558,18 @@ class TRF3765:
         while self.en_cal:
             pass
         self.powerdown_parts = old_power
+
+    def _set_fractional_cal(self, frac_calibration: TRFFractionalCalibration):
+        self.isource = True
+        self.dith = True
+        self.mod_ord = frac_calibration.mod_ord
+        self.dith_sel = False
+        self.del_sd_clk = 0b10
+        self.en_frac = True
+        self.ld_isource = False
+        self.isource_sink = frac_calibration.isource_sink
+        self.isource_trim = frac_calibration.isource_trim
+        self.icpdouble = False
 
     @field(slice(5, 18))
     def rdiv(self):
@@ -615,12 +635,40 @@ class TRF3765:
     def isource(self):
         return self.r4
 
+    @field_bool(25)
+    def dith(self):
+        return self.r4
+
+    @field(slice(26, 28))
+    def mod_ord(self):
+        return self.r4
+
+    @field_bool(28)
+    def dith_sel(self):
+        return self.r4
+
+    @field(slice(29, 31))
+    def del_sd_clk(self):
+        return self.r4
+
     @field_bool(31)
     def en_frac(self):
         return self.r4
 
+    @field_bool(31)
+    def ld_isource(self):
+        return self.r5
+
     @field(slice(7, 13))
     def vco_trim(self):
+        return self.r6
+
+    @field_bool(19)
+    def isource_sink(self):
+        return self.r6
+
+    @field(slice(20, 23))
+    def isource_trim(self):
         return self.r6
 
     @field(slice(23, 25))
