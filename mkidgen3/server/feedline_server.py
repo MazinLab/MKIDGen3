@@ -8,6 +8,7 @@ from mkidgen3.server.captures import CaptureRequest
 from mkidgen3.server.feedline_config import RFDCConfig
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
 from mkidgen3.server.misc import zpipe
+from mkidgen3.util import check_active_jupyter_notebook
 import asyncio
 import zmq
 import threading
@@ -281,6 +282,7 @@ class FeedlineReadoutServer:
             try:
                 self.hardware.apply_config(cr.id, cr.feedline_config)
             except Exception as e:
+                self.hardware.derequire_config(id)  # Not  necessary as we are dying, but let's die in a clean house
                 getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
                 self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False, also=cr)
                 break
@@ -368,6 +370,9 @@ if __name__ == '__main__':
     os.environ['TZ'] = 'right/UTC'
     time.tzset()
     setup_logging('feedlinereadoutserver')
+
+    if check_active_jupyter_notebook():
+        raise RuntimeError('Jupyter notebooks are running, shut them down first.')
 
     args = parse_cl()
 

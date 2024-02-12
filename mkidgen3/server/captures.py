@@ -13,14 +13,14 @@ from datetime import datetime
 import os
 from hashlib import md5
 from mkidgen3.server.misc import zpipe
-from mkidgen3.util import print_bytes
+from mkidgen3.util import format_bytes
 from mkidgen3.funcs import convert_adc_raw_to_mv, raw_iq_to_unit, raw_phase_to_radian
 from ..system_parameters import SYSTEM_BANDWIDTH
 from mkidgen3.rfsocmemory import memfree_mib
 from .feedline_config import FeedlineConfig, WaveformConfig, IFConfig
 from ..mkidpynq import PHOTON_DTYPE
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, N_POSTAGE_CHANNELS, \
-    PHOTON_POSTAGE_WINDOW_LENGTH, MAXIMUM_DESIGN_COUNTRATE_PER_S, PHASE_IQ_INPUT_FRACTIONAL_BITS
+    PHOTON_POSTAGE_WINDOW_LENGTH, MAXIMUM_DESIGN_COUNTRATE_PER_S
 from functools import cached_property
 from mkidgen3.mkidpynq import unpack_photons
 
@@ -350,7 +350,8 @@ class CaptureRequest:
         if lend > 1.0:
             getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
         else:
-            getLogger(__name__).debug(f'Sending {print_bytes(len(compressed))} , compressed to {cval:.1f}%')
+            getLogger(__name__).debug(f'Sending {format_bytes(len(compressed))}, '
+                                      f'compressed {cval:.1f}% from {format_bytes(data.nbytes)}.')
         return tracker
 
     def _send_status(self, status, message=''):
@@ -506,7 +507,7 @@ class CaptureSink(threading.Thread):
                 if not data:
                     getLogger(__name__).debug(f'Received null, capture data stream over')
                     break
-                getLogger(__name__).debug(f'Received {print_bytes(len(data))} of {print_bytes(self._expected_bytes)} for {self}')
+                getLogger(__name__).debug(f'Received {format_bytes(len(data))} of {format_bytes(self._expected_bytes)} for {self}')
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
@@ -545,9 +546,9 @@ class StreamCaptureSink(CaptureSink):
                 f'Received data has {dtype_bytes} bytes per sample. Data may be lost in cast to int16 (2 bytes).')
 
         if bytes_recv > self._expected_bytes:
-            getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}. Expected {print_bytes(self._expected_bytes)} got {print_bytes(bytes_recv)}.')
+            getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}. Expected {format_bytes(self._expected_bytes)} got {format_bytes(bytes_recv)}.')
         elif bytes_recv < self._expected_bytes:
-            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}. Expected {print_bytes(self._expected_bytes)} got {print_bytes(bytes_recv)}.')
+            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}. Expected {format_bytes(self._expected_bytes)} got {format_bytes(bytes_recv)}.')
         # TODO this might technically be a memory leak if we captured more data
         self.result = np.frombuffer(self._buf, count=np.prod(shape, dtype=int), dtype=dtype).reshape(shape).squeeze()
 

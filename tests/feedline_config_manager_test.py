@@ -22,7 +22,7 @@ freqs = waveform.waveform.freqs
 # Bin2Res Config
 bins = np.zeros(2048, dtype=int)
 bins[:freqs.size] = opfb_bin_number(freqs, ssr_raw_order=True)
-chan = ChannelConfig(frequencies=bins)
+chan = ChannelConfig(bins=bins)
 
 # DDC Config
 ddc_tones = np.zeros(2048)

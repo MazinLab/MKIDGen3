@@ -11,7 +11,7 @@ from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureRequest
-from mkidgen3.util import check_zmq_abort_pipe, AbortedException, print_bytes, compute_max_val
+from mkidgen3.util import check_zmq_abort_pipe, AbortedException, format_bytes, compute_max_val
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
@@ -162,6 +162,9 @@ class FeedlineHardware:
                 clk_period_ns=1.953125,
                 timeout=5,
                 poll=1000*1000*1000)
+
+        #NB these if comparisons must not be "is None" as an empty config can't be used to trigger reconfiguration
+
         if fl_setup.if_board:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             try:
@@ -169,7 +172,7 @@ class FeedlineHardware:
             except Exception as e:
                 getLogger(__name__).warning(f"Unable to connect to IF board: {e}, proceeding without IF board.")
 
-        if fl_setup.waveform is not None:
+        if fl_setup.waveform:
             getLogger(__name__).debug(f'Configure DAC with {fl_setup.waveform.settings_dict()}')
             self._ol.dac_table.configure(**fl_setup.waveform.settings_dict())
 
@@ -261,10 +264,10 @@ class FeedlineHardware:
         if cr.channels is not None:  # channel-specific capture
             usr_channels = cr.channels
             if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
-                getLogger(__name__).debug(f'Requested channel capture of {print_bytes(cr.size_bytes)} '
-                                          f'requires {print_bytes(hw_size_bytes)}')
+                getLogger(__name__).debug(f'Requested channel capture of {format_bytes(cr.size_bytes)} '
+                                          f'requires {format_bytes(hw_size_bytes)}')
                 getLogger(__name__).debug(f'Requested channel subset of hardware capture '
-                                              f'will copy {print_bytes(cr.size_bytes)} '
+                                              f'will copy {format_bytes(cr.size_bytes)} '
                                               f'PL buffer to PS RAM.')
                 channel_sel = np.where(np.in1d(hw_channels, usr_channels))[0]
                 buf_shape = (chunks[0], len(usr_channels))
