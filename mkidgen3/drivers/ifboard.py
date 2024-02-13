@@ -200,7 +200,7 @@ class IFBoard(SerialDevice):
             raise DeprecationWarning("No longer implemented")
         if full_calibration == False:
             raise DeprecationWarning("To set lo without full calibration obtain a calibration certificate")
-        self.trf_control.set_output(freq_mhz / 2, fractional)
+        self.trf_control.set_output(freq_mhz / 2, wait_for_lock=False, fractional = fractional)
 
     def set_attens(self, output_attens: (float, Tuple[float], List[float], None) = None,
                    input_attens: (float, Tuple[float], List[float], None) = None):
@@ -600,7 +600,7 @@ class TRFCalibrationCertificate:
         return self.divider_config.frequency
 
 class TRF3765:
-    def __init__(self, rwhandle, f_ref, outputs = TRFPowerDown.BUFF1 | TRFPowerDown.BUFF2):
+    def __init__(self, rwhandle, f_ref, outputs = TRFPowerDown.BUFF1):
         self.r0 = _TRFReg(0, rwhandle)
         self.r1 = _TRFReg(1, rwhandle)
         self.r2 = _TRFReg(2, rwhandle)
