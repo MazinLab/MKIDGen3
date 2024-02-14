@@ -331,19 +331,19 @@ class CaptureRequest:
         else:
             data = np.array(data) if copy else data
         times = []
-        times.append(time.time())
+        times.append(time.perf_counter())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         do_compression = compress if self._compression_override is None else not self._compression_override
         compressed = blosc2.compress(data) if do_compression else data
-        times.append(time.time())
+        times.append(time.perf_counter())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         lend = len(compressed) / 1024 ** 2
-        times.append(time.time())
+        times.append(time.perf_counter())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         self._send_status('capturing', status)
-        times.append(time.time())
+        times.append(time.perf_counter())
         tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
-        times.append(time.time())
+        times.append(time.perf_counter())
         # getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
         #                                    (np.diff(times) * 1000).astype(int))))
         cval = 100 * lend / (data.nbytes / 1024 ** 2) if data.nbytes else 100
@@ -533,6 +533,20 @@ class StreamCaptureSink(CaptureSink):
     def _finalize_data(self):
         # raw adc data is i0q0 i1q1 int16
         bytes_recv = len(self._buf)
+        if not bytes_recv:
+            getLogger(__name__).warning(f'No data received for {self.cap_id}. '
+                                        f'Expected {format_bytes(self._expected_bytes)}.')
+            return
+        elif bytes_recv > self._expected_bytes:
+            getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}. '
+                                        f'Expected {format_bytes(self._expected_bytes)} got '
+                                        f'{format_bytes(bytes_recv)}.')
+        elif bytes_recv < self._expected_bytes:
+            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}. '
+                                        f'Expected {format_bytes(self._expected_bytes)} got '
+                                        f'{format_bytes(bytes_recv)}.')
+
+
         samples_recv = int(len(self._buf) / 2 // np.prod(self._expected_buffer_shape[1:]))  # / 2 for 2 bytes per I or Q
         shape = (min(samples_recv, self._expected_buffer_shape[0]),) + self._expected_buffer_shape[1:]
 
@@ -542,13 +556,9 @@ class StreamCaptureSink(CaptureSink):
         else:
             dtype = np.int16
             if dtype_bytes != 2:
-                getLogger(__name__).warning(
-                f'Received data has {dtype_bytes} bytes per sample. Data may be lost in cast to int16 (2 bytes).')
+                getLogger(__name__).warning(f'Received data has {dtype_bytes} bytes per sample. '
+                                            f'Data may be lost in cast to int16 (2 bytes).')
 
-        if bytes_recv > self._expected_bytes:
-            getLogger(__name__).warning(f'Received more data than expected for {self.cap_id}. Expected {format_bytes(self._expected_bytes)} got {format_bytes(bytes_recv)}.')
-        elif bytes_recv < self._expected_bytes:
-            getLogger(__name__).warning(f'Finalizing incomplete capture data for {self.cap_id}. Expected {format_bytes(self._expected_bytes)} got {format_bytes(bytes_recv)}.')
         # TODO this might technically be a memory leak if we captured more data
         self.result = np.frombuffer(self._buf, count=np.prod(shape, dtype=int), dtype=dtype).reshape(shape).squeeze()
 
@@ -556,19 +566,22 @@ class StreamCaptureSink(CaptureSink):
 class ADCCaptureSink(StreamCaptureSink):
     def _finalize_data(self):
         super()._finalize_data()
-        self.result = ADCCaptureData(self.result)
+        if self.result:
+            self.result = ADCCaptureData(self.result)
 
 
 class IQCaptureSink(StreamCaptureSink):
     def _finalize_data(self):
         super()._finalize_data()
-        self.result = IQCaptureData(self.result)
+        if self.result:
+            self.result = IQCaptureData(self.result)
 
 
 class PhaseCaptureSink(StreamCaptureSink):
     def _finalize_data(self):
         super()._finalize_data()
-        self.result = PhaseCaptureData(self.result)
+        if self.result:
+            self.result = PhaseCaptureData(self.result)
 
 
 class SimplePhotonSink(CaptureSink):

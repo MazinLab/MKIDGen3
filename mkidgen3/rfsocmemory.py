@@ -1,5 +1,5 @@
 import psutil
-
+import blosc2
 from mkidgen3.system_parameters import PL_TOTAL_BYTES, SYSTEM_OVERHEAD_BYTES, COMPRESSION_OVERHEAD_BYTES
 
 
@@ -31,8 +31,11 @@ def determine_max_chunk(domain: str, assume_compression=False, demands: list | t
     demands = list(demands) if demands else []
 
     if assume_compression:
-        demands.append(COMPRESSION_OVERHEAD_BYTES)
+        demands.append(blosc2.MAX_OVERHEAD)
 
     left = int(total - sum(demands))
+
+    if assume_compression:
+        left = min(blosc2.MAX_BUFFERSIZE, left)
 
     return left

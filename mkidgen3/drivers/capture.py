@@ -167,6 +167,7 @@ class CaptureHierarchy(DefaultHierarchy):
     IQ_MAP = {'rawiq': 0, 'ddciq': 1, 'debugiq': 2}  #tap name MUST include 'iq' and shall not include 'phase'
     PHASE_MAP = {'filtphase': 0, 'debugphase': 1} #tap name MUST include 'phase' and shall not include 'iq'
     SOURCE_MAP = dict(adc=0, rawiq=1, ddciq=2, filtphase=3, debugiq=4, debugphase=5)
+    USE_CACHEABLE_BUFFERS = False
 
     def __init__(self, description):
         super().__init__(description)
@@ -234,10 +235,10 @@ class CaptureHierarchy(DefaultHierarchy):
     def flush(self, n):
         """Capture n*64 bytes to flush a fifo"""
         buffer = allocate(n, dtype='u64', target=self.ddr4_0)
-        self.axis2mm.addr = buffer
+        self.axis2mm.addr = buffer.device_address
         self.axis2mm.len = 64 * n
         self.axis2mm.start(continuous=False, increment=True)
-        buffer.freebuffer()
+        del buffer
 
     def looping_capture(self, source: str, n: int, buffers: pynq.buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')
@@ -373,7 +374,8 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * n_groups * 32
 
         try:
-            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_0)
+            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_,
+                              cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -429,7 +431,8 @@ class CaptureHierarchy(DefaultHierarchy):
             raise RuntimeError('Not enough RAM to copy capture to complex')
 
         try:
-            buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0)
+            buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0,
+                              cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -497,7 +500,8 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * 2 * n_groups * 16
 
         try:
-            buffer = allocate((n, n_groups * 16), dtype='i2', target=self.ddr4_0)
+            buffer = allocate((n, n_groups * 16), dtype='i2', target=self.ddr4_0,
+                              cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -527,10 +531,10 @@ class CaptureHierarchy(DefaultHierarchy):
         """A helper function to capture data just after bin2res and after the ddc"""
         x = self.capture_iq(n_points, 'all', tap_location='rawiq')
         riq = np.array(x)
-        x.freebuffer()
+        del x
         x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         iq = np.array(x)
-        x.freebuffer()
+        del x
         riq = riq[..., 0] + riq[..., 1] * 1j
         iq = iq[..., 0] + iq[..., 1] * 1j
         return riq, iq
@@ -539,10 +543,10 @@ class CaptureHierarchy(DefaultHierarchy):
         """A helper function to capture data just after the ddc and after matched filters"""
         x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         riq = np.array(x)
-        x.freebuffer()
+        del x
         x = self.capture_phase(n_points, 'all', tap_location='filtphase')
         phase = np.array(x)
-        x.freebuffer()
+        del x
         riq = riq[..., 0] + riq[..., 1] * 1j
         return riq, phase
 
