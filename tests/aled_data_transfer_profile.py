@@ -33,5 +33,5 @@ tap = 'adc'
 cr = CaptureRequest(n=4*2**28, tap=tap, feedline_config=fc, feedline_server=frsa)
 j = CaptureJob(cr)
 j.submit(True, True)
-result = j.data(timeout=300).data
+result = j.data(timeout=300)
 print('hi')
