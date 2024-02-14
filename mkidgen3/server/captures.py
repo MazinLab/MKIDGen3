@@ -567,21 +567,21 @@ class StreamCaptureSink(CaptureSink):
 class ADCCaptureSink(StreamCaptureSink):
     def _finalize_data(self):
         super()._finalize_data()
-        if self.result:
+        if self.result is not None:
             self.result = ADCCaptureData(self.result)
 
 
 class IQCaptureSink(StreamCaptureSink):
     def _finalize_data(self):
         super()._finalize_data()
-        if self.result:
+        if self.result is not None:
             self.result = IQCaptureData(self.result)
 
 
 class PhaseCaptureSink(StreamCaptureSink):
     def _finalize_data(self):
         super()._finalize_data()
-        if self.result:
+        if self.result is not None:
             self.result = PhaseCaptureData(self.result)
 
 
