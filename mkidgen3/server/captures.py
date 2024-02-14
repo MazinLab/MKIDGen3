@@ -350,9 +350,9 @@ class CaptureRequest:
         #getLogger(__name__).debug(profile.get_stats())
         times = np.diff(times) * 1000
         getLogger(__name__).debug(f'Compress {times[0]:.2f} ms, Status Up {times[1]:.2f}, Send {times[2]:.2f}')
-        cval = 100 * len(compressed) / (data.nbytes / 1024 ** 2) if data.nbytes else 100
+        cval = 100 * len(compressed) / data.nbytes if data.nbytes else 100
         getLogger(__name__).debug(f'Sending {format_bytes(len(compressed))}, '
-                                  f'compressed {cval:.1f}% from {format_bytes(data.nbytes)}.')
+                                  f'compressed to {cval:.1f} % from {format_bytes(data.nbytes)}.')
         return tracker
 
     def _send_status(self, status, message=''):

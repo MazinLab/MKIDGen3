@@ -167,7 +167,7 @@ class CaptureHierarchy(DefaultHierarchy):
     IQ_MAP = {'rawiq': 0, 'ddciq': 1, 'debugiq': 2}  #tap name MUST include 'iq' and shall not include 'phase'
     PHASE_MAP = {'filtphase': 0, 'debugphase': 1} #tap name MUST include 'phase' and shall not include 'iq'
     SOURCE_MAP = dict(adc=0, rawiq=1, ddciq=2, filtphase=3, debugiq=4, debugphase=5)
-    USE_CACHEABLE_BUFFERS = False
+    USE_CACHEABLE_BUFFERS = True
 
     def __init__(self, description):
         super().__init__(description)
