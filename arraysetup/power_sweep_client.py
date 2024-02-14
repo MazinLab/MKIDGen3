@@ -128,7 +128,9 @@ class PowerSweepJob:
                 try:
                     print('submitting job')
                     j.submit(True, True)
+                    print('submitted job')
                     result[:, lo_i, atten_i] = j.data(timeout=60).data  # block until data is received
+                    print('received data')
                 except KeyboardInterrupt:
                     getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
                     j.cancel()
@@ -144,7 +146,7 @@ class PowerSweepJob:
 
 lo_sweep_freqs = [6001,6000]
 attns=[(50,50), (40,40)]
-psj = PowerSweepJob(lo_sweep_freqs, attns, fc, server=frsb)
+psj = PowerSweepJob(lo_sweep_freqs, attns, fc, server=frsa)
 j_norm = CaptureJob(CaptureRequest(512, 'ddciq', fc, frsb,  channels=np.arange(psj._nchannels), numpy_metric='mean', file=None))
 #
 psj.start()

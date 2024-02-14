@@ -11,7 +11,7 @@ from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureRequest
-from mkidgen3.util import check_zmq_abort_pipe, AbortedException, format_bytes, compute_max_val
+from mkidgen3.util import check_zmq_abort_pipe, AbortedException, format_bytes, compute_max_val, format_time
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
@@ -308,9 +308,9 @@ class FeedlineHardware:
 
                 data.freebuffer()
                 times.append(time.perf_counter())
-
-                getLogger(__name__).debug(list((np.diff(times) * 1000).astype(int)))
-
+                times_str = [format_time(x) for x in np.diff((times))]
+                labels = ['check abort','execute capture','optionally slice','send data','wait for tracker','free buffer']
+                getLogger(__name__).debug(list(zip(labels, times_str)))
             cr.finish()
         except AbortedException as e:
             cr.abort(e)

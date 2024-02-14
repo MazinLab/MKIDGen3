@@ -49,6 +49,25 @@ def format_sample_duration(fs: float, n_samp: int) -> str:
     elif seconds > 1e-9:
         return f'{seconds / 1e-9:.2f} nanoseconds'
 
+def format_time(t: float) -> str:
+    """
+    Print the time in a convenient order of magnitude.
+    Args:
+        t: time in seconds
+
+    Returns:
+    For Ex: '0.5 Seconds'
+
+    """
+
+    if t > 0.1:
+        return f'{t:.2f} seconds'
+    elif t > 1e-3:
+        return f'{t / 1e-3:.2f} milliseconds'
+    elif t > 1e-6:
+        return f'{t / 1e-6:.2f} microseconds'
+    elif t > 1e-9:
+        return f'{t / 1e-9:.2f} nanoseconds'
 
 def format_bytes(n_bytes: int) -> str:
     """
