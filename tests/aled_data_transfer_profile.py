@@ -1,22 +1,12 @@
-import copy
-import functools
 from logging import getLogger
-
 import zmq
 from mkidgen3.server.feedline_config import IFConfig, FeedlineConfig, BitstreamConfig, RFDCClockingConfig, RFDCConfig, WaveformConfig, ChannelConfig, DDCConfig, FeedlineConfig, FilterConfig, TriggerConfig
-from mkidgen3.server.captures import CaptureJob, FRSClient, CaptureRequest,StatusListener
+from mkidgen3.server.captures import CaptureJob, FRSClient, CaptureRequest, StatusListener
 from mkidgen3.server.waveform import WaveformFactory
 from mkidgen3.server.feedline_config import FeedlineConfigManager
-from mkidgen3.power_sweep_helpers import *
-from mkidgen3.opfb import opfb_bin_number
 import numpy as np
 from mkidgen3.util import setup_logging
-from typing import Iterable
 setup_logging('feedlineclient')
-import threading
-# ctx = zmq.Context.instance()
-# ctx.linger = 0
-import pickle
 
 frsa = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
@@ -35,10 +25,13 @@ fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     if_board=if_board, waveform=WaveformConfig(), chan=ChannelConfig(), ddc=DDCConfig(),
                     filter=FilterConfig(), trig=TriggerConfig())
 
-one_gib_adc = 2**19
-four_GiB_adc = 2**19
-size = one_gib_adc
+one_gib_adc = 2**28
+four_gib_adc = 4*2**28
+
+size = four_gib_adc
 tap = 'adc'
-j = CaptureJob(CaptureRequest(n=size, tap=tap, feedline_config=fc, feedline_server=frsa))
+cr = CaptureRequest(n=4*2**28, tap=tap, feedline_config=fc, feedline_server=frsa)
+j = CaptureJob(cr)
 j.submit(True, True)
+result = j.data(timeout=300).data
 print('hi')
