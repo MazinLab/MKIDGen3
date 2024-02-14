@@ -330,28 +330,30 @@ class CaptureRequest:
             data = out
         else:
             data = np.array(data) if copy else data
+
+        do_compression = compress if self._compression_override is None else not self._compression_override
+
+        # from line_profiler import LineProfiler
+        # profile = LineProfiler()
+        # profile.enable_by_count()
         times = []
         times.append(time.perf_counter())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        do_compression = compress if self._compression_override is None else not self._compression_override
         compressed = blosc2.compress(data) if do_compression else data
-        times.append(time.perf_counter())
-        #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
-        lend = len(compressed) / 1024 ** 2
         times.append(time.perf_counter())
         #        getLogger(__name__).debug(f'MiB Free: {memfree_mib()}')
         self._send_status('capturing', status)
         times.append(time.perf_counter())
         tracker = self._data_socket.send_multipart([self.id, compressed], copy=False, track=not copy)
         times.append(time.perf_counter())
-        # getLogger(__name__).debug(list(zip(('Compress', 'Len compute', 'Status', 'Ship'),
-        #                                    (np.diff(times) * 1000).astype(int))))
-        cval = 100 * lend / (data.nbytes / 1024 ** 2) if data.nbytes else 100
-        if lend > 1.0:
-            getLogger(__name__).debug(f'Sending {lend:.1f} MiB, compressed to {cval:.1f}%')
-        else:
-            getLogger(__name__).debug(f'Sending {format_bytes(len(compressed))}, '
-                                      f'compressed {cval:.1f}% from {format_bytes(data.nbytes)}.')
+        # profile.disable_by_count()
+        #getLogger(__name__).debug(profile.get_stats())
+        times = np.diff(times) * 1000
+        getLogger(__name__).debug(f'Compress {times[0]:.2f} ms, len() {times[1]:.2f}, '
+                                  f'Status Up {times[2]:.2f}, Send {times[3]:.2f}')
+        cval = 100 * len(compressed) / (data.nbytes / 1024 ** 2) if data.nbytes else 100
+        getLogger(__name__).debug(f'Sending {format_bytes(len(compressed))}, '
+                                  f'compressed {cval:.1f}% from {format_bytes(data.nbytes)}.')
         return tracker
 
     def _send_status(self, status, message=''):
