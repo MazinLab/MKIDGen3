@@ -5,11 +5,11 @@ import numpy as np
 import numpy.typing as nt
 
 from typing import Optional, Type, NewType
-from types import NoneType
 from dataclasses import dataclass
 from abc import ABC
 
-from mkidgen3.server.feedline_config import WaveformConfig
+from mkidgen3.server.feedline_config import WaveformConfig, IFConfig
+from mkidgen3.server.captures import CaptureJob, CaptureRequest
 
 LO_QUANT = 0.596
 
@@ -67,7 +67,8 @@ class SweepConfig:
         ddccontrol.configure(**self.waveform.default_ddc_config.settings_dict())
         return self
 
-    def run_sweep(self, ifboard, capture) -> "Sweep":
+    # TODO: Refactor these to be common:
+    def run_sweep(self, ifboard, capture, progress=True) -> "Sweep":
         tones = self.waveform.waveform.freqs
         iq = np.empty((tones.size, self.steps.size), np.complex64)
         rms = np.empty((tones.size, self.steps.size), np.complex64)
@@ -75,19 +76,53 @@ class SweepConfig:
             ifboard.set_attens(
                 input_attens=self.attens[1], output_attens=self.attens[0]
             )
-        for i, step in enumerate(self.steps):
-            ifboard.set_lo(
-                step + self.lo_center,
-                fractional=True,
-                g2_mode=False,
-                full_calibration=True,
-            )
+        it = enumerate(self.steps)
+        if progress:
+            import tqdm
+
+            it = tqdm.tqdm(it, leave=False if progress == "nested" else True)
+        for i, step in it:
+            ifboard.set_lo(step + self.lo_center)
             piq, prms = self._get_iq_point_rms(capture)
             iq[::, i] = piq[: tones.size]
             rms[::, i] = prms[: tones.size]
-        ifboard.set_lo(
-            self.lo_center, fractional=True, g2_mode=False, full_calibration=True
-        )
+        ifboard.set_lo(self.lo_center)
+        return Sweep(iq, rms / np.sqrt(self.average), self)
+
+    def run_sweep_frs(self, frs, feedline_config_base, progress=True):
+        tones = self.waveform.waveform.freqs
+        iq = np.empty((tones.size, self.steps.size), np.complex64)
+        rms = np.empty_like(iq)
+        it = enumerate(self.steps)
+        if progress:
+            import tqdm
+
+            it = tqdm.tqdm(it, leave=False if progress == "nested" else True)
+        for i, step in it:
+            feedline_config_base.if_board = IFConfig(
+                lo=self.lo_center + step,
+                dac_atten=None if self.attens is None else self.attens[0],
+                adc_atten=None if self.attens is None else self.attens[1],
+            )
+            j = CaptureJob(
+                CaptureRequest(
+                    self.average,
+                    self.tap,
+                    feedline_config_base,
+                    frs,
+                    self.waveform.default_channel_config.bins,
+                )
+            )
+            try:
+                j.submit(True, True)
+                d = j.data(1 << 30).data
+                iq[::, i].real = np.mean(d.real, axis=0)
+                iq[::, i].imag = np.mean(d.imag, axis=0)
+                rms[::, i].real = np.std(d.real, axis=0)
+                rms[::, i].imag = np.std(d.imag, axis=0)
+            except KeyboardInterrupt:
+                j.cancel()
+                raise KeyboardInterrupt
         return Sweep(iq, rms / np.sqrt(self.average), self)
 
     def frequencies(self) -> nt.NDArray[np.float64]:
@@ -175,9 +210,13 @@ class CombSweepConfig(SweepConfig):
             steps, waveform, lo_center, average, attens, overlap=overlap
         )
 
-    def run_sweep(self, ifboard, capture) -> "CombSweep":
-        s = super().run_sweep(ifboard, capture)
+    def run_sweep(self, ifboard, capture, progress=True) -> "CombSweep":
+        s = super().run_sweep(ifboard, capture, progress)
         return CombSweep(s.iq, s.iqsigma, self)
+
+    def run_sweep_frs(self, frs, feedline_config_base, progress=True) -> "CombSweep":
+        s = super().run_sweep_frs(frs, feedline_config_base, progress=progress)
+        return CombSweep(s.iq, s.sigma, self)
 
 
 @dataclass
@@ -377,7 +416,7 @@ class PowerSweepConfig:
             )
         return PowerSweepConfig(attens, sweep_config)
 
-    def run_powersweep(self, ifboard, capture, progress=False) -> "PowerSweep":
+    def run_powersweep(self, ifboard, capture, progress=True) -> "PowerSweep":
         sweeps = {}
         iter = self.attens.items()
         if progress:
@@ -389,7 +428,27 @@ class PowerSweepConfig:
             this_sweepconfig.attens = (output_atten, input_atten)
             sweeps[output_atten] = (
                 input_atten,
-                this_sweepconfig.run_sweep(ifboard, capture),
+                this_sweepconfig.run_sweep(ifboard, capture, progress="nested"),
+            )
+        return PowerSweep(self, sweeps)
+
+    def run_powersweep_frs(
+        self, frs, feedline_config_base, progress=True
+    ) -> "PowerSweep":
+        sweeps = {}
+        iter = self.attens.items()
+        if progress:
+            import tqdm
+
+            iter = tqdm.tqdm(iter)
+        for output_atten, input_atten in iter:
+            this_sweepconfig = copy.copy(self.sweep_config)
+            this_sweepconfig.attens = (output_atten, input_atten)
+            sweeps[output_atten] = (
+                input_atten,
+                this_sweepconfig.run_sweep(
+                    frs, feedline_config_base, progress="nested"
+                ),
             )
         return PowerSweep(self, sweeps)
 
