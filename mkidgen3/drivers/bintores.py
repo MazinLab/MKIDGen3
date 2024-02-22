@@ -1,4 +1,5 @@
 from pynq import DefaultIP
+from logging import getLogger
 from mkidgen3.opfb import opfb_bin_number
 
 
@@ -72,4 +73,5 @@ class BinToResIP(DefaultIP):
             self._write_group(i, bins[i * 8:i * 8 + 8])
 
     def configure(self, bins=None):
+        getLogger(__name__).info(f'Configuring bin2res with bins {bins}')
         self.bins = bins

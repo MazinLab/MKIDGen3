@@ -9,7 +9,7 @@ from typing import Iterable
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
     check_description_for  # config, overlay details
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel, ADC_INPUT_WARN
-from ..util import ps_ram_sane, print_bytes
+from ..util import ps_ram_sane, format_bytes
 from ..interrupts import ThreadedPLInterruptManager
 
 
@@ -71,7 +71,7 @@ class FilterIQ(DefaultIP):
 
             if len(groups) % 2:
                 groups.add(set(range(256)).difference(groups).pop())
-            last = max(groups)
+            last = int(max(groups))
             if max(groups) > N_IQ_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-{N_IQ_GROUPS-1}')
 
@@ -136,7 +136,7 @@ class FilterPhase(DefaultIP):
         else:
             if len(groups) % 2:
                 groups.add(set(range(512)).difference(groups).pop())
-            last = max(groups)
+            last = int(max(groups))
 
             if max(groups) > N_PHASE_GROUPS-1 or min(groups) < 0:
                 raise ValueError(f'Groups must be in range 0-{N_PHASE_GROUPS-1}')
@@ -167,6 +167,7 @@ class CaptureHierarchy(DefaultHierarchy):
     IQ_MAP = {'rawiq': 0, 'ddciq': 1, 'debugiq': 2}  #tap name MUST include 'iq' and shall not include 'phase'
     PHASE_MAP = {'filtphase': 0, 'debugphase': 1} #tap name MUST include 'phase' and shall not include 'iq'
     SOURCE_MAP = dict(adc=0, rawiq=1, ddciq=2, filtphase=3, debugiq=4, debugphase=5)
+    USE_CACHEABLE_BUFFERS = True
 
     def __init__(self, description):
         super().__init__(description)
@@ -234,10 +235,10 @@ class CaptureHierarchy(DefaultHierarchy):
     def flush(self, n):
         """Capture n*64 bytes to flush a fifo"""
         buffer = allocate(n, dtype='u64', target=self.ddr4_0)
-        self.axis2mm.addr = buffer
+        self.axis2mm.addr = buffer.device_address
         self.axis2mm.len = 64 * n
         self.axis2mm.start(continuous=False, increment=True)
-        buffer.freebuffer()
+        del buffer
 
     def looping_capture(self, source: str, n: int, buffers: buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')
@@ -284,7 +285,7 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.len = n
         _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
         e.clear()
-        getLogger(__name__).debug(f'Starting capture of {print_bytes(n)} ({n // 64} beats) to address {hex(buffer_addr)} from '
+        getLogger(__name__).debug(f'Starting capture of {format_bytes(n)} ({n // 64} beats) to address {hex(buffer_addr)} from '
                                   f'source {source}: \n Interrupt Status:' +
                                   str(ThreadedPLInterruptManager.get_status(self.axis2mm._interrupts['o_int']['fullpath'])))
         self.axis2mm.start(continuous=False, increment=True)
@@ -312,6 +313,19 @@ class CaptureHierarchy(DefaultHierarchy):
             return (1,)
 
     def capture(self, n, tap, groups='all', wait=True):
+        """
+        Do a capture to PL Ram
+        Args:
+            n: the number of samples to capture, will be truncated to the nearest capturable amount.
+            tap: an iq, phase, or adc capture tap location. 'adc' or see IQ_MAP and PHASE_MAP keys. Raises value error
+            if invalid.
+            groups: Which sample groups to capture (only relevant for iq and phase)
+            wait: wait for the capture to complete. If not waiting it is necessary to call axis2mm.errors()
+            to check for any capture errors. If there are errors axis2mm.clear_errors() will be called.
+
+        Returns: The capture buffer or a dictionary of capture errors
+
+        """
         try:
             assert (int(n)-n) == 0
             n = int(n)
@@ -319,14 +333,23 @@ class CaptureHierarchy(DefaultHierarchy):
             raise TypeError('n must be effectively an integer')
 
         if tap in self.IQ_MAP:
-            return self.capture_iq(n, tap_location=tap, duration=False, groups=groups, wait=wait)
+            buf = self.capture_iq(n, tap_location=tap, duration=False, groups=groups, wait=wait)
         elif tap in self.PHASE_MAP:
-            return self.capture_phase(n, tap_location=tap, duration=False, groups=groups, wait=wait)
+            buf = self.capture_phase(n, tap_location=tap, duration=False, groups=groups, wait=wait)
         elif tap == 'adc':
-            return self.capture_adc(n, complex=False, duration=False, wait=wait)
+            buf = self.capture_adc(n, complex=False, duration=False, wait=wait)
         else:
             valid = ('adc',) + tuple(self.IQ_MAP.keys()) + tuple(self.PHASE_MAP.keys())
             raise ValueError(f'{tap} is not a valid capture location from {valid}')
+
+        if wait:
+            errors = self.axis2mm.errors()
+            if errors:
+                del buf
+                self.axis2mm.clear_error()
+                return errors
+
+        return buf
 
     def capture_iq(self, n, groups='all', tap_location='ddciq', duration=False, wait=True):
         """
@@ -351,7 +374,8 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * n_groups * 32
 
         try:
-            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_0)
+            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_,
+                              cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -362,7 +386,7 @@ class CaptureHierarchy(DefaultHierarchy):
         datarate_mbps = 32 * 512 * n_groups / 256
         captime = datavolume_mb / datarate_mbps
 
-        msg = (f"Capturing {print_bytes(capture_bytes)} of data @ {datarate_mbps:.1f} MiBps. "
+        msg = (f"Capturing {format_bytes(capture_bytes)} of data @ {datarate_mbps:.1f} MiBps. "
                f"ETA {datavolume_mb / datarate_mbps * 1000:.0f} ms")
         getLogger(__name__).debug(msg)
 
@@ -377,7 +401,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         return buffer
 
-    def capture_adc(self, n, duration=False, complex=False, wait=True, check_saturation=True):
+    def capture_adc(self, n, duration=False, complex=False, wait=True):
         """
         samples are captured in multiples of 8 will be clipped as necessary
 
@@ -407,7 +431,8 @@ class CaptureHierarchy(DefaultHierarchy):
             raise RuntimeError('Not enough RAM to copy capture to complex')
 
         try:
-            buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0)
+            buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0,
+                              cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -429,11 +454,6 @@ class CaptureHierarchy(DefaultHierarchy):
             if 'duration' not in wait or (complex and wait['duration'] < captime):
                 wait['duration'] = captime
             self.wait(**wait)
-
-        if check_saturation:
-            saturation = (buffer[:, 0] > ADC_INPUT_WARN).any() or (buffer[:, 0] < -ADC_INPUT_WARN).any() or (buffer[:, 1] > ADC_INPUT_WARN).any() or (buffer[:, 1] < -ADC_INPUT_WARN).any()
-            if saturation:
-                getLogger(__name__).warning(f'Detected I or Q values larger than {ADC_INPUT_WARN}. ADC may be saturated.')
 
         if complex:
             d = np.zeros(n, dtype=np.complex64)
@@ -480,7 +500,8 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * 2 * n_groups * 16
 
         try:
-            buffer = allocate((n, n_groups * 16), dtype='i2', target=self.ddr4_0)
+            buffer = allocate((n, n_groups * 16), dtype='i2', target=self.ddr4_0,
+                              cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -510,10 +531,10 @@ class CaptureHierarchy(DefaultHierarchy):
         """A helper function to capture data just after bin2res and after the ddc"""
         x = self.capture_iq(n_points, 'all', tap_location='rawiq')
         riq = np.array(x)
-        x.freebuffer()
+        del x
         x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         iq = np.array(x)
-        x.freebuffer()
+        del x
         riq = riq[..., 0] + riq[..., 1] * 1j
         iq = iq[..., 0] + iq[..., 1] * 1j
         return riq, iq
@@ -522,10 +543,10 @@ class CaptureHierarchy(DefaultHierarchy):
         """A helper function to capture data just after the ddc and after matched filters"""
         x = self.capture_iq(n_points, 'all', tap_location='ddciq')
         riq = np.array(x)
-        x.freebuffer()
+        del x
         x = self.capture_phase(n_points, 'all', tap_location='filtphase')
         phase = np.array(x)
-        x.freebuffer()
+        del x
         riq = riq[..., 0] + riq[..., 1] * 1j
         return riq, phase
 
@@ -579,6 +600,14 @@ class _AXIS2MM:
 
     def clear_error(self):
         self.write(0, 0x40000000)
+
+    def errors(self):
+        """Return a dictionary of errors if there are errors else None"""
+        x = self.cmd_ctrl_reg
+        if x['r_err']:
+            return {k:x[k] for k in ('r_err', 'decode_error', 'slave_error', 'overflow_error')}
+        else:
+            return None
 
     def start(self, continuous=False, increment=True):
         if not self.ready:

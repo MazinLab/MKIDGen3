@@ -135,7 +135,7 @@ class ThreadedPLInterruptManager:
             try:
                 v.remove(event)
                 name = k
-            except ValueError:
+            except KeyError:
                 pass
         if not name:
             return

@@ -6,11 +6,12 @@ import mkidgen3.drivers.rfdc
 from pynq import Overlay
 from logging import getLogger
 from mkidgen3.mkidpynq import DummyOverlay
+from mkidgen3.system_parameters import ADC_MAX_INT
 from mkidgen3.drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureRequest
-from mkidgen3.util import check_zmq_abort_pipe, AbortedException, print_bytes
+from mkidgen3.util import check_zmq_abort_pipe, AbortedException, format_bytes, compute_max_val, format_time
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
 from mkidgen3.server.misc import zpipe
@@ -136,6 +137,8 @@ class FeedlineHardware:
             if fl_setup.bitstream:
                 x = copy.deepcopy(self._default_bitstream)
                 x.merge_with(fl_setup.bitstream)
+            else:
+                x = self._default_bitstream
 
             self._ol = Overlay(x.bitstream, ignore_version=x.ignore_version, download=True)
             mkidgen3.quirks.Overlay(self._ol).post_configure()
@@ -143,8 +146,7 @@ class FeedlineHardware:
 
         if fl_setup.rfdc:
             getLogger(__name__).debug(f'Requesting update to RFDC configuration.')
-            self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts,
-                                     double_sync=mkidgen3.quirks.MTS.double_sync)
+            self._ol.rfdc.enable_mts(dac=fl_setup.rfdc.dac_mts, adc=fl_setup.rfdc.adc_mts)
             self._ol.rfdc.set_gain(adc_gains=fl_setup.rfdc.adc_gains, dac_gains=fl_setup.rfdc.dac_gains)
 
         from mkidgen3.drivers.ppssync import PPSMode, PPSSource
@@ -160,6 +162,9 @@ class FeedlineHardware:
                 clk_period_ns=1.953125,
                 timeout=5,
                 poll=1000*1000*1000)
+
+        #NB these if comparisons must not be "is None" as an empty config can't be used to trigger reconfiguration
+
         if fl_setup.if_board:
             getLogger(__name__).debug(f'Requesting update to IF Board configuration.')
             try:
@@ -167,7 +172,7 @@ class FeedlineHardware:
             except Exception as e:
                 getLogger(__name__).warning(f"Unable to connect to IF board: {e}, proceeding without IF board.")
 
-        if fl_setup.waveform is not None:
+        if fl_setup.waveform:
             getLogger(__name__).debug(f'Configure DAC with {fl_setup.waveform.settings_dict()}')
             self._ol.dac_table.configure(**fl_setup.waveform.settings_dict())
 
@@ -210,11 +215,23 @@ class FeedlineHardware:
         try:
             cr.establish(context=context)
         except zmq.ZMQError as e:
-            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
+            failmsg += f"Unable to establish capture {cr.id} due to {e}, dropping request."
+
+        if not failmsg and cr.fail_saturation_frac:  # check for ADC saturation
+            buf = self._ol.capture.capture_adc(2**19, complex=False)
+            max_val = np.abs(buf).max()
+            del buf
+            if max_val >= ADC_MAX_INT*cr.fail_saturation_frac:
+                failmsg = (f"ADC levels ({max_val}) above saturation failure "
+                           f"level ({ADC_MAX_INT*cr.fail_saturation_frac:.0f})")
 
         if failmsg:
             getLogger(__name__).error(failmsg)
             cr.fail(failmsg, raise_exception=False)
+            try:
+                pipe.close()
+            except zmq.ZMQError:
+                pass
             return
 
         self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
@@ -231,15 +248,26 @@ class FeedlineHardware:
         if partial:
             chunks.append(partial // capture_atom_bytes)
 
+        if len(chunks) > 1 and cr.numpy_metric:
+            failmsg = ('Reducing captures via numpy metrics is not supported chunked captures. '
+                       'Decrease the capture size or compute the metric client-side.')
+            getLogger(__name__).error(failmsg)
+            cr.fail(failmsg, raise_exception=False)
+            try:
+                pipe.close()
+            except zmq.ZMQError:
+                pass
+            return
+
         channel_sel = None
         ps_buf = None
         if cr.channels is not None:  # channel-specific capture
             usr_channels = cr.channels
             if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
-                getLogger(__name__).debug(f'Requested channel capture of {print_bytes(cr.size_bytes)} '
-                                          f'requires {print_bytes(hw_size_bytes)}')
+                getLogger(__name__).debug(f'Requested channel capture of {format_bytes(cr.size_bytes)} '
+                                          f'requires {format_bytes(hw_size_bytes)}')
                 getLogger(__name__).debug(f'Requested channel subset of hardware capture '
-                                              f'will copy {print_bytes(cr.size_bytes)} '
+                                              f'will copy {format_bytes(cr.size_bytes)} '
                                               f'PL buffer to PS RAM.')
                 channel_sel = np.where(np.in1d(hw_channels, usr_channels))[0]
                 buf_shape = (chunks[0], len(usr_channels))
@@ -258,7 +286,10 @@ class FeedlineHardware:
                 times.append(time.perf_counter())
                 data = self._ol.capture.capture(csize, cr.tap, groups=None, wait=True)
                 times.append(time.perf_counter())
-
+                if isinstance(data, dict):
+                    raise RuntimeError(f'PL axis2mm capture failed: {data}. '
+                                       f'Note decode errors are indicative of a memory address and '
+                                       f'should never happen issue.')
                 if channel_sel is None:
                     data_to_send = data
                 else:
@@ -277,9 +308,9 @@ class FeedlineHardware:
 
                 data.freebuffer()
                 times.append(time.perf_counter())
-
-                getLogger(__name__).debug(list((np.diff(times) * 1000).astype(int)))
-
+                times_str = [format_time(x) for x in np.diff((times))]
+                labels = ['check abort','execute capture','optionally slice','send data','wait for tracker','free buffer']
+                getLogger(__name__).debug(list(zip(labels, times_str)))
             cr.finish()
         except AbortedException as e:
             cr.abort(e)
@@ -386,7 +417,7 @@ class FeedlineHardware:
     def postage_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
         failmsg = ''
         postage_filt = self._ol.trigger_system.postage_filter_0
-        postage_maxi = self._ol.trigger_system.postage_maxi_1
+        postage_maxi = self._ol.trigger_system.postage_maxi_0
         try:
             assert cr.type == 'postage', 'Incorrect capture request type'
             assert postage_maxi.register_map.CTRL.AP_IDLE == 1, 'Postage MAXI is busy'

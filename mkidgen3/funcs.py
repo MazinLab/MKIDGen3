@@ -175,33 +175,6 @@ def complex_scale(z, max_val):
     return max_val * z / input_max
 
 
-def compute_power_sweep_attenuations(start_attn, stop_attn, step_size=IF_ATTN_STEP):
-    """
-    inputs:
-    - start_attn: float [dB]
-        the IF board combined starting attenuation
-    - stop_attn: float [dB]
-        the IF board combined stop attenuation
-    - step_size: float [dB]
-        attenuation step size
-    """
-    return np.arange(start_attn, stop_attn + step_size, step_size)
-
-
-def compute_lo_steps(center, resolution, bandwidth):
-    """
-    inputs:
-    - center: float
-        center frequency in Hz of the sweep bandwidth
-    - resolution: float
-        frequency resolution in Hz for the LO sweep
-    - bandwidth: float
-        bandwidth in Hz for the LO to sweep through
-    """
-    n_steps = np.round(bandwidth / resolution).astype('int')
-    return np.linspace(-bandwidth / 2, bandwidth / 2, n_steps) + center
-
-
 def uniform_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
     """
     inputs:

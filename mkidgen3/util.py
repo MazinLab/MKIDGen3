@@ -5,9 +5,71 @@ import yaml
 import importlib.resources
 from logging import getLogger
 import zmq
+from mkidgen3.opfb import opfb_bin_number
+from typing import Iterable
+import subprocess
+
+def compute_max_val(x) -> float:
+    return max(x.real.max(), x.imag.max(), np.abs(x.imag.min()), np.abs(x.imag.min()))
 
 
-def print_bytes(n_bytes: int) -> str:
+def convert_freq_to_ddc_bin(freqs: Iterable[float | int]) -> np.ndarray:
+    """
+    Convert frequecnies to bins coming out of the OPFB--useful for programming bin2res
+    Args:
+        freqs: list or array of frequencies [Hz]
+
+    Returns: np array of bins coming out of the opfb which will contain the frequencies
+
+    """
+    bins = np.zeros(2048, dtype=int)
+    bins[:freqs.size] = opfb_bin_number(freqs, ssr_raw_order=True)
+    return bins
+
+
+def format_sample_duration(fs: float, n_samp: int) -> str:
+    """
+    Print the time of some number of samples with a given sample rate in nice units.
+    Args:
+        fs: sample rate in Hz
+        n_samp: number of samples
+
+    Returns:
+    For Ex: '0.5 Seconds'
+
+    """
+    seconds = n_samp * (1 / fs)
+
+    if seconds > 0.1:
+        return f'{seconds:.2f} seconds'
+    elif seconds > 1e-3:
+        return f'{seconds / 1e-3:.2f} milliseconds'
+    elif seconds > 1e-6:
+        return f'{seconds / 1e-6:.2f} microseconds'
+    elif seconds > 1e-9:
+        return f'{seconds / 1e-9:.2f} nanoseconds'
+
+def format_time(t: float) -> str:
+    """
+    Print the time in a convenient order of magnitude.
+    Args:
+        t: time in seconds
+
+    Returns:
+    For Ex: '0.5 Seconds'
+
+    """
+
+    if t > 0.1:
+        return f'{t:.2f} seconds'
+    elif t > 1e-3:
+        return f'{t / 1e-3:.2f} milliseconds'
+    elif t > 1e-6:
+        return f'{t / 1e-6:.2f} microseconds'
+    elif t > 1e-9:
+        return f'{t / 1e-9:.2f} nanoseconds'
+
+def format_bytes(n_bytes: int) -> str:
     """
     Print the number of bytes with a convenient order of magnitude.
     Args:
@@ -214,3 +276,9 @@ def check_zmq_abort_pipe(pipe):
     except zmq.ZMQError as e:
         if e.errno != zmq.EAGAIN:
             raise
+
+
+def check_active_jupyter_notebook():
+    """Get a list of jupyter notebooks that are running and return true if any have 'http' in the listing """
+    x = subprocess.run(['jupyter', 'notebook', 'list'], capture_output=True)
+    return False # 'http' in x.stdout.decode()

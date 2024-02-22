@@ -1,3 +1,5 @@
+import copy
+
 from mkidgen3.server.feedline_config import *
 from mkidgen3.server.waveform import WaveformFactory
 from mkidgen3.opfb import opfb_bin_number
@@ -22,7 +24,7 @@ freqs = waveform.waveform.freqs
 # Bin2Res Config
 bins = np.zeros(2048, dtype=int)
 bins[:freqs.size] = opfb_bin_number(freqs, ssr_raw_order=True)
-chan = ChannelConfig(frequencies=bins)
+chan = ChannelConfig(bins=bins)
 
 # DDC Config
 ddc_tones = np.zeros(2048)
@@ -35,12 +37,18 @@ fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
 fc2 = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     if_board=if_board, waveform=waveform2, chan=chan, ddc=ddc)
 
+# test hashed comparison
+fc3 = copy.deepcopy(fc2)
+fc3.if_board = IFConfig(lo=3000, dac_attn=50, adc_attn=50)
+
 m = FeedlineConfigManager()
 
 assert if1 < if1a and if1.compatible_with(if1a)
 assert if1 < if2 and not if1.compatible_with(if2) and not if1a.compatible_with(if2)
 assert if3.hashed_form == if1 and if3.hashed_form.compatible_with(if1)
 assert if3.hashed_form != if1a and not if3.hashed_form.compatible_with(if1a)
+
+assert fc3.compatible_with(fc3.hashed_form)
 
 
 m.learn(fc)

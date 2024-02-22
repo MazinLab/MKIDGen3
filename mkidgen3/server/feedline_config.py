@@ -1,7 +1,8 @@
 import numpy as np
 from hashlib import md5
 import copy
-from mkidgen3.opfb import opfb_bin_number
+from mkidgen3.util import convert_freq_to_ddc_bin
+
 
 
 
@@ -485,16 +486,15 @@ class TriggerConfig(_FLConfigMixin):
 
 
 class ChannelConfig(_FLConfigMixin):
-    _settings = ('bins', 'freqs')
+    _settings = ('bins',)
 
     def __init__(self, freqs=None, bins=None, _hashed=None):
         self._hashed = _hashed
         if self._hashed:
             return
-        self.bins = bins
-        self.freqs = freqs
         if freqs is not None:
-            self.bins = opfb_bin_number(freqs, ssr_raw_order=True)
+            bins = convert_freq_to_ddc_bin(freqs)
+        self.bins = bins
 
 
 class DDCConfig(_FLConfigMixin):
@@ -549,9 +549,9 @@ class WaveformConfig(_FLConfigMixin):
     def default_channel_config(self) -> ChannelConfig:
         """A convenience method to get a ChannelConfig using all the waveform's frequencies.
         Default channel config is not available for tabulated waveforms."""
-        bins = np.zeros(2048, dtype=int)
-        bins[:self.waveform.freqs.size] = opfb_bin_number(self.waveform.freqs, ssr_raw_order=True)
-        return ChannelConfig(bins=bins, freqs=None)
+        freqs = self.waveform.freqs
+        bins = convert_freq_to_ddc_bin(freqs)
+        return ChannelConfig(bins=bins, freqs=freqs)
 
     @property
     def default_ddc_config(self) -> DDCConfig:
@@ -590,15 +590,15 @@ class FeedlineConfig(_FLMetaconfigMixin):
         self.filter = FilterConfig(**filter) if isinstance(filter, dict) else filter
         self.trig = TriggerConfig(**trig) if isinstance(trig, dict) else trig
 
-        assert isinstance(self.bitstream,BitstreamConfig)
-        assert isinstance(self.rfdc_clk, RFDCClockingConfig)
-        assert isinstance(self.rfdc, RFDCConfig)
-        assert isinstance(self.if_board, IFConfig)
-        assert isinstance(self.waveform, WaveformConfig)
-        assert isinstance(self.chan, ChannelConfig)
-        assert isinstance(self.ddc, DDCConfig)
-        assert isinstance(self.filter, FilterConfig)
-        assert isinstance(self.trig, TriggerConfig)
+        assert isinstance(self.bitstream, (type(None), BitstreamConfig))
+        assert isinstance(self.rfdc_clk, (type(None), RFDCClockingConfig))
+        assert isinstance(self.rfdc, (type(None), RFDCConfig))
+        assert isinstance(self.if_board, (type(None), IFConfig))
+        assert isinstance(self.waveform, (type(None), WaveformConfig))
+        assert isinstance(self.chan, (type(None), ChannelConfig))
+        assert isinstance(self.ddc, (type(None), DDCConfig))
+        assert isinstance(self.filter, (type(None), FilterConfig))
+        assert isinstance(self.trig, (type(None), TriggerConfig))
         # TODO to support captures of less than all groups we need to add a self.capture_setup which has group
         # settings for iq and phase
 
