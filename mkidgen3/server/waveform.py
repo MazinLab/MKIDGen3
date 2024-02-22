@@ -57,7 +57,7 @@ class SimpleFreqlistWaveform(Waveform):
 
     @property
     def _values(self):
-        times = np.arange(0, self.n_samples) * self.sample_rate
+        times = np.arange(0, self.n_samples) / self.sample_rate
         data = np.zeros_like(times, dtype=np.complex64)
         for i, f in enumerate(self.freqs):
             data += self.amps[i] * np.exp(2j * np.pi * f * times + 1j * self.phases[i])
@@ -74,10 +74,7 @@ class SimpleFreqlistWaveform(Waveform):
                         np.max(data.imag),
                     )
                 )
-        output_buffer = np.empty((self.n_samples, 2), dtype=np.int16)
-        output_buffer[::, 0] = np.int16(data.real * ((1 << 15) - 1))
-        output_buffer[::, 1] = np.int16(data.imag * ((1 << 15) - 1))
-        return output_buffer
+        return data * ((1 << 15) - 1)
 
 
 class FreqlistWaveform(Waveform):
