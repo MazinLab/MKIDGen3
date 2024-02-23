@@ -1,6 +1,7 @@
 import logging
 import pickle
 import time
+import traceback
 
 from logging import getLogger
 
@@ -41,6 +42,7 @@ class TapThread:
             self._pipe.send(b'abort')
         except zmq.ZMQError:
             getLogger(__name__).critical(f'Error sending abort to worker thread {self.thread}')
+            getLogger(__name__).critical(traceback.format_exc())
             raise
 
     def __del__(self):
@@ -48,6 +50,7 @@ class TapThread:
             self._pipe.close()
             self._other_pipe.close()
         except zmq.error.ContextTerminated:
+            getLogger(__name__).info(traceback.format_exc())
             pass
 
 class FeedlineReadoutServer:
@@ -97,6 +100,8 @@ class FeedlineReadoutServer:
             except zmq.ZMQError as e:
                 if raisezmqerror:
                     raise e
+                else:
+                    getLogger(__name__).info(traceback.format_exc())
         if join:
             for tt in self._tap_threads.values():
                 if tt:
@@ -239,6 +244,7 @@ class FeedlineReadoutServer:
                     except zmq.ZMQError as e:
                         getLogger(__name__).error(f'Unable to fail request with hashed config due to {e}. '
                                                   f'Silently dropping request {data.id}')
+                        getLogger(__name__).error(traceback.format_exc())
                 elif (not self._to_check and self._tap_threads[data.type] is None and
                       self.hardware.config_compatible_with(data.feedline_config)):
                     cr = data  # this can be run and nothing else, so it will be done below
@@ -250,6 +256,7 @@ class FeedlineReadoutServer:
                     except zmq.ZMQError as e:
                         getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
                                                   f' {data.id}')
+                        getLogger(__name__).error(traceback.format_exc())
 
                 # cant be run because there might be something more important (we check anyway),
                 # the tap is in use (we check when the tap finishes)
@@ -275,6 +282,7 @@ class FeedlineReadoutServer:
                         continue
             except zmq.ZMQError as e:
                 getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
+                getLogger(__name__).error(traceback.format_exc())
                 continue
 
             cr.destablish()  # ensure nothing lingers from any status messages
@@ -284,6 +292,7 @@ class FeedlineReadoutServer:
             except Exception as e:
                 self.hardware.derequire_config(id)  # Not  necessary as we are dying, but let's die in a clean house
                 getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
+                getLogger(__name__).error(traceback.format_exc())
                 self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False, also=cr)
                 break
 
@@ -293,6 +302,7 @@ class FeedlineReadoutServer:
         try:
             pipe.close()
         except zmq.error.ContextTerminated:
+            getLogger(__name__).info(traceback.format_exc())
             pass
         getLogger(__name__).info('Capture thread exiting')
 
@@ -404,15 +414,18 @@ if __name__ == '__main__':
             cmd, arg = socket.recv_pyobj()
         except zmq.ZMQError as e:
             getLogger(__name__).error(f'Caught {e}, aborting and shutting down')
+            getLogger(__name__).error(traceback.format_exc())
             fr.terminate_capture_handler()
             break
         except KeyboardInterrupt:
             getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
+            getLogger(__name__).error(traceback.format_exc())
             fr.terminate_capture_handler()
             break
         except pickle.UnpicklingError:
             socket.send_pyobj('ERROR: Ignoring unpicklable command')
             getLogger(__name__).error(f'Ignoring unpicklable command')
+            getLogger(__name__).error(traceback.format_exc())
             continue
         else:
             if not thread.is_alive():
@@ -434,6 +447,7 @@ if __name__ == '__main__':
             try:
                 status = fr.status()  # this might take a while and fail
             except Exception as e:
+                getLogger(__name__).error(traceback.format_exc())
                 status = {'hardware': str(e)}
             status['id'] = f'FRS {args.fl_id} @ {args.port}/{args.cap_port}'
             socket.send_pyobj(status)
@@ -444,6 +458,7 @@ if __name__ == '__main__':
                 fr.hardware.bequiet(**arg)  # This might take a while and fail
                 socket.send_pyobj('OK')
             except Exception as e:
+                getLogger(__name__).error(traceback.format_exc())
                 socket.send_pyobj(f'ERROR: {e}')
 
         elif cmd == 'capture':
