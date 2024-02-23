@@ -101,8 +101,8 @@ class SweepConfig:
         for i, step in it:
             feedline_config_base.if_board = IFConfig(
                 lo=self.lo_center + step,
-                dac_atten=None if self.attens is None else self.attens[0],
-                adc_atten=None if self.attens is None else self.attens[1],
+                dac_attn=None if self.attens is None else self.attens[0],
+                adc_attn=None if self.attens is None else self.attens[1],
             )
             j = CaptureJob(
                 CaptureRequest(
@@ -110,16 +110,16 @@ class SweepConfig:
                     self.tap,
                     feedline_config_base,
                     frs,
-                    self.waveform.default_channel_config.bins,
+                    channels=None,
                 )
             )
             try:
                 j.submit(True, True)
                 d = j.data(1 << 30).data
-                iq[::, i].real = np.mean(d.real, axis=0)
-                iq[::, i].imag = np.mean(d.imag, axis=0)
-                rms[::, i].real = np.std(d.real, axis=0)
-                rms[::, i].imag = np.std(d.imag, axis=0)
+                iq[::, i].real = np.mean(d.real[::, : tones.size], axis=0)
+                iq[::, i].imag = np.mean(d.imag[::, : tones.size], axis=0)
+                rms[::, i].real = np.std(d.real[::, : tones.size], axis=0)
+                rms[::, i].imag = np.std(d.imag[::, : tones.size], axis=0)
             except KeyboardInterrupt:
                 j.cancel()
                 raise KeyboardInterrupt
@@ -216,7 +216,7 @@ class CombSweepConfig(SweepConfig):
 
     def run_sweep_frs(self, frs, feedline_config_base, progress=True) -> "CombSweep":
         s = super().run_sweep_frs(frs, feedline_config_base, progress=progress)
-        return CombSweep(s.iq, s.sigma, self)
+        return CombSweep(s.iq, s.iqsigma, self)
 
 
 @dataclass
@@ -446,7 +446,7 @@ class PowerSweepConfig:
             this_sweepconfig.attens = (output_atten, input_atten)
             sweeps[output_atten] = (
                 input_atten,
-                this_sweepconfig.run_sweep(
+                this_sweepconfig.run_sweep_frs(
                     frs, feedline_config_base, progress="nested"
                 ),
             )
