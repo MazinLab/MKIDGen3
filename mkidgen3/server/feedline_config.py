@@ -116,6 +116,8 @@ class _FLConfigMixin:
 
     @property
     def _hash_data(self) -> tuple:
+        if self.is_hashed:
+            raise RuntimeError('Not supported for hashed FLConfig')
         """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
         hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
         return tuple(sorted(hash_data, key=lambda x: x[0]))
@@ -201,7 +203,7 @@ class _FLConfigMixin:
         Build a dict of setting_keys:values for use in creating a clone of the config or
         passing to a drivers configure() method
 
-        TODO how does a hanshed None setting (is this possible?) interacte with omit_none
+        TODO how does a hanshed None setting (is this possible?) interact with omit_none
 
         Args:
             omit_none: Exclude settings with no set value from the dictionary
@@ -249,7 +251,7 @@ class _FLMetaconfigMixin:
         """
         if other is None:
             return True
-        if not isinstance(other, type(self)):
+        if not isinstance(other, type(self)):  #NB a hased config is still a config, not an int for a metaconfig
             return False
         for k, v in self:
             other_v = getattr(other, k)
@@ -580,8 +582,8 @@ class FeedlineConfig(_FLMetaconfigMixin):
                  ddc: (DDCConfig, dict) = None,
                  filter: (FilterConfig, dict) = None,
                  trig: (TriggerConfig, dict) = None):
-        self.bitstream = BitstreamConfig(**rfdc) if isinstance(bitstream, dict) else bitstream
-        self.rfdc_clk = RFDCClockingConfig(**rfdc) if isinstance(rfdc_clk, dict) else rfdc_clk
+        self.bitstream = BitstreamConfig(**bitstream) if isinstance(bitstream, dict) else bitstream
+        self.rfdc_clk = RFDCClockingConfig(**rfdc_clk) if isinstance(rfdc_clk, dict) else rfdc_clk
         self.rfdc = RFDCConfig(**rfdc) if isinstance(rfdc, dict) else rfdc
         self.if_board = IFConfig(**if_board) if isinstance(if_board, dict) else if_board
         self.waveform = WaveformConfig(**waveform) if isinstance(waveform, dict) else waveform
