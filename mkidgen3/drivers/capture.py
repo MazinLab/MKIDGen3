@@ -374,7 +374,7 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * n_groups * 32
 
         try:
-            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_,
+            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_0,
                               cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
