@@ -78,9 +78,9 @@ class SweepConfig:
             )
         it = enumerate(self.steps)
         if progress:
-            import tqdm
+            import tqdm.notebook as tqdm
 
-            it = tqdm.tqdm(it, leave=False if progress == "nested" else True)
+            it = tqdm.tqdm(it, total=len(self.steps), desc="FREQ")
         for i, step in it:
             ifboard.set_lo(step + self.lo_center)
             piq, prms = self._get_iq_point_rms(capture)
@@ -95,9 +95,9 @@ class SweepConfig:
         rms = np.empty_like(iq)
         it = enumerate(self.steps)
         if progress:
-            import tqdm
+            import tqdm.notebook as tqdm
 
-            it = tqdm.tqdm(it, leave=False if progress == "nested" else True)
+            it = tqdm.tqdm(it, total=len(self.steps), desc="FREQ")
         for i, step in it:
             feedline_config_base.if_board = IFConfig(
                 lo=self.lo_center + step,
@@ -115,7 +115,7 @@ class SweepConfig:
             )
             try:
                 j.submit(True, True)
-                d = j.data(1 << 30).data
+                d = j.data(60 * 3).data
                 iq[::, i].real = np.mean(d.real[::, : tones.size], axis=0)
                 iq[::, i].imag = np.mean(d.imag[::, : tones.size], axis=0)
                 rms[::, i].real = np.std(d.real[::, : tones.size], axis=0)
@@ -249,11 +249,13 @@ class Sweep(AbstractSweep):
             line = ax.semilogy(
                 (self.frequencies[i] / 1e6 if not stacked else self.config.steps),
                 np.abs(self.iq[i]) if not power else np.abs(self.iq[i]) ** 2,
-                label="Tone: {:.3f} MHz".format(
-                    self.config.waveform.default_ddc_config.tones[i] / 1e6
-                )
-                if label_tones
-                else None,
+                label=(
+                    "Tone: {:.3f} MHz".format(
+                        self.config.waveform.default_ddc_config.tones[i] / 1e6
+                    )
+                    if label_tones
+                    else None
+                ),
                 **kwargs,
             )
             if newtones:
@@ -420,9 +422,9 @@ class PowerSweepConfig:
         sweeps = {}
         iter = self.attens.items()
         if progress:
-            import tqdm
+            import tqdm.notebook as tqdm
 
-            iter = tqdm.tqdm(iter)
+            iter = tqdm.tqdm(iter, total=len(list(self.attens.keys())), desc="ATTN")
         for output_atten, input_atten in iter:
             this_sweepconfig = copy.copy(self.sweep_config)
             this_sweepconfig.attens = (output_atten, input_atten)
@@ -438,9 +440,9 @@ class PowerSweepConfig:
         sweeps = {}
         iter = self.attens.items()
         if progress:
-            import tqdm
+            import tqdm.notebook as tqdm
 
-            iter = tqdm.tqdm(iter)
+            iter = tqdm.tqdm(iter, total=len(list(self.attens.keys())), desc="ATTN")
         for output_atten, input_atten in iter:
             this_sweepconfig = copy.copy(self.sweep_config)
             this_sweepconfig.attens = (output_atten, input_atten)
