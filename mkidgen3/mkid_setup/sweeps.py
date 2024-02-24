@@ -67,7 +67,7 @@ class SweepConfig:
         ddccontrol.configure(**self.waveform.default_ddc_config.settings_dict())
         return self
 
-    def run_sweep(self, ifboard, capture) -> "Sweep":
+    def run_sweep(self, ifboard, capture, progress = True) -> "Sweep":
         tones = self.waveform.waveform.freqs
         iq = np.empty((tones.size, self.steps.size), np.complex64)
         rms = np.empty((tones.size, self.steps.size), np.complex64)
@@ -88,6 +88,17 @@ class SweepConfig:
         ifboard.set_lo(
             self.lo_center, fractional=True, g2_mode=False, full_calibration=True
         )
+        it = enumerate(self.steps)
+        if progress:
+            import tqdm.notebook as tqdm
+
+            it = tqdm.tqdm(it, total=len(self.steps), desc="FREQ")
+        for i, step in it:
+            ifboard.set_lo(step + self.lo_center)
+            piq, prms = self._get_iq_point_rms(capture)
+            iq[::, i] = piq[: tones.size]
+            rms[::, i] = prms[: tones.size]
+        ifboard.set_lo(self.lo_center)
         return Sweep(iq, rms / np.sqrt(self.average), self)
 
     def frequencies(self) -> nt.NDArray[np.float64]:
@@ -210,11 +221,13 @@ class Sweep(AbstractSweep):
             line = ax.semilogy(
                 (self.frequencies[i] / 1e6 if not stacked else self.config.steps),
                 np.abs(self.iq[i]) if not power else np.abs(self.iq[i]) ** 2,
-                label="Tone: {:.3f} MHz".format(
-                    self.config.waveform.default_ddc_config.tones[i] / 1e6
-                )
-                if label_tones
-                else None,
+                label=(
+                    "Tone: {:.3f} MHz".format(
+                        self.config.waveform.default_ddc_config.tones[i] / 1e6
+                    )
+                    if label_tones
+                    else None
+                ),
                 **kwargs,
             )
             if newtones:
@@ -381,9 +394,9 @@ class PowerSweepConfig:
         sweeps = {}
         iter = self.attens.items()
         if progress:
-            import tqdm
+            import tqdm.notebook as tqdm
 
-            iter = tqdm.tqdm(iter)
+            iter = tqdm.tqdm(iter, total=len(list(self.attens.keys())), desc="ATTN")
         for output_atten, input_atten in iter:
             this_sweepconfig = copy.copy(self.sweep_config)
             this_sweepconfig.attens = (output_atten, input_atten)
