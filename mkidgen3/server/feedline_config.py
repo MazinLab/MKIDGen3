@@ -200,6 +200,12 @@ class _FLConfigMixin:
         """
         return type(self)(_hashed=hash(self))
 
+    def unhashed_form(self, hash_cache: dict):
+        if not self.is_hashed:
+            return self
+        d = self.settings_dict(unhasher_cache=hash_cache, _hashed=False, omit_none=True)
+        return type(self)(**d)
+
     def settings_dict(self, omit_none=True, _hashed=False, unhasher_cache=None) -> dict:
         """
         Build a dict of setting_keys:values for use in creating a clone of the config or
@@ -355,6 +361,19 @@ class _FLMetaconfigMixin:
         through any keys that are FLMetaconfigs.
         """
         d = {k: v if v is None else v.settings_dict(_hashed=True) for k, v in self}
+        return type(self)(**d)
+
+    @property
+    def is_hashed(self):
+        for _, v in self:
+            if v.is_hashed:
+                return True
+        return False
+
+    def unhashed_form(self, hash_cache: dict):
+        if not self.is_hashed:
+            return self
+        d = self.settings_dict(unhasher_cache=hash_cache, _hashed=False, omit_none=True)
         return type(self)(**d)
 
     def settings_dict(self, _hashed=False, unhasher_cache=None, omit_none=True):
@@ -700,7 +719,7 @@ class FeedlineConfigManager:
         if not required.compatible_with(config):
             raise ValueError('Proposed settings not compatible with required settings')
 
-        self._config[id] = config
+        self._config[id] = config.unhashed_form(self._cache)
         new = self.required()
 
         # NB >= is read as "at more or equally restrictive" on the needed FPGA settings
