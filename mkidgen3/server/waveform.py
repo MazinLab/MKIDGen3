@@ -4,6 +4,22 @@ import logging
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH
 
 
+def _same(a, b):
+    """quick test for array vs None"""
+    if not isinstance(a, type(b)):
+        return False
+    if a is None and b is None:
+        return True
+    try:
+        return np.all(a == b)
+    except:
+        pass
+    try:
+        return a == b
+    except:
+        return False
+
+
 class Waveform:
     @property
     def output_waveform(self):
@@ -23,6 +39,10 @@ class TabulatedWaveform(Waveform):
 
     def __str__(self):
         return f'TabulatedWaveform with sample rate {self._sample_rate}'
+
+    def __ne__(self, other):
+        return not (self._sample_rate == other.sample_rate and
+                    _same(self._values, other._values))
 
 
 class FreqlistWaveform(Waveform):
@@ -69,6 +89,19 @@ class FreqlistWaveform(Waveform):
 
         if compute:
             self.output_waveform
+
+    def __ne__(self, other):
+        if self.quant_vals is not None and other.n_samples is not None:
+            return not _same(self.quant_vals, other.quant_vals)
+
+        return not (self.maximize_dynamic_range == other.maximize_dynamic_range and
+                    _same(self.iq_ratios, other.iq_ratios) and
+                    self.n_samples == other.n_samples and
+                    _same(self.phases, other.phases) and
+                    _same(self.quant_freqs, other.quant_freqs) and
+                    self._sample_rate == other._sample_rate and
+                    _same(self.amps, other.amps) and
+                    _same(self.phase_offsets, other.phase_offsets))
 
     def __repr__(self):
         return f'<{str(self)}>'
