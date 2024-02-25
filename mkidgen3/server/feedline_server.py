@@ -192,8 +192,10 @@ class FeedlineReadoutServer:
             aio_eloop = asyncio.get_running_loop()
         except RuntimeError:
             aio_eloop = asyncio.new_event_loop()
+            getLogger(__name__).warning('Creating but not starting a thread that really should be axed and '
+                                        'optimized away')
             t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
-            # t.start()
+
         asyncio.set_event_loop(aio_eloop)
 
         getLogger(__name__).info('Main thread starting')
