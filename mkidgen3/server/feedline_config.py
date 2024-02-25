@@ -159,7 +159,7 @@ class _FLConfigMixin:
 
     def deltafy(self, other):
         """
-        Generate a new config with only the settings that specified by other but not self, or have changed in other
+        Generate a new config with only the settings that are specified by other but not self, or have changed in other
         from self, all other settings are None.
 
         """
@@ -646,38 +646,14 @@ class FeedlineConfigManager:
         free of hashed settings but may not specify a requirement for many settings (i.e. they may be None)
 
         """
-        # This was the original approach and should be correct
-        # settings = defaultdict(lambda: defaultdict(dict))
-        # for config in self._config.values():
-        #     for k, v in config:
-        #         if isinstance(v, _FLMetaconfigMixin):
-        #             for k2, v2 in v:
-        #                 assert not isinstance(v2, _FLMetaconfigMixin)
-        #                 if v2 is not None:
-        #                     settings[k][k2].update(v2.settings_dict(unhasher_cache=self._cache,
-        #                                                             _hashed=False, omit_none=True))
-        #         elif v is not None:
-        #             settings[k].update(v.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True))
-        # return FeedlineConfig(**settings)
-
         # This is a new, much cleaner approach
         cfg = FeedlineConfig.empty_config()
         for config in self._config.values():
             # This adopts values specified in config (i.e. Nones are skipped). While it later configs set values are
             # overwritten
-            cfg.merge_with(config)  # there is a potential concurrency issue here if the configs are being mutated
-
+            # there is a potential concurrency issue here if the configs are being mutated, but we don't do that!!!
+            cfg.merge_with(config)
         return copy.deepcopy(cfg)  # ensure the result doesn't share data!
-
-        # Yet another approach
-        # settings = defaultdict(lambda: dict)  # We need to build up a nested set of dicts to be used as kwargs
-        # for config in self._config.values():  # iterate through all the FeedlineConfigs in the pot
-        #     specified_settings = config.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True)
-        #     # this is a dict (of dicts maybe of dicts... )
-        #     # we need to merge them all with update all the way down,
-        #     # the caveat is that if a FLConfig has a setting that is itself a dict
-        #     # it should be treated as a value and simple recursion does not allow us to know which it is
-        #     ....
 
     def pop(self, id) -> bool:
         """
