@@ -183,6 +183,8 @@ class _FLConfigMixin:
         """
         Return true if all the settings are unspecified (e.g. None)
         """
+        if self.is_hashed:
+            return hash(self) == hash(type(self)())
         return not self.settings_dict(omit_none=True)
 
     @property
