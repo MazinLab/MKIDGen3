@@ -9,6 +9,7 @@ from mkidgen3.opfb import opfb_bin_number
 from typing import Iterable
 import subprocess
 
+
 def compute_max_val(x) -> float:
     return max(x.real.max(), x.imag.max(), np.abs(x.imag.min()), np.abs(x.imag.min()))
 
@@ -49,6 +50,7 @@ def format_sample_duration(fs: float, n_samp: int) -> str:
     elif seconds > 1e-9:
         return f'{seconds / 1e-9:.2f} nanoseconds'
 
+
 def format_time(t: float) -> str:
     """
     Print the time in a convenient order of magnitude.
@@ -68,6 +70,7 @@ def format_time(t: float) -> str:
         return f'{t / 1e-6:.2f} microseconds'
     elif t > 1e-9:
         return f'{t / 1e-9:.2f} nanoseconds'
+
 
 def format_bytes(n_bytes: int) -> str:
     """
@@ -281,4 +284,4 @@ def check_zmq_abort_pipe(pipe):
 def check_active_jupyter_notebook():
     """Get a list of jupyter notebooks that are running and return true if any have 'http' in the listing """
     x = subprocess.run(['jupyter', 'notebook', 'list'], capture_output=True)
-    return False # 'http' in x.stdout.decode()
+    return False  # 'http' in x.stdout.decode()
