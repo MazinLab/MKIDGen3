@@ -148,8 +148,11 @@ class _FLConfigMixin:
             return True
         if not isinstance(other, type(self)):
             return False
-        if self.is_hashed or other.is_hashed:
-            return hash(self) == hash(other)
+        if other.is_hashed:
+            if self.empty():
+                return True
+            else:
+                return hash(self) == hash(other)
         for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
             if a is None or b is None:
                 continue
