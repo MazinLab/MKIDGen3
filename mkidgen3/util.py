@@ -42,13 +42,13 @@ def format_sample_duration(fs: float, n_samp: int) -> str:
     seconds = n_samp * (1 / fs)
 
     if seconds > 0.1:
-        return f'{seconds:.2f} seconds'
+        return f'{seconds:.2f} s'
     elif seconds > 1e-3:
-        return f'{seconds / 1e-3:.2f} milliseconds'
+        return f'{seconds / 1e-3:.2f} ms'
     elif seconds > 1e-6:
-        return f'{seconds / 1e-6:.2f} microseconds'
+        return f'{seconds / 1e-6:.2f} us'
     elif seconds > 1e-9:
-        return f'{seconds / 1e-9:.2f} nanoseconds'
+        return f'{seconds / 1e-9:.2f} ns'
 
 
 def format_time(t: float) -> str:
