@@ -102,6 +102,43 @@ if large_job_test:
     for j in test_large_file_jobs:
         j.submit(True, True)
 
+
+def hammer(sendhashed=False, precomputewave=True):
+    """Run several tests in rapid succession (e.g. emulating a powersweep)"""
+    waveform = WaveformConfig(waveform=WaveformFactory(n_uniform_tones=512))
+    if precomputewave:
+        waveform.waveform.output_waveform
+    bitstream = BitstreamConfig(bitstream='/home/xilinx/gen3_top_final.bit', ignore_version=True)
+    rfdc_clk = RFDCClockingConfig(programming_key='4.096GSPS_MTS_dualloop',
+                                  clock_source=None)  # clock source should default to external 10 MHz
+    rfdc = RFDCConfig(dac_mts=True, adc_mts=False, adc_gains=None, dac_gains=None)
+    if_board = IFConfig(lo=6000, adc_attn=50, dac_attn=50)
+    chan = waveform.default_channel_config
+    ddc = waveform.default_ddc_config
+    filtercfg = FilterConfig(coefficients=f'unity{2048}')
+    trigconfig = TriggerConfig()
+
+    fc = FeedlineConfig(bitstream=bitstream,rfdc_clk=rfdc_clk,rfdc=rfdc,if_board=if_board,
+                        waveform=waveform,chan=chan,ddc=ddc,filter=filtercfg,trig=trigconfig)
+    steps=np.arange(0,400,10)
+    for i, step in enumerate(steps):
+        print(f'\nHammering: {i+1}/{len(steps)}\n')
+        fc.if_board = IFConfig(lo=if_board.lo + step)
+        j = CaptureJob(CaptureRequest(1024, 'ddciq', fc, frsu, channels=None))
+        try:
+            j.submit(True, True)
+            d = j.data(60 * 3).data
+            np.mean(d.real, axis=0), np.mean(d.imag, axis=0), np.std(d.real, axis=0), np.std(d.imag, axis=0)
+        except KeyboardInterrupt:
+            j.cancel()
+            raise KeyboardInterrupt
+        if sendhashed and i==0:
+            fc = fc.hashed_form
+
+hammer(sendhashed=False, precomputewave=True)
+hammer(sendhashed=True, precomputewave=True)
+
+
 channels_plt = [0, 1]
 
 # Capture phase with no offsets
