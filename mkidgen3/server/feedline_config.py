@@ -369,7 +369,7 @@ class _FLMetaconfigMixin:
     @property
     def is_hashed(self):
         for _, v in self:
-            if v.is_hashed:
+            if v is not None and v.is_hashed:
                 return True
         return False
 
