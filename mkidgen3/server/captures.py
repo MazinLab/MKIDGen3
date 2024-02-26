@@ -512,8 +512,12 @@ class CaptureSink(threading.Thread):
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
-            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
-                                     f'{self.result.data.dtype}: {self.result}')
+            if self.result:
+                getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
+                                         f'{self.result.data.dtype}: {self.result}')
+            else:
+                getLogger(__name__).info(f"Capture data for {self.cap_id} processed 'None'")
+
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
         except AttributeError:
