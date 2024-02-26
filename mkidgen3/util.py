@@ -63,13 +63,13 @@ def format_time(t: float) -> str:
     """
 
     if t > 0.1:
-        return f'{t:.2f} seconds'
+        return f'{t:.2f} s'
     elif t > 1e-3:
-        return f'{t / 1e-3:.2f} milliseconds'
+        return f'{t / 1e-3:.2f} ms'
     elif t > 1e-6:
-        return f'{t / 1e-6:.2f} microseconds'
+        return f'{t / 1e-6:.2f} us'
     elif t > 1e-9:
-        return f'{t / 1e-9:.2f} nanoseconds'
+        return f'{t / 1e-9:.2f} ns'
 
 
 def format_bytes(n_bytes: int) -> str:
