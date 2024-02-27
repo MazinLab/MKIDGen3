@@ -346,7 +346,7 @@ class StitchedSweep(AbstractSweep):
         if self.equalized_gain is not None:
             current_gain = self.equalized_gain
         elif self.original.config.attens is not None:
-            current_gain = attens_to_refered(self.config.attens)
+            current_gain = attens_to_refered(self.original.config.attens)
         else:
             raise ValueError(
                 "Neither the current equalized gain, nor the original gain is known"
@@ -355,7 +355,6 @@ class StitchedSweep(AbstractSweep):
         return self.__class__(
             iq=apply_gain(self.iq, applied_gain),
             iqsigma=apply_gain(self.iqsigma, applied_gain),
-            config=self.config,
             original=self.original,
             equalized_gain=refered_gain,
             frequencies=self.frequencies,
@@ -402,7 +401,7 @@ class PowerSweepConfig:
             this_sweepconfig.attens = (output_atten, input_atten)
             sweeps[output_atten] = (
                 input_atten,
-                this_sweepconfig.run_sweep(ifboard, capture),
+                this_sweepconfig.run_sweep(ifboard, capture, progress),
             )
         return PowerSweep(self, sweeps)
 
