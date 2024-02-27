@@ -398,7 +398,7 @@ class FieldBool(Field):
         return bool(super().__get__(obj, objtype))
 
     def __set__(self, obj, val):
-        super().__set__(obj, int(obj))
+        super().__set__(obj, int(val))
 
 
 def field(bits: slice | int, reg: Optional[Type[MetaRegister]] = None):
