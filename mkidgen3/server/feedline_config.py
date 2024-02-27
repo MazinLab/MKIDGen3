@@ -116,6 +116,8 @@ class _FLConfigMixin:
 
     @property
     def _hash_data(self) -> tuple:
+        if self.is_hashed:
+            raise RuntimeError('Not supported for hashed FLConfig')
         """Return a tuple of (setting_key, hashed_data|None) pairs sorted on the setting key"""
         hash_data = ((k, _hasher(getattr(self, k), pass_none=True)) for k in self._settings)
         return tuple(sorted(hash_data, key=lambda x: x[0]))
@@ -146,8 +148,11 @@ class _FLConfigMixin:
             return True
         if not isinstance(other, type(self)):
             return False
-        if self.is_hashed or other.is_hashed:
-            return hash(self) == hash(other)
+        if other.is_hashed:
+            if self.empty():
+                return True
+            else:
+                return hash(self) == hash(other)
         for (_, a), (_, b) in zip(self._hash_data, other._hash_data):
             if a is None or b is None:
                 continue
@@ -157,7 +162,7 @@ class _FLConfigMixin:
 
     def deltafy(self, other):
         """
-        Generate a new config with only the settings that specified by other but not self, or have changed in other
+        Generate a new config with only the settings that are specified by other but not self, or have changed in other
         from self, all other settings are None.
 
         """
@@ -181,6 +186,8 @@ class _FLConfigMixin:
         """
         Return true if all the settings are unspecified (e.g. None)
         """
+        if self.is_hashed:
+            return hash(self) == hash(type(self)())
         return not self.settings_dict(omit_none=True)
 
     @property
@@ -196,12 +203,18 @@ class _FLConfigMixin:
         """
         return type(self)(_hashed=hash(self))
 
+    def unhashed_form(self, hash_cache: dict):
+        if not self.is_hashed:
+            return self
+        d = self.settings_dict(unhasher_cache=hash_cache, _hashed=False, omit_none=True)
+        return type(self)(**d)
+
     def settings_dict(self, omit_none=True, _hashed=False, unhasher_cache=None) -> dict:
         """
         Build a dict of setting_keys:values for use in creating a clone of the config or
         passing to a drivers configure() method
 
-        TODO how does a hanshed None setting (is this possible?) interacte with omit_none
+        TODO how does a hanshed None setting (is this possible?) interact with omit_none
 
         Args:
             omit_none: Exclude settings with no set value from the dictionary
@@ -249,7 +262,7 @@ class _FLMetaconfigMixin:
         """
         if other is None:
             return True
-        if not isinstance(other, type(self)):
+        if not isinstance(other, type(self)):  #NB a hased config is still a config, not an int for a metaconfig
             return False
         for k, v in self:
             other_v = getattr(other, k)
@@ -351,6 +364,19 @@ class _FLMetaconfigMixin:
         through any keys that are FLMetaconfigs.
         """
         d = {k: v if v is None else v.settings_dict(_hashed=True) for k, v in self}
+        return type(self)(**d)
+
+    @property
+    def is_hashed(self):
+        for _, v in self:
+            if v is not None and v.is_hashed:
+                return True
+        return False
+
+    def unhashed_form(self, hash_cache: dict):
+        if not self.is_hashed:
+            return self
+        d = self.settings_dict(unhasher_cache=hash_cache, _hashed=False, omit_none=True)
         return type(self)(**d)
 
     def settings_dict(self, _hashed=False, unhasher_cache=None, omit_none=True):
@@ -580,8 +606,8 @@ class FeedlineConfig(_FLMetaconfigMixin):
                  ddc: (DDCConfig, dict) = None,
                  filter: (FilterConfig, dict) = None,
                  trig: (TriggerConfig, dict) = None):
-        self.bitstream = BitstreamConfig(**rfdc) if isinstance(bitstream, dict) else bitstream
-        self.rfdc_clk = RFDCClockingConfig(**rfdc) if isinstance(rfdc_clk, dict) else rfdc_clk
+        self.bitstream = BitstreamConfig(**bitstream) if isinstance(bitstream, dict) else bitstream
+        self.rfdc_clk = RFDCClockingConfig(**rfdc_clk) if isinstance(rfdc_clk, dict) else rfdc_clk
         self.rfdc = RFDCConfig(**rfdc) if isinstance(rfdc, dict) else rfdc
         self.if_board = IFConfig(**if_board) if isinstance(if_board, dict) else if_board
         self.waveform = WaveformConfig(**waveform) if isinstance(waveform, dict) else waveform
@@ -642,38 +668,14 @@ class FeedlineConfigManager:
         free of hashed settings but may not specify a requirement for many settings (i.e. they may be None)
 
         """
-        # This was the original approach and should be correct
-        # settings = defaultdict(lambda: defaultdict(dict))
-        # for config in self._config.values():
-        #     for k, v in config:
-        #         if isinstance(v, _FLMetaconfigMixin):
-        #             for k2, v2 in v:
-        #                 assert not isinstance(v2, _FLMetaconfigMixin)
-        #                 if v2 is not None:
-        #                     settings[k][k2].update(v2.settings_dict(unhasher_cache=self._cache,
-        #                                                             _hashed=False, omit_none=True))
-        #         elif v is not None:
-        #             settings[k].update(v.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True))
-        # return FeedlineConfig(**settings)
-
         # This is a new, much cleaner approach
         cfg = FeedlineConfig.empty_config()
         for config in self._config.values():
             # This adopts values specified in config (i.e. Nones are skipped). While it later configs set values are
             # overwritten
-            cfg.merge_with(config)  # there is a potential concurrency issue here if the configs are being mutated
-
+            # there is a potential concurrency issue here if the configs are being mutated, but we don't do that!!!
+            cfg.merge_with(config)
         return copy.deepcopy(cfg)  # ensure the result doesn't share data!
-
-        # Yet another approach
-        # settings = defaultdict(lambda: dict)  # We need to build up a nested set of dicts to be used as kwargs
-        # for config in self._config.values():  # iterate through all the FeedlineConfigs in the pot
-        #     specified_settings = config.settings_dict(unhasher_cache=self._cache, _hashed=False, omit_none=True)
-        #     # this is a dict (of dicts maybe of dicts... )
-        #     # we need to merge them all with update all the way down,
-        #     # the caveat is that if a FLConfig has a setting that is itself a dict
-        #     # it should be treated as a value and simple recursion does not allow us to know which it is
-        #     ....
 
     def pop(self, id) -> bool:
         """
@@ -720,7 +722,7 @@ class FeedlineConfigManager:
         if not required.compatible_with(config):
             raise ValueError('Proposed settings not compatible with required settings')
 
-        self._config[id] = config
+        self._config[id] = config.unhashed_form(self._cache)
         new = self.required()
 
         # NB >= is read as "at more or equally restrictive" on the needed FPGA settings

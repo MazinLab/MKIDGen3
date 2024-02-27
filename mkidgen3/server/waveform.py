@@ -1,7 +1,24 @@
 from mkidgen3.funcs import *
 import logging
+import numpy as np
 
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH
+
+
+def _same(a, b):
+    """quick test for array vs None"""
+    if not isinstance(a, type(b)):
+        return False
+    if a is None and b is None:
+        return True
+    try:
+        return np.all(a == b)
+    except:
+        pass
+    try:
+        return a == b
+    except:
+        return False
 
 
 class Waveform:
@@ -23,6 +40,64 @@ class TabulatedWaveform(Waveform):
 
     def __str__(self):
         return f'TabulatedWaveform with sample rate {self._sample_rate}'
+
+    def __ne__(self, other):
+        return not (self._sample_rate == other.sample_rate and
+                    _same(self._values, other._values))
+
+
+class SimpleFreqlistWaveform(Waveform):
+    def __init__(
+        self,
+        frequencies,
+        amplitudes=None,
+        phases=None,
+        n_samples=(1 << 19),
+        sample_rate=4.096e9,
+        allow_sat=False,
+    ):
+        self.freqs = quantize_frequencies(
+            np.asarray(frequencies), rate=sample_rate, n_samples=n_samples
+        )
+        if amplitudes is None:
+            self.amps = np.ones_like(self.freqs) / self.freqs.size
+        else:
+            self.amps = np.asarray(amplitudes)
+        if phases is None:
+            self.phases = np.zeros_like(self.freqs)
+        else:
+            self.phases = np.asarray(phases)
+        self.n_samples = n_samples
+        self._sample_rate = sample_rate
+        self.allow_sat = allow_sat
+
+    @property
+    def quant_freq(self):
+        return self.freqs
+
+    @property
+    def _values(self):
+        times = np.arange(0, self.n_samples) * self.sample_rate
+        data = np.zeros_like(times, dtype=np.complex64)
+        for i, f in enumerate(self.freqs):
+            data += self.amps[i] * np.exp(2j * np.pi * f * times + 1j * self.phases[i])
+        if self.allow_sat:
+            data.real = np.clip(data.real, -1, 1)
+            data.imag = np.clip(data.imag, -1, 1)
+        else:
+            if np.max(np.abs(data.real)) > 1 or np.max(np.abs(data.imag)) > 1:
+                raise RuntimeError(
+                    "Data exceeded DAC output range i: ({:f}, {:f}), q: ({:f}, {:f})".format(
+                        np.min(data.real),
+                        np.max(data.real),
+                        np.min(data.imag),
+                        np.max(data.imag),
+                    )
+                )
+        output_buffer = np.empty((self.n_samples, 2), dtype=np.int16)
+        output_buffer[::, 0] = np.int16(data.real * ((1 << 15) - 1))
+        output_buffer[::, 1] = np.int16(data.imag * ((1 << 15) - 1))
+        return output_buffer
 
 
 class FreqlistWaveform(Waveform):
@@ -69,6 +144,19 @@ class FreqlistWaveform(Waveform):
 
         if compute:
             self.output_waveform
+
+    def __ne__(self, other):
+        if self.quant_vals is not None and other.n_samples is not None:
+            return not _same(self.quant_vals, other.quant_vals)
+
+        return not (self.maximize_dynamic_range == other.maximize_dynamic_range and
+                    _same(self.iq_ratios, other.iq_ratios) and
+                    self.n_samples == other.n_samples and
+                    _same(self.phases, other.phases) and
+                    _same(self.quant_freqs, other.quant_freqs) and
+                    self._sample_rate == other._sample_rate and
+                    _same(self.amps, other.amps) and
+                    _same(self.phase_offsets, other.phase_offsets))
 
     def __repr__(self):
         return f'<{str(self)}>'

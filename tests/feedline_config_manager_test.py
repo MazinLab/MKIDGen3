@@ -37,6 +37,9 @@ fc = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
 fc2 = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc,
                     if_board=if_board, waveform=waveform2, chan=chan, ddc=ddc)
 
+
+assert fc2.compatible_with(fc2.hashed_form)
+
 # test hashed comparison
 fc3 = copy.deepcopy(fc2)
 fc3.if_board = IFConfig(lo=3000, dac_attn=50, adc_attn=50)

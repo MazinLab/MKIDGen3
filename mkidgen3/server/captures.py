@@ -195,11 +195,15 @@ class CaptureRequest:
         return f'CapReq {self.server}:{self.tap} {str(hash(self))}'
 
     def submit(self, ctx: zmq.Context = None):
+        getLogger(__name__).info(f'Submitting {self}..')
         ctx = ctx or zmq.Context().instance()
         with ctx.socket(zmq.REQ) as s:
             s.connect(self.server.command_url)
             s.send_pyobj(('capture', self))
-            return s.recv_pyobj()
+            getLogger(__name__).info(f'...submitted...')
+            resp = s.recv_pyobj()
+            getLogger(__name__).info(f'response: {resp}')
+            return resp
 
     @property
     def type(self):
@@ -512,8 +516,12 @@ class CaptureSink(threading.Thread):
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
-            getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
-                                     f'{self.result.data.dtype}: {self.result}')
+            if self.result:
+                getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
+                                         f'{self.result.data.dtype}: {self.result}')
+            else:
+                getLogger(__name__).info(f"Capture data for {self.cap_id} processed 'None'")
+
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
         except AttributeError:

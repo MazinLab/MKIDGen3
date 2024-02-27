@@ -1,5 +1,5 @@
 import numpy as np
-import pynq.buffer
+import pynq.buffer as buffer
 from pynq import allocate, DefaultIP, DefaultHierarchy
 import time
 import asyncio
@@ -240,7 +240,7 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.start(continuous=False, increment=True)
         del buffer
 
-    def looping_capture(self, source: str, n: int, buffers: pynq.buffer.PynqBuffer, callback):
+    def looping_capture(self, source: str, n: int, buffers: buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')
         if self.switch is not None:
             self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
@@ -374,7 +374,7 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * n_groups * 32
 
         try:
-            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_,
+            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_0,
                               cacheable=self.USE_CACHEABLE_BUFFERS)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
