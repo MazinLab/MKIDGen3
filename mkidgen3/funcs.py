@@ -1,6 +1,7 @@
 import numpy as np
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_LUT_SIZE, N_CHANNELS, \
     SYSTEM_BANDWIDTH, IF_ATTN_STEP, ADC_MAX_V, PHASE_FRACTIONAL_BITS
+from typing import Iterable
 from mkidgen3.util import ensure_array_or_scalar
 
 
@@ -99,34 +100,32 @@ def find_relative_amplitudes(if_attenuations):
     return db2lin(-if_attenuations) / db2lin(-if_attenuations).max()
 
 
-def quantize_frequencies(freqs, rate=4.096e9, n_samples=DAC_LUT_SIZE):
+def quantize_frequencies(freqs: Iterable[float | int], rate: float = 4.096e9, n_samples: int = DAC_LUT_SIZE) -> \
+        Iterable[float]:
     """
-    Quantizes frequencies to nearest available value give the sample rate and number of samples.
-    inputs:
-    - freqs: array or list of floats
-        frequencies to be quantized
-    - rate: float
-        samples per second
-    - n_samples: int
-        number of samplesp
-    returns: scalar or array
-        quantized frequencies
+    Quantize frequencies to nearest available value give the sample rate and number of samples.
+    Args:
+        freqs: frequencies to be quantized
+        rate: samples per second [Hz]
+        n_samples: number of samples (in the DAC LUT)
+
+    Returns: Quantized frequencies
     """
     freqs = ensure_array_or_scalar(freqs)
     freq_res = rate / n_samples
     return np.round(freqs / freq_res) * freq_res
 
 
-def predict_quantization_error(resolution=DAC_RESOLUTION, signed=True):
+def predict_quantization_error(resolution: int = DAC_RESOLUTION, signed: bool = True):
     """
     Predict max quantization error when quantizing to an integer with resolution bits of precision.
-    Assumes values to be quantized have been scaled to maximize dynamic range i.e max value is 2**(resolution-signed) - 1
-    inputs:
-    - resolution: int
-    number of integer bits with which to quantize
-    - signed: bool
-    whether or not the quantized values are signed
+    This is effectively the smallest step size allowed by the resolution.
+    Args:
+        resolution: number of integer bits with which to quantize
+        signed: bool
 
+    Returns: Theoretical quantization error assuming values to be quantized have been scaled to maximize dynamic range
+             i.e. max value is 2**(resolution-signed) - 1
     Note: It's assumed the quantization step size is small relative to the variation in the signal being quantized.
     """
     max_val = 2 ** (resolution - signed) - 1
@@ -134,26 +133,44 @@ def predict_quantization_error(resolution=DAC_RESOLUTION, signed=True):
     return (max_val - min_val) / 2 ** resolution
 
 
-def quantize_to_int(x, resolution=DAC_RESOLUTION, signed=True, word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
-                    return_error=True):
-    """"""
+def quantize_to_int(x: Iterable[float | int] | int, resolution: int = DAC_RESOLUTION, signed: bool = True,
+                    word_length: bool = ADC_DAC_INTERFACE_WORD_LENGTH,
+                    dyn_range: float = 1.0, return_error: bool = True) -> np.ndarray:
+    """
+    Scale and quantize values to integers.
+    Args:
+        x: input value(s)
+        resolution: number of bits of precision to quantize with
+        signed: whether output values are signed or not
+        word_length: n bits in output values, used to compute max allowed value
+        dyn_range: what fraction of the DAC dynamic range to use. 1.0 is all
+        return_error: return quantization error
+
+    Returns: Quantized value(s)
+
+    """
+    assert dyn_range in (0, 1), "dyn_range must be between 0 and 1"
+    x = np.asarray(x)
+    max_allowed = np.round(dyn_range * (2 ** (resolution - signed) - 1)).astype(int)
+    min_allowed = np.round(-dyn_range * (2 ** (resolution - signed))).astype(int)
+
     if np.iscomplex(x).any():
-        max_val = max(x.real.max(), x.imag.max())
-        y = 2 ** (resolution - signed) * x / max_val  # scale to max allowed int value
+        max_abs_val = max(x.real.max(), x.imag.max(), np.abs(x.real.min()), np.abs(x.imag.min()))
+        y = max_allowed * (x / max_abs_val)  # scale to max allowed int value
         quant_real = np.round(y.real).astype(int)
         quant_imag = np.round(y.imag).astype(int)  # round to int
-        quant_real.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant_real)
-        quant_imag.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant_imag)
+        quant_real.clip(min_allowed, max_allowed, out=quant_real)
+        quant_imag.clip(min_allowed, max_allowed, out=quant_imag)
         error = max((y.real - quant_real).max(), (y.imag - quant_imag).max())
-        quant = (quant_real << word_length - resolution) + 1j * (quant_imag << word_length - resolution)
+        quant = (quant_real << (word_length - resolution)) + 1j * (quant_imag << (word_length - resolution))
 
     else:
-        max_val = x.max()
-        y = 2 ** (resolution - signed) * x / max_val  # scale to max allowed int value
+        max_abs_val = max(x.max(), np.abs(x.min()))
+        y = max_allowed * (x / max_abs_val)  # scale to max allowed int value
         quant = np.round(y).astype(int)  # round to int
-        quant.clip(-2 ** (resolution - signed), 2 ** (resolution - signed) - 1, out=quant)
+        quant.clip(min_allowed, max_allowed, out=quant)
         error = (y - quant).max()
-        quant <<= word_length - resolution
+        quant <<= (word_length - resolution)
     if return_error:
         return quant, error
     else:
