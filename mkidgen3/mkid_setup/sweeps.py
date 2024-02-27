@@ -5,14 +5,32 @@ import numpy as np
 import numpy.typing as nt
 
 from typing import Optional, Type, NewType
+from types import NoneType
 from dataclasses import dataclass
+from abc import ABC
 
 from mkidgen3.server.feedline_config import WaveformConfig
 
 LO_QUANT = 0.596
 
+# TODO: Common types with powersweep_helpers
 InputAtten = NewType("InputAtten", float)
 OutputAtten = NewType("OutputAtten", float)
+
+# Power Gain
+Gain = NewType("Gain", float)
+# Total system gain normalized to the total system gain with
+# both adc and dac attens set to 0
+AttenRefered = NewType("AttenRefered", Gain)
+
+
+def attens_to_refered(attens: tuple[OutputAtten, InputAtten]) -> AttenRefered:
+    return -attens[0] - attens[1]
+
+
+# Assumes data is field quantity
+def apply_gain(data: nt.NDArray[np.float64 | np.complex64], gain: Type[Gain]):
+    return data * np.sqrt(10 ** (gain / 10))
 
 
 @dataclass
@@ -121,6 +139,8 @@ class SweepConfig:
 
 @dataclass
 class CombSweepConfig(SweepConfig):
+    overlap: int = 1
+
     def __post_init__(self):
         tones = self.waveform.waveform.freqs
         if not np.allclose(
@@ -142,6 +162,8 @@ class CombSweepConfig(SweepConfig):
     ) -> "SweepConfig":
         if overlap > points:
             raise ValueError("overlap must be less than points")
+        if overlap < 1:
+            raise ValueError("Overlap should be >= 1 to enable stitching")
 
         tones = waveform.waveform.freqs
 
@@ -149,7 +171,9 @@ class CombSweepConfig(SweepConfig):
         steps_overlap = steps[:overlap] + (tones[1] - tones[0]) / 1e6
         steps = np.concatenate((steps, steps_overlap))
 
-        return CombSweepConfig(steps, waveform, lo_center, average, attens)
+        return CombSweepConfig(
+            steps, waveform, lo_center, average, attens, overlap=overlap
+        )
 
     def run_sweep(self, ifboard, capture) -> "CombSweep":
         s = super().run_sweep(ifboard, capture)
@@ -157,10 +181,17 @@ class CombSweepConfig(SweepConfig):
 
 
 @dataclass
-class Sweep:
+class AbstractSweep(ABC):
+    iq: nt.NDArray[np.complex64]
+    iqsigma: nt.NDArray[np.complex64]
+
+
+@dataclass
+class Sweep(AbstractSweep):
     iq: nt.NDArray[np.complex64]
     iqsigma: nt.NDArray[np.complex64]
     config: "SweepConfig"
+    equalized_gain: Optional[AttenRefered] = None
 
     @property
     def frequencies(self) -> nt.NDArray[np.float64]:
@@ -171,14 +202,20 @@ class Sweep:
         ax,
         stacked: bool = False,
         newtones: Optional[list[float] | nt.NDArray[np.float64]] = None,
+        label_tones: bool = False,
+        power: bool = True,
+        **kwargs,
     ):
         for i in range(self.iq.shape[0]):
             line = ax.semilogy(
                 (self.frequencies[i] / 1e6 if not stacked else self.config.steps),
-                np.abs(self.iq[i]),
+                np.abs(self.iq[i]) if not power else np.abs(self.iq[i]) ** 2,
                 label="Tone: {:.3f} MHz".format(
                     self.config.waveform.default_ddc_config.tones[i] / 1e6
-                ),
+                )
+                if label_tones
+                else None,
+                **kwargs,
             )
             if newtones:
                 if stacked:
@@ -196,8 +233,9 @@ class Sweep:
                     )
         if stacked:
             ax.axvline(0, color="black", lw=0.1, label="LO")
-        ax.legend()
-        ax.set_ylabel("S21 (Magnitude)")
+        if label_tones:
+            ax.legend()
+        ax.set_ylabel("S21 (Magnitude)" if not power else "S21 (Power)")
         ax.set_xlabel("Frequency (MHz)")
 
     def plot_loops(self, ax):
@@ -207,10 +245,108 @@ class Sweep:
         ax.set_xlabel("I")
         ax.set_ylabel("Q")
 
+    def equalize(self, refered_gain: AttenRefered):
+        if self.equalized_gain is not None:
+            current_gain = self.equalized_gain
+        elif self.config.attens is not None:
+            current_gain = attens_to_refered(self.config.attens)
+        else:
+            raise ValueError(
+                "Neither the current equalized gain, nor the original gain is known"
+            )
+        applied_gain = current_gain - refered_gain
+        return self.__class__(
+            iq=apply_gain(self.iq, applied_gain),
+            iqsigma=apply_gain(self.iqsigma, applied_gain),
+            config=self.config,
+            equalized_gain=refered_gain,
+        )
+
 
 @dataclass
 class CombSweep(Sweep):
     config: "CombSweepConfig"
+
+    def stitch(self) -> "StitchedSweep":
+        freqs = self.frequencies
+        iq = self.iq
+        iqs = self.iqsigma
+
+        iq_new = np.empty(
+            (
+                1,
+                (iq.shape[1] - self.config.overlap) * iq.shape[0] + self.config.overlap,
+            ),
+            np.complex64,
+        )
+        iqs_new = np.empty_like(iq_new)
+        freqs_new = np.empty_like(iq_new, np.float64)
+
+        iq_new[0][: iq.shape[1]] = iq[0]
+        iqs_new[0][: iq.shape[1]] = iqs[0]
+        freqs_new[0][: iq.shape[1]] = freqs[0]
+        for i in range(1, self.frequencies.shape[0]):
+            low = slice(
+                (iq.shape[1] - self.config.overlap) * i,
+                (iq.shape[1] - self.config.overlap) * i + self.config.overlap,
+            )
+            high = slice(self.config.overlap)
+            high_new = slice(
+                (iq.shape[1] - self.config.overlap) * i + self.config.overlap,
+                (iq.shape[1] - self.config.overlap) * (i + 1) + self.config.overlap,
+            )
+            assert np.all(freqs_new[0][low] == freqs[i][high])
+            ratio = iq_new[0][low] / iq[i][high]
+            print(np.mean(ratio), np.abs(np.mean(ratio)))
+            ratiosigma = (
+                np.sqrt(
+                    (iqs_new[0][low] / iq_new[0][low]) ** 2
+                    + (iqs[i][high] / iq[i][high]) ** 2
+                )
+                * ratio
+            )
+            ratio, ratiosigma = np.sum(ratio / (ratiosigma**2)) / np.sum(
+                1 / (ratiosigma**2)
+            ), 1 / np.sqrt(np.sum(1 / (ratiosigma**2)))
+            iq_new[0][high_new] = iq[i][self.config.overlap :] * ratio
+            iqs_new[0][high_new] = iq_new[0][high_new] * np.sqrt(
+                (iqs[i][self.config.overlap :] / iq[i][self.config.overlap :]) ** 2
+                + (ratiosigma / ratio) ** 2
+            )
+            freqs_new[0][high_new] = freqs[i][self.config.overlap :]
+        return StitchedSweep(
+            iq=iq_new,
+            iqsigma=iqs_new,
+            original=self,
+            equalized_gain=self.equalized_gain,
+            frequencies=freqs_new,
+        )
+
+
+@dataclass
+class StitchedSweep(AbstractSweep):
+    original: "CombSweep"
+    frequencies: nt.NDArray[np.float64]
+    equalized_gain: Optional[AttenRefered] = None
+
+    def equalize(self, refered_gain: AttenRefered):
+        if self.equalized_gain is not None:
+            current_gain = self.equalized_gain
+        elif self.original.config.attens is not None:
+            current_gain = attens_to_refered(self.config.attens)
+        else:
+            raise ValueError(
+                "Neither the current equalized gain, nor the original gain is known"
+            )
+        applied_gain = current_gain - refered_gain
+        return self.__class__(
+            iq=apply_gain(self.iq, applied_gain),
+            iqsigma=apply_gain(self.iqsigma, applied_gain),
+            config=self.config,
+            original=self.original,
+            equalized_gain=refered_gain,
+            frequencies=self.frequencies,
+        )
 
 
 @dataclass
@@ -262,3 +398,47 @@ class PowerSweepConfig:
 class PowerSweep:
     config: "PowerSweepConfig"
     sweeps: dict[OutputAtten, tuple[InputAtten, Type[Sweep]]]
+
+    def plot(
+        self,
+        fig,
+        ax,
+        output_range: Optional[tuple[OutputAtten, OutputAtten]] = None,
+        equalize: Optional[AttenRefered] = 0,
+        power: bool = True,
+        cmap=None,
+    ):
+        if cmap is None:
+            import matplotlib.pyplot as plt
+
+            cmap = plt.cm.viridis_r
+        if output_range is not None and output_range[0] > output_range[1]:
+            output_range = (output_range[1], output_range[0])
+        sweeps = (
+            self.sweeps
+            if output_range is None
+            else {
+                o: (i, s)
+                for o, (i, s) in self.sweeps.items()
+                if o >= output_range[0] and o <= output_range[1]
+            }
+        )
+        sweeps = (
+            sweeps
+            if equalize is None
+            else {o: (i, s.equalize(equalize)) for o, (i, s) in sweeps.items()}
+        )
+        output_min = (
+            min(list(sweeps.keys())) if output_range is None else output_range[0]
+        )
+        output_max = (
+            max(list(sweeps.keys())) if output_range is None else output_range[1]
+        )
+        import matplotlib.colors as cl
+        import matplotlib.cm as cm
+
+        norm = cl.Normalize(output_min, output_max)
+        smap = cm.ScalarMappable(norm, cmap)
+        fig.colorbar(smap, ax=ax, label="Output Attenuation (dB)")
+        for output_atten, (_, sweep) in sweeps.items():
+            sweep.plot(ax, color=cmap(norm(output_atten)))
