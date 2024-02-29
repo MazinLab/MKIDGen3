@@ -1,8 +1,11 @@
 from mkidgen3.funcs import *
 import logging
 import numpy as np
+import platform
+import matplotlib.pyplot as plt
 
-from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH
+from mkidgen3.system_parameters import (ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE,
+                                        SYSTEM_BANDWIDTH, DAC_FREQ_RES)
 
 
 def _same(a, b):
@@ -34,6 +37,11 @@ class Waveform:
 
 
 class TabulatedWaveform(Waveform):
+    """
+    Use this class if you want to pass existing tabulated values directly to the DAC LUT without any scaling or
+    computation
+    """
+
     def __init__(self, tabulated_values=None, sample_rate=DAC_SAMPLE_RATE):
         self._values = tabulated_values
         self._sample_rate = sample_rate
@@ -48,13 +56,13 @@ class TabulatedWaveform(Waveform):
 
 class SimpleFreqlistWaveform(Waveform):
     def __init__(
-        self,
-        frequencies,
-        amplitudes=None,
-        phases=None,
-        n_samples=(1 << 19),
-        sample_rate=4.096e9,
-        allow_sat=False,
+            self,
+            frequencies,
+            amplitudes=None,
+            phases=None,
+            n_samples=(1 << 19),
+            sample_rate=4.096e9,
+            allow_sat=False,
     ):
         self.freqs = quantize_frequencies(
             np.asarray(frequencies), rate=sample_rate, n_samples=n_samples
@@ -98,8 +106,9 @@ class SimpleFreqlistWaveform(Waveform):
 
 
 class FreqlistWaveform(Waveform):
-    def __init__(self, frequencies=None, n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-                 iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
+    def __init__(self, frequencies=None, n_samples=DAC_LUT_SIZE, sample_rate=DAC_SAMPLE_RATE, amplitudes=None,
+                 phases=None,
+                 iq_ratios=None, phase_offsets=None, seed=2, dac_dynamic_range=1.0, optimize_phase=True, compute=False):
         """
         Args:
             frequencies: list/array of frequencies in the comb
@@ -119,22 +128,23 @@ class FreqlistWaveform(Waveform):
         """
         self.freqs = np.asarray(frequencies)
         self.n_samples = n_samples
-        self._sample_rate = sample_rate
         self.amps = amplitudes if amplitudes is not None else np.ones_like(frequencies)
+        self._sample_rate = sample_rate
+        self._optimize_phase = optimize_phase
 
         if phases is None:
             self.phases = np.random.default_rng(seed=seed).uniform(0., 2. * np.pi, size=self.freqs.size)
         else:
             self.phases = np.asarray(phases)
 
-        self.maximize_dynamic_range = maximize_dynamic_range
+        self.dac_dynamic_range = dac_dynamic_range
 
         self.iq_ratios = np.asarray(iq_ratios) if iq_ratios is not None else np.ones_like(frequencies)
         self.phase_offsets = np.asarray(phase_offsets) if phase_offsets is not None else np.zeros_like(frequencies)
         self.quant_freqs = quantize_frequencies(self.freqs, rate=sample_rate, n_samples=n_samples)
 
         self._seed = seed
-        self.__values = None  #cache
+        self.__values = None  # cache
 
         self.quant_vals = None
         self.quant_error = None
@@ -146,7 +156,7 @@ class FreqlistWaveform(Waveform):
         if self.quant_vals is not None and other.n_samples is not None:
             return not _same(self.quant_vals, other.quant_vals)
 
-        return not (self.maximize_dynamic_range == other.maximize_dynamic_range and
+        return not (self.dac_dynamic_range == other.dac_dynamic_range and
                     _same(self.iq_ratios, other.iq_ratios) and
                     self.n_samples == other.n_samples and
                     _same(self.phases, other.phases) and
@@ -171,64 +181,95 @@ class FreqlistWaveform(Waveform):
         return f'FreqlistWaveform: {preview_dict}'
 
     @property
-    def _values(self):
+    def _values(self) -> np.ndarray[np.complex128]:
+        """
+        Return or calculate waveform values
+        Returns: Complex values where the real and imag part have been quantized to ints in accordance with specified
+                 dac dynamic range
+
+        """
         if self.quant_vals is None:
             self.__values = self._compute_waveform()
 
-            if self.maximize_dynamic_range:
-                self._optimize_random_phase(self.__values, max_attempts=10,
-                                            max_quant_err=3 * predict_quantization_error(resolution=DAC_RESOLUTION))
-            else:
-                self.quant_vals, self.quant_error = quantize_to_int(self.__values, resolution=DAC_RESOLUTION,
-                                                                    signed=True, return_error=True,
-                                                                    word_length=ADC_DAC_INTERFACE_WORD_LENGTH)
+            self.quant_vals, self.quant_error = quantize_to_int(self.__values, resolution=DAC_RESOLUTION, signed=True,
+                                                                word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
+                                                                dyn_range=self.dac_dynamic_range, return_error=True)
+            if self._optimize_phase:
+                self._optimize_random_phase(max_quant_err=1 * predict_quantization_error(resolution=DAC_RESOLUTION),
+                                            max_attempts=3)
         return self.quant_vals
 
-    def _compute_waveform(self, phases=None):
+    def _compute_waveform(self, phases: Iterable | None = None) -> np.ndarray[np.complex64]:
+        """
+        Compute the raw waveform with no scaling or casting.
+        Args:
+            phases: new phases to compute waveform with (useful for re-generating random phases)
+
+        Returns: Raw waveform values.
+
+        """
         iq = np.zeros(self.n_samples, dtype=np.complex64)
         # generate each signal
         t = 2 * np.pi * np.arange(iq.size) / self._sample_rate
-        logging.getLogger(__name__).debug(
-            f'Computing net waveform with {self.freqs.size} tones. For 2048 tones this takes about 7 min.')
+
         phases = self.phases if phases is None else phases
-        for i in range(self.freqs.size):
-            exp = self.amps[i] * np.exp(1j * (t * self.quant_freqs[i] + phases[i]))
-            scaled = np.sqrt(2) / np.sqrt(1 + self.iq_ratios[i] ** 2)
-            c1 = self.iq_ratios[i] * scaled * np.exp(1j * np.deg2rad(self.phase_offsets)[i])
-            iq.real += c1.real * exp.real + c1.imag * exp.imag
-            iq.imag += scaled * exp.imag
+
+        if self.phase_offsets.any() or (self.iq_ratios != 1).any():
+            logging.getLogger(__name__).debug(
+                f'Computing net waveform with {self.freqs.size} tones in a loop to apply IQ ratios and phase offsets.\n'
+                f'For 2048 tones this takes about 7 min.')
+            for i in range(self.freqs.size):
+                exp = self.amps[i] * np.exp(1j * (t * self.quant_freqs[i] + phases[i]))
+                scaled = np.sqrt(2) / np.sqrt(1 + self.iq_ratios[i] ** 2)
+                c1 = self.iq_ratios[i] * scaled * np.exp(1j * np.deg2rad(self.phase_offsets)[i])
+                iq.real += c1.real * exp.real + c1.imag * exp.imag
+                iq.imag += scaled * exp.imag
+
+        else:
+            logging.getLogger(__name__).debug(
+                f'Computing net waveform with {self.freqs.size} tones using IFFT.')
+            possible_tones = np.linspace(-DAC_SAMPLE_RATE/2, (DAC_SAMPLE_RATE/2)-DAC_FREQ_RES, DAC_LUT_SIZE)
+            tone_idxs = np.concatenate([np.where(possible_tones == freq) for freq in self.quant_freqs]).flatten()
+            fft = np.zeros(2**19, dtype=np.complex64)
+            for tone_number, tone_idx in enumerate(tone_idxs):
+                fft[tone_idx] = self.amps[tone_number]*np.exp(1j*self.phases[tone_number])
+            iq = np.fft.ifft(np.fft.fftshift(fft))
+
         return iq
 
-    def _optimize_random_phase(self, values, max_quant_err=3 * predict_quantization_error(resolution=DAC_RESOLUTION),
-                               max_attempts=10):
+    def _optimize_random_phase(self,
+                               max_quant_err: float | int = 1 * predict_quantization_error(resolution=DAC_RESOLUTION),
+                               max_attempts: int = 3) -> None:
         """
-        inputs:
-        - max_quant_error: float
-            maximum allowable quantization error for real or imaginary samples.
-            see predict_quantization_error() for how to estimate this value.
-        - max_attempts: int
-            Max number of times to recompute the waveform and attempt to get a quantization error below the specified max
-            before giving up.
+        Regenerate random phases, waveform values, and quantized values if quantization error is too high.
+        Args:
+            max_quant_err: maximum absolute allowable quantization error defined as abs(expected value - achieved value)
+            max_attempts: maximum numer of times to regenerate random phases, waveform values, and quantized values
 
-        returns: floating point complex waveform with optimized random phases
+        Returns: None
+
+        Waveform random phases, waveform values, quantized values, and quantization error are only updated if a
+        solution is found.
         """
+
         if max_quant_err is None:
             max_quant_err = 3 * predict_quantization_error(resolution=DAC_RESOLUTION)
 
-        quant_vals, quant_error = quantize_to_int(values, resolution=DAC_RESOLUTION, signed=True,
-                                                            word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
-                                                            return_error=True)
+        if self.quant_error < max_quant_err:  # already optimal
+            return
+
+        quant_error = self.quant_error
         cnt = 0
         while quant_error > max_quant_err:
             logging.getLogger(__name__).warning(
-                "Max quantization error exceeded. The freq comb's relative phases may have added up sub-optimally."
-                "Calculating with new random phases")
+                f"Quantization error {quant_error} exceeded max quantization error {max_quant_err}. The freq comb's "
+                f"relative phases may have added up sub-optimally. Calculating with new random phases")
             self._seed += 1
             self.phases = np.random.default_rng(seed=self._seed).uniform(0., 2. * np.pi, len(self.freqs))
             values = self._compute_waveform(phases=self.phases)
-            self.quant_vals, self.quant_error = quantize_to_int(values, resolution=DAC_RESOLUTION, signed=True,
-                                                                word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
-                                                                return_error=True)
+            quant_vals, quant_error = quantize_to_int(values, resolution=DAC_RESOLUTION, signed=True,
+                                                      word_length=ADC_DAC_INTERFACE_WORD_LENGTH,
+                                                      return_error=True)
             cnt += 1
             if cnt > max_attempts:
                 raise Exception("Process reach maximum attempts: Could not find solution below max quantization error.")
@@ -238,8 +279,8 @@ class FreqlistWaveform(Waveform):
 
 
 def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None,
-                    n_samples=2 ** 19, sample_rate=4.096e9, amplitudes=None, phases=None,
-                    iq_ratios=None, phase_offsets=None, seed=2, maximize_dynamic_range=True, compute=False):
+                    n_samples=DAC_LUT_SIZE, sample_rate=DAC_SAMPLE_RATE, amplitudes=None, phases=None,
+                    iq_ratios=None, phase_offsets=None, seed=2, dac_dynamic_range=1.0, compute=False,):
     if output_waveform is not None:
         return TabulatedWaveform(tabulated_values=output_waveform, sample_rate=sample_rate)
     if n_uniform_tones is not None:
@@ -251,4 +292,10 @@ def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None
     frequencies = np.asarray(frequencies)
     return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
                             amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
-                            seed=seed, maximize_dynamic_range=maximize_dynamic_range, compute=compute)
+                            seed=seed, dac_dynamic_range=dac_dynamic_range, compute=compute)
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+    a = WaveformFactory(frequencies=[200e6, 400e6+7812.5], amplitudes=[2,3], compute=True)
+    print('hi')

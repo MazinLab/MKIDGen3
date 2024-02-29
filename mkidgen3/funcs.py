@@ -149,7 +149,7 @@ def quantize_to_int(x: Iterable[float | int] | int, resolution: int = DAC_RESOLU
     Returns: Quantized value(s)
 
     """
-    assert dyn_range in (0, 1), "dyn_range must be between 0 and 1"
+    assert 0 <= dyn_range <= 1, "dyn_range must be between 0 and 1"
     x = np.asarray(x)
     max_allowed = np.round(dyn_range * (2 ** (resolution - signed) - 1)).astype(int)
     min_allowed = np.round(-dyn_range * (2 ** (resolution - signed))).astype(int)
@@ -192,16 +192,17 @@ def complex_scale(z, max_val):
     return max_val * z / input_max
 
 
-def uniform_freqs(n_channels=N_CHANNELS, bandwidth=SYSTEM_BANDWIDTH):
+def uniform_freqs(n_channels: int = N_CHANNELS, bandwidth:float | int = SYSTEM_BANDWIDTH, offset: float | int = 0.5e6) -> np.ndarray:
     """
-    inputs:
-    - n_channels: int
-        Number of channels in the DDC
-    - BANDWIDTH: float
-        Full channelizer bandwidth (ADC Nyquist bandwidth) in Hz
-    Returns a comb with one frequency per DDC channel, evenly spaced in the bandwidth.
+    Returns a list of frequencies corresponding to one per DDC channel, evenly spaced in the bandwidth.
+    Args:
+        n_channels: Number of channels in the DDC
+        bandwidth: Full channelizer bandwidth (ADC Nyquist bandwidth) in Hz
+        offset: move tones this far from a bin cetner in Hz
+
+    Returns: See above.
     """
-    return np.linspace(-n_channels / 2, n_channels / 2 - 1, n_channels) * (bandwidth / n_channels)
+    return np.linspace(-n_channels / 2, n_channels / 2 - 1, n_channels) * (bandwidth / n_channels)+offset
 
 
 def est_loop_centers(iq):
