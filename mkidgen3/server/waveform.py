@@ -183,7 +183,7 @@ class FreqlistWaveform(Waveform):
         return f'FreqlistWaveform: {preview_dict}'
 
     @property
-    def _values(self) -> np.ndarray[np.complex128]:
+    def _values(self) -> 'np.ndarray[np.complex128]':
         """
         Return or calculate waveform values
         Returns: Complex values where the real and imag part have been quantized to ints in accordance with specified
@@ -201,7 +201,7 @@ class FreqlistWaveform(Waveform):
                                             max_attempts=3)
         return self.quant_vals
 
-    def _compute_waveform(self, phases: Iterable | None = None) -> np.ndarray[np.complex64]:
+    def _compute_waveform(self, phases: Iterable | None = None) -> 'np.ndarray[np.complex64]':
         """
         Compute the raw waveform with no scaling or casting.
         Args:
