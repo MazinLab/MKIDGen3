@@ -14,7 +14,9 @@ ADC_MAX_V = 1/(2*np.sqrt(5))  # [V]. 1 dbM is 1 mW, using P = V^2/R where P is 1
 # V is 1/sqrt(10) volts at the die termination which means the max-scale V is  1/2*sqrt(5) at the SMA input.
 DAC_RESOLUTION = 14  # bits see PG269 p.219
 DAC_LUT_SIZE = 2 ** 19  # values
-DAC_SAMPLE_RATE = 4.096e9  # GSPS
+ADC_SAMPLE_RATE = 4.096e9  # Hz
+DAC_SAMPLE_RATE = 4.096e9  # Hz
+DAC_FREQ_RES = DAC_SAMPLE_RATE / DAC_LUT_SIZE
 N_OPFB_CHANNELS = 4096  # Number of OPFB channels
 N_CHANNELS = 2048  # Number of DDC (resonator) channels
 N_PHASE_GROUPS = 128  # See HLS and the phase drivers, the AXI streams are 16 channels wide
