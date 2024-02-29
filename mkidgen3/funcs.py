@@ -3,6 +3,8 @@ from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLU
     SYSTEM_BANDWIDTH, IF_ATTN_STEP, ADC_MAX_V, PHASE_FRACTIONAL_BITS
 from typing import Iterable
 from mkidgen3.util import ensure_array_or_scalar
+import numpy.typing as nt
+
 
 
 def convert_adc_raw_to_mv(raw_data: np.ndarray,
@@ -135,7 +137,7 @@ def predict_quantization_error(resolution: int = DAC_RESOLUTION, signed: bool = 
 
 def quantize_to_int(x: Iterable[float | int] | int, resolution: int = DAC_RESOLUTION, signed: bool = True,
                     word_length: bool = ADC_DAC_INTERFACE_WORD_LENGTH,
-                    dyn_range: float = 1.0, return_error: bool = True) -> np.ndarray:
+                    dyn_range: float = 1.0, return_error: bool = True) -> nt.NDArray[int | np.complex64]:
     """
     Scale and quantize values to integers.
     Args:

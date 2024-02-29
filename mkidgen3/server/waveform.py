@@ -1,6 +1,7 @@
 from mkidgen3.funcs import *
 import logging
 import numpy as np
+import numpy.typing as nt
 import platform
 import matplotlib.pyplot as plt
 
@@ -136,13 +137,13 @@ class FreqlistWaveform(Waveform):
             self.phases = np.random.default_rng(seed=seed).uniform(0, 2 * np.pi, size=self.freqs.size)
         else:
             self.phases = np.asarray(phases)
-        assert 0 <= self.phases < 2 * np.pi, "phases must be between 0 and 2 pi"
-
+        assert (0 <= self.phases).all and (self.phases < 2*np.pi).all, "phases must be between 0 and 2 pi"
         self.dac_dynamic_range = dac_dynamic_range
 
         self.iq_ratios = np.asarray(iq_ratios) if iq_ratios is not None else np.ones_like(frequencies)
         self.phase_offsets = np.asarray(phase_offsets) if phase_offsets is not None else np.zeros_like(frequencies)
-        assert 0 <= self.phase_offsets < 2 * np.pi, "phase offsets must be between 0 and 2 pi"
+        assert (0 <= self.phase_offsets).all and (self.phase_offsets < 2*np.pi).all, ("phase offsets must be between 0 "
+                                                                                      "and 2 pi")
         self.quant_freqs = quantize_frequencies(self.freqs, rate=sample_rate, n_samples=n_samples)
 
         self._seed = seed
@@ -183,7 +184,7 @@ class FreqlistWaveform(Waveform):
         return f'FreqlistWaveform: {preview_dict}'
 
     @property
-    def _values(self) -> 'np.ndarray[np.complex128]':
+    def _values(self) -> nt.NDArray[np.complex128]:
         """
         Return or calculate waveform values
         Returns: Complex values where the real and imag part have been quantized to ints in accordance with specified
@@ -201,7 +202,7 @@ class FreqlistWaveform(Waveform):
                                             max_attempts=3)
         return self.quant_vals
 
-    def _compute_waveform(self, phases: Iterable | None = None) -> 'np.ndarray[np.complex64]':
+    def _compute_waveform(self, phases: Iterable | None = None) -> nt.NDArray[np.complex64]:
         """
         Compute the raw waveform with no scaling or casting.
         Args:
