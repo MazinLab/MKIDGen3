@@ -1,6 +1,5 @@
 from mkidgen3.funcs import *
 import logging
-import numpy as np
 
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH
 
@@ -44,57 +43,6 @@ class TabulatedWaveform(Waveform):
     def __ne__(self, other):
         return not (self._sample_rate == other.sample_rate and
                     _same(self._values, other._values))
-
-
-class SimpleFreqlistWaveform(Waveform):
-    def __init__(
-        self,
-        frequencies,
-        amplitudes=None,
-        phases=None,
-        n_samples=(1 << 19),
-        sample_rate=4.096e9,
-        allow_sat=False,
-    ):
-        self.freqs = quantize_frequencies(
-            np.asarray(frequencies), rate=sample_rate, n_samples=n_samples
-        )
-        if amplitudes is None:
-            self.amps = np.ones_like(self.freqs) / self.freqs.size
-        else:
-            self.amps = np.asarray(amplitudes)
-        if phases is None:
-            self.phases = np.zeros_like(self.freqs)
-        else:
-            self.phases = np.asarray(phases)
-        self.n_samples = n_samples
-        self._sample_rate = sample_rate
-        self.allow_sat = allow_sat
-
-    @property
-    def quant_freq(self):
-        return self.freqs
-
-    @property
-    def _values(self):
-        times = np.arange(0, self.n_samples) / self.sample_rate
-        data = np.zeros_like(times, dtype=np.complex64)
-        for i, f in enumerate(self.freqs):
-            data += self.amps[i] * np.exp(2j * np.pi * f * times + 1j * self.phases[i])
-        if self.allow_sat:
-            data.real = np.clip(data.real, -1, 1)
-            data.imag = np.clip(data.imag, -1, 1)
-        else:
-            if np.max(np.abs(data.real)) > 1 or np.max(np.abs(data.imag)) > 1:
-                raise RuntimeError(
-                    "Data exceeded DAC output range i: ({:f}, {:f}), q: ({:f}, {:f})".format(
-                        np.min(data.real),
-                        np.max(data.real),
-                        np.min(data.imag),
-                        np.max(data.imag),
-                    )
-                )
-        return data * ((1 << 15) - 1)
 
 
 class FreqlistWaveform(Waveform):

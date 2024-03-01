@@ -6,7 +6,7 @@ from logging import getLogger
 
 from mkidgen3.server.captures import CaptureRequest
 from mkidgen3.server.feedline_config import RFDCConfig
-from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
+from mkidgen3.server.fpga_objects import FeedlineHardware
 from mkidgen3.server.misc import zpipe
 from mkidgen3.util import check_active_jupyter_notebook
 import asyncio
@@ -50,29 +50,14 @@ class TapThread:
         except zmq.error.ContextTerminated:
             pass
 
-class FeedlineReadoutServer:
-    def __init__(self, bitstream, clock_source='4.096GSPS_MTS_dualloop', if_port='dev/ifboard', ignore_version=False,
-                 program_clock=True, mts=True, download=False):
-        self.hardware = FeedlineHardware(bitstream, clock_source=clock_source, if_port=if_port,
-                                         ignore_version=ignore_version, program_clock=program_clock,
-                                         rfdc=RFDCConfig(dac_mts=mts, adc_mts=False), download=download)
 
+class FeedlineReadoutServer:
+    def __init__(self, ):
+        self.hardware = FeedlineHardware()
         self._tap_threads = {k: None for k in ('photon', 'postage', 'engineering')}
         self._to_check = []
         self._checked = []
         self._cap_pipe=None
-
-    def status(self):
-        """
-
-        Returns: Dictionary of status information
-
-        """
-        status = {'hardware': self.hardware.status(),
-                  'running_captures': self._running_captures(),
-                  'pending_captures': self._pending_captures()}
-
-        return status
 
     def _running_captures(self):
         return tuple([tt.request.id for tt in list(self._tap_threads.values())])
@@ -185,19 +170,6 @@ class FeedlineReadoutServer:
         """
         context = context or zmq.Context().instance()
 
-        #THIS LOOP SEEMS TO ACTUALLY be getting used ONLY to be deleted with the pynq.UIO reader deletion
-        #when the threaded interrupt manager starts stuff up and nixes pynqs reader
-        # (that apparently exists in this thread)
-        try:
-            aio_eloop = asyncio.get_running_loop()
-        except RuntimeError:
-            aio_eloop = asyncio.new_event_loop()
-            getLogger(__name__).warning('Creating but not starting a thread that really should be axed and '
-                                        'optimized away')
-            t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
-
-        asyncio.set_event_loop(aio_eloop)
-
         getLogger(__name__).info('Main thread starting')
         while True:
 
@@ -211,12 +183,12 @@ class FeedlineReadoutServer:
             try:
                 cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
             except zmq.ZMQError as e:
-                if e.errno != zmq.EAGAIN:
-                    self._abort_all(reason='Keyboard interrupt')
-                    if e.errno == zmq.ETERM:
-                        break
-                    else:
-                        raise e  # real error
+                if e.errno == zmq.ETERM:
+                    self._abort_all(reason='ZMQ ETERM')
+                    break
+                elif e.errno != zmq.EAGAIN:
+                    self._abort_all(reason=str(e))
+                    raise e  # real error
 
             if cmd not in ('exit', 'abort', 'capture', ''):
                 getLogger(__name__).error(f'Received invalid command "{cmd}"')
@@ -250,8 +222,8 @@ class FeedlineReadoutServer:
                         data.set_status('queued', f'Queued', destablish=True)
                         q.append(data)
                     except zmq.ZMQError as e:
-                        getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
-                                                  f' {data.id}')
+                        getLogger(__name__).error(f'Unable to update status due to {e}. '
+                                                  f'Silently dropping request {data.id}')
 
                 # cant be run because there might be something more important (we check anyway),
                 # the tap is in use (we check when the tap finishes)
@@ -267,7 +239,8 @@ class FeedlineReadoutServer:
 
             try:
                 if self._tap_threads[cr.type] is not None:
-                    cr.set_status('queued', f'tap location in use by: {self._tap_threads[cr.type].request.id}')
+                    cr.set_status('queued', f'tap location in use by:'
+                                            f' {self._tap_threads[cr.type].request.id}')
                     self._checked.append(cr)
                     continue
                 else:
@@ -291,7 +264,6 @@ class FeedlineReadoutServer:
 
             self.start_tap_thread(cr)
 
-        aio_eloop.close()
         try:
             pipe.close()
         except zmq.error.ContextTerminated:
@@ -312,10 +284,7 @@ class FeedlineReadoutServer:
         cap_runners = {'engineering': self.hardware.plram_cap, 'photon': self.hardware.photon_cap,
                        'postage': self.hardware.postage_cap}
         target = cap_runners[cr.type]
-
-
         cr.set_status('running', f'Started at UTC {datetime.utcnow()}', destablish=True)
-
         self._tap_threads[cr.type] = TapThread(target, cr)
 
 
@@ -329,9 +298,6 @@ def parse_cl():
                         help='Capture Status Port', default='8890')
     parser.add_argument('--clock', dest='clock', action='store', required=False, type=str,
                         help='Clock Source', default='default')
-    parser.add_argument('-b', '--bitstream', dest='bitstream', action='store', required=False, type=str,
-                        help='bitstream file',
-                        default=DEFAULT_BIT_FILE)
     parser.add_argument('--if', dest='ifboard', action='store', required=False, type=str,
                         help='IF Board device', default='/dev/ifboard')
     parser.add_argument('--iv', dest='ignore_fpga_driver_version', action='store_true', required=False,
@@ -371,19 +337,14 @@ if __name__ == '__main__':
     import os, time
     os.environ['TZ'] = 'right/UTC'
     time.tzset()
-    setup_logging('feedlinereadoutserver')
-
-    if check_active_jupyter_notebook():
-        raise RuntimeError('Jupyter notebooks are running, shut them down first.')
+    setup_logging('zmqtesting')
 
     args = parse_cl()
 
     context = zmq.Context.instance(io_threads=2)
     context.linger = 1
 
-    fr = FeedlineReadoutServer(args.bitstream, clock_source=args.clock, if_port=args.ifboard,
-                               ignore_version=args.ignore_fpga_driver_version, program_clock=True, mts=True,
-                               download=False)
+    fr = FeedlineReadoutServer()
 
     # Set up proxies for routing all the capture data and status
     cap_addr = f'tcp://*:{args.capture_port}'
@@ -404,58 +365,28 @@ if __name__ == '__main__':
     while True:
         try:
             cmd, arg = socket.recv_pyobj()
-        except zmq.ZMQError as e:
+            getLogger(__name__).debug(f'Received command "{cmd}" with args {arg}')
+        except (zmq.ZMQError, KeyboardInterrupt) as e:
             getLogger(__name__).error(f'Caught {e}, aborting and shutting down')
-            fr.terminate_capture_handler()
-            break
-        except KeyboardInterrupt:
-            getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
             fr.terminate_capture_handler()
             break
         except pickle.UnpicklingError:
             socket.send_pyobj('ERROR: Ignoring unpicklable command')
             getLogger(__name__).error(f'Ignoring unpicklable command')
             continue
-        else:
-            if not thread.is_alive():
-                getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
-                                             f'never complete. Exiting.')
-                socket.send_pyobj('ERROR')
-                break
 
-        getLogger(__name__).debug(f'Received command "{cmd}" with args {arg}')
+        if not thread.is_alive():
+            getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
+                                         f'never complete. Exiting.')
+            socket.send_pyobj('ERROR: Capture thread is dead. Exiting.')
+            break
 
-        if cmd == 'reset':
-            socket.send_pyobj('OK')
-            fr.terminate_capture_handler()
-            thread.join()
-            fr.hardware.reset()
-            thread = fr.create_capture_handler(context=zmq.Context.instance(), start=True, daemon=False)
-
-        elif cmd == 'status':
-            try:
-                status = fr.status()  # this might take a while and fail
-            except Exception as e:
-                status = {'hardware': str(e)}
-            status['id'] = f'FRS {args.fl_id} @ {args.port}/{args.cap_port}'
-            socket.send_pyobj(status)
-
-        elif cmd == 'bequiet':
-            fr.abort_all()
-            try:
-                fr.hardware.bequiet(**arg)  # This might take a while and fail
-                socket.send_pyobj('OK')
-            except Exception as e:
-                socket.send_pyobj(f'ERROR: {e}')
-
-        elif cmd == 'capture':
+        if cmd == 'capture':
             fr.capture(arg)
             socket.send_pyobj({'resp': 'OK', 'code': 0})
-
         elif cmd == 'abort':
             fr.abort(arg)
             socket.send_pyobj({'resp': 'OK', 'code': 0})
-
         else:
             socket.send_pyobj({'resp': 'ERROR', 'code': 0})
 

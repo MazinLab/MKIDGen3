@@ -1,4 +1,6 @@
 import threading
+import time
+from logging import getLogger
 import numpy as np
 import copy
 import zmq
@@ -10,17 +12,17 @@ from mkidgen3.server.captures import CaptureJob, FRSClient, CaptureRequest, Stat
 from mkidgen3.server.waveform import WaveformFactory
 from mkidgen3.util import setup_logging
 
-setup_logging('feedlineclient')
+setup_logging('zmqtesting')
 # ctx = zmq.Context.instance()
 # ctx.linger = 0
 
-
+frslocal = FRSClient(url='localhost', command_port=8888, data_port=8889, status_port=8890)
 frsa = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 
 large_job_test = False
 send_wave = ''
-frsu = frsa
+frsu = frslocal
 
 
 def synthetic_photon_waveform_generator():
@@ -93,10 +95,13 @@ test_eng_jobs = list(map(CaptureJob, (CaptureRequest(1024, 'adc', fc, frsu),
 # gsm = StatusListener(b'', frsb.status_url)
 
 
-test_adc_only_job.submit(True, True)
+# test_adc_only_job.submit(True, True)
 
-for j in test_eng_jobs:
-    j.submit(True, True)
+# test_eng_jobs=test_eng_jobs[:1]
+# for j in test_eng_jobs:
+#     j.submit(True, True)
+#
+# test_eng_jobs[-1].data(300)
 
 if large_job_test:
     for j in test_large_file_jobs:
@@ -122,21 +127,26 @@ def hammer(sendhashed=False, precomputewave=True):
                         waveform=waveform,chan=chan,ddc=ddc,filter=filtercfg,trig=trigconfig)
     steps=np.arange(0,400,10)
     for i, step in enumerate(steps):
-        print(f'\nHammering: {i+1}/{len(steps)}\n')
+
         fc.if_board = IFConfig(lo=if_board.lo + step)
-        j = CaptureJob(CaptureRequest(1024, 'ddciq', fc, frsu, channels=None))
+        r = CaptureRequest(1024, 'ddciq', fc, frsu, channels=None)
+        j = CaptureJob(r)
+        print(f'\nHammering: {i+1}/{len(steps)} id={j.request.id}\n')
         try:
             j.submit(True, True)
-            d = j.data(60 * 3).data
-            np.mean(d.real, axis=0), np.mean(d.imag, axis=0), np.std(d.real, axis=0), np.std(d.imag, axis=0)
+            d = j.data(60 * 3)
         except KeyboardInterrupt:
             j.cancel()
             raise KeyboardInterrupt
+        del j
         if sendhashed and i==0:
             fc = fc.hashed_form
+        time.sleep(1)
 
-hammer(sendhashed=False, precomputewave=True)
+print('Hammer test w/ hashing')
 hammer(sendhashed=True, precomputewave=True)
+print('Hammer test w/o hashing')
+hammer(sendhashed=False, precomputewave=True)
 
 
 channels_plt = [0, 1]

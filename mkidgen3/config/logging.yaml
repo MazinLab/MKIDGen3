@@ -1,4 +1,18 @@
 loggers:
+  zmqtesting:
+    pynq: INFO
+    zmq: DEBUG
+    zmqflow: DEBUG
+    mkidgen3: DEBUG
+    mkidgen3.drivers: ERROR
+    mkidgen3.server.captures.status: ERROR
+    mkidgen3.server.captures.data: ERROR
+#    mkidgen3.server.captures: INFO
+    "":
+      handlers: [ default ]
+      level: WARNING
+      propagate: False
+    __main__: DEBUG
   feedlinereadoutserver:
     pynq: INFO
     mkidgen3: DEBUG

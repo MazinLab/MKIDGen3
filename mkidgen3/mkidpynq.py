@@ -133,22 +133,3 @@ def check_description_for(description, kinds, check_version=False, force_dict=Fa
 def print_plstatus():
     from pynq import PL
     print(f"PL Bitfile: {PL.bitfile_name}\nPL Timestamp: {PL.timestamp}\n")
-
-
-class DummyOverlay:
-    class DummyBuffer(np.ndarray):
-        def freebuffer(self):
-            pass
-
-    class DummyCap:
-        @staticmethod
-        def capture(csize, *args, **kwargs):
-            n = csize * 2
-            return np.random.uniform(low=-10000, high=10000, size=n).astype(np.int16).view(DummyOverlay.DummyBuffer)
-
-        @staticmethod
-        def ready():
-            return True
-
-    def __init__(self, bitstream, *args, **kwargs):
-        self.capture = DummyOverlay.DummyCap()
