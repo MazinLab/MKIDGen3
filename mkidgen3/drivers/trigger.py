@@ -407,8 +407,6 @@ class PhotonMAXI(DefaultIP):
 
         ThreadedPLInterruptManager.remove_monitor(int_event)
         sender(b'')
-        if isinstance(q, zmq.Socket):
-            q.close()
 
     @property
     def buffer_count_interval(self):

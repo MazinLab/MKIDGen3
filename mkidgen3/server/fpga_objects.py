@@ -320,10 +320,6 @@ class FeedlineHardware:
         finally:
             cr.destablish()
             del ps_buf
-        try:
-            pipe.close()
-        except zmq.ZMQError:
-            pass
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
         """
@@ -408,11 +404,11 @@ class FeedlineHardware:
             self._ol.trigger_system.photon_maxi_0.stop_capture()
             fountain.join()
             sender.join()
-            pipe.close()
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
             if isinstance(q, zmq.Socket):
                 q.close()
+                q_other.close()
 
     def postage_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
         failmsg = ''
@@ -453,4 +449,3 @@ class FeedlineHardware:
         finally:
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
             del cr
-            pipe.close()

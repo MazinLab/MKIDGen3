@@ -125,9 +125,9 @@ class FeedlineReadoutServer:
             getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
 
     def create_capture_handler(self, start=True, daemon=False, context: zmq.Context = None):
-        self._cap_pipe, cap_pipe_thread = zpipe(context or zmq.Context.instance())
+        self._cap_pipe, self._cap_pipe_thread = zpipe(context or zmq.Context.instance())
 
-        thread = threading.Thread(name='FRS CR Handler', target=self._main, args=(cap_pipe_thread,),
+        thread = threading.Thread(name='FRS CR Handler', target=self._main, args=(self._cap_pipe_thread,),
                                   kwargs={'context': context}, daemon=daemon)
         if start:
             thread.start()
@@ -138,6 +138,12 @@ class FeedlineReadoutServer:
         if self._cap_pipe:
             self._cap_pipe.send_pyobj(('exit', None))
             self._cap_pipe.close()
+
+    def __del__(self):
+        try:
+            self._cap_pipe_thread.close()
+        except:
+            pass
 
     def abort_all(self):
         if self._cap_pipe:
@@ -292,10 +298,6 @@ class FeedlineReadoutServer:
             self.start_tap_thread(cr)
 
         aio_eloop.close()
-        try:
-            pipe.close()
-        except zmq.error.ContextTerminated:
-            pass
         getLogger(__name__).info('Capture thread exiting')
 
     def start_tap_thread(self, cr):

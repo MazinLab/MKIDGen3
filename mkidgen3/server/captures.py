@@ -455,15 +455,22 @@ class CaptureSink(threading.Thread):
         self.cap_id = id
         self.data_source = source_url
         self.result = None
-        self._pipe = zpipe(zmq.Context.instance())
+        self._pipe = None
         self._buf = []
         self._compression_override = _compression_override
         self.socket = None
         if start:
             self.start()
 
+    def start(self):
+        assert not self._started.is_set()
+        self._pipe = zpipe(zmq.Context.instance())
+        super(CaptureSink, self).start()
+
     def kill(self):
         self._pipe[0].send(b'')
+        self._pipe[0].recv()
+        self._pipe[1].close()
         self._pipe[0].close()
 
     def _accumulate_data(self, d):
@@ -528,7 +535,7 @@ class CaptureSink(threading.Thread):
             raise
         finally:
             self.destablish()
-            self._pipe[1].close()
+            self._pipe[1].send(b'')
 
     def data(self, timeout=None):
         self.join(timeout=timeout)
@@ -708,15 +715,22 @@ class StatusListener(threading.Thread):
         super().__init__(name=f'StautsListner_{id}')
         self.daemon = True
         self.source = source
-        self._pipe = zpipe(zmq.Context.instance())
+        self._pipe = None
         self.id = id
         self._status_messages = [initial_state]
         if start:
             self.start()
 
+    def start(self):
+        assert not self._started.is_set()
+        self._pipe = zpipe(zmq.Context.instance())
+        super(StatusListener, self).start()
+
     def kill(self):
         self._pipe[0].send(b'')
+        self._pipe[0].recv()
         self._pipe[0].close()
+        self._pipe[1].close()
 
     @staticmethod
     def is_final_status_message(update):
@@ -757,7 +771,7 @@ class StatusListener(threading.Thread):
         except zmq.ZMQError as e:
             getLogger(__name__).critical(f"{self} died due to {e}")
         finally:
-            self._pipe[1].close()
+            self._pipe[1].send(b'')
 
     def latest(self):
         return self._status_messages[-1]
