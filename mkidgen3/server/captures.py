@@ -448,7 +448,7 @@ class CaptureSink(threading.Thread):
             id, buffer_shape, size_bytes, source_url, _compression_override = req_nfo.id, req_nfo.buffer_shape, req_nfo.size_bytes, req_nfo.server.data_url, req_nfo._compression_override
         else:
             id, buffer_shape, size_bytes, source_url, _compression_override = req_nfo
-        super(CaptureSink, self).__init__(name=f'cap_id={id}')
+        super(CaptureSink, self).__init__(name=f'cap_id={id.decode()}')
         self._expected_buffer_shape = buffer_shape
         self._expected_bytes = size_bytes
         self.daemon = True
@@ -712,7 +712,7 @@ class PostageCaptureSink(CaptureSink):
 
 class StatusListener(threading.Thread):
     def __init__(self, id, source, initial_state='Created', start=True):
-        super().__init__(name=f'StautsListner_{id}')
+        super().__init__(name=f'StautsListner_{id.decode()}')
         self.daemon = True
         self.source = source
         self._pipe = None
