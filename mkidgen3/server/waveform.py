@@ -1,6 +1,7 @@
 from mkidgen3.funcs import *
 import logging
 import numpy as np
+import numpy.typing as nt
 import platform
 import matplotlib.pyplot as plt
 
@@ -106,25 +107,25 @@ class SimpleFreqlistWaveform(Waveform):
 
 
 class FreqlistWaveform(Waveform):
-    def __init__(self, frequencies=None, n_samples=DAC_LUT_SIZE, sample_rate=DAC_SAMPLE_RATE, amplitudes=None,
-                 phases=None,
-                 iq_ratios=None, phase_offsets=None, seed=2, dac_dynamic_range=1.0, optimize_phase=True, compute=False):
+    def __init__(self, frequencies: Iterable[int | float] = None, n_samples: int = DAC_LUT_SIZE,
+                 sample_rate: int | float = DAC_SAMPLE_RATE, amplitudes: Iterable[int | float] = None,
+                 phases: Iterable[int | float] = None, iq_ratios: Iterable[int | float] = None,
+                 phase_offsets: Iterable[int | float] = None, seed: int = 2, dac_dynamic_range: float = 1.0,
+                 optimize_phase: bool = True, compute: bool = False):
         """
         Args:
-            frequencies: list/array of frequencies in the comb
-            n_samples (int): number of complex samples in waveform
-            sample_rate (float): waveform sample rate in Hz
-            amplitudes (float): list/array of amplitudes, one per frequency in (0,1]. If None, all ones is assumed.
-            phases (float): list/array of phases, one per frequency in [0, 2*np.pi). If None, generates random phases using input seed.
-            iq_ratios (float): list of ratios for IQ values used to help minimize image tones in band.
-                       Allowed values between 0 and 1. If None, 50:50 ratio (all ones) is assumed.
-            phase_offsets (float): list/array of phase offsets in [0, 2*np.pi)
-            seed (int): random seed to seed phase randomization process
-
-        Attributes:
-            values (float): Computed waveform values. Amplitude is unscaled and is the product of additions of unit waveforms.
-            quant_vals (int): Computed waveform values quantized to DAC digital format with optimum precision
-            max_quant_error (float): maximum difference between quant_vals and values scaled to the DAC max output.
+            frequencies: frequencies in the waveform [Hz]
+            n_samples: number of complex samples in the waveform
+            sample_rate: waveform sample rate [Hz] (should be the DAC sample rate)
+            amplitudes: amplitudes of each tone in the waveform. If None, all ones is assumed
+            phases: phases of each tone in the waveform in [0, 2*pi). If None, random phases are generated using seed
+            iq_ratios: ratios for IQ values used to help minimize image tones in band. Allowed values between 0 and 1
+                       If None, 50:50 ratio (all ones) is assumed
+            phase_offsets: phase offsets in [0, 2*np.pi)
+            seed: random seed to seed phase randomization process
+            dac_dynamic_range: how much of dac dynamic range to use. Allow values [0.0,1.0]. Default is 1.0 (all)
+            optimize_phase: check quantization error and re-generate waveform with new random phases if too large
+            compute: compute waveform
         """
         self.freqs = np.asarray(frequencies)
         self.n_samples = n_samples
@@ -133,14 +134,16 @@ class FreqlistWaveform(Waveform):
         self._optimize_phase = optimize_phase
 
         if phases is None:
-            self.phases = np.random.default_rng(seed=seed).uniform(0., 2. * np.pi, size=self.freqs.size)
+            self.phases = np.random.default_rng(seed=seed).uniform(0, 2 * np.pi, size=self.freqs.size)
         else:
             self.phases = np.asarray(phases)
-
+        assert (0 <= self.phases).all and (self.phases < 2*np.pi).all, "phases must be between 0 and 2 pi"
         self.dac_dynamic_range = dac_dynamic_range
 
         self.iq_ratios = np.asarray(iq_ratios) if iq_ratios is not None else np.ones_like(frequencies)
         self.phase_offsets = np.asarray(phase_offsets) if phase_offsets is not None else np.zeros_like(frequencies)
+        assert (0 <= self.phase_offsets).all and (self.phase_offsets < 2*np.pi).all, ("phase offsets must be between 0 "
+                                                                                      "and 2 pi")
         self.quant_freqs = quantize_frequencies(self.freqs, rate=sample_rate, n_samples=n_samples)
 
         self._seed = seed
@@ -181,7 +184,7 @@ class FreqlistWaveform(Waveform):
         return f'FreqlistWaveform: {preview_dict}'
 
     @property
-    def _values(self) -> np.ndarray[np.complex128]:
+    def _values(self) -> nt.NDArray[np.complex128]:
         """
         Return or calculate waveform values
         Returns: Complex values where the real and imag part have been quantized to ints in accordance with specified
@@ -199,7 +202,7 @@ class FreqlistWaveform(Waveform):
                                             max_attempts=3)
         return self.quant_vals
 
-    def _compute_waveform(self, phases: Iterable | None = None) -> np.ndarray[np.complex64]:
+    def _compute_waveform(self, phases: Iterable | None = None) -> nt.NDArray[np.complex64]:
         """
         Compute the raw waveform with no scaling or casting.
         Args:
