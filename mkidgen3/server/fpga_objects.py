@@ -306,7 +306,7 @@ class FeedlineHardware:
                 zmq.COPY_THRESHOLD = zmqtmp
                 times.append(time.perf_counter())
 
-                data.freebuffer()
+                del data
                 times.append(time.perf_counter())
                 times_str = [format_time(x) for x in np.diff((times))]
                 labels = ['check abort','execute capture','optionally slice','send data','wait for tracker','free buffer']
