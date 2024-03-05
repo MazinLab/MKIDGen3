@@ -238,7 +238,7 @@ class _FLConfigMixin:
         if _hashed:
             d = {'_hashed': hash(self)}
         else:
-            d = {k: getattr(x, k) for k in self._settings if not (getattr(x, k) is None and omit_none)}
+            d = {k: copy.deepcopy(getattr(x, k)) for k in self._settings if not (getattr(x, k) is None and omit_none)}
         return d
 
 
