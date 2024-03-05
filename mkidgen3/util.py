@@ -6,12 +6,44 @@ import importlib.resources
 from logging import getLogger
 import zmq
 from mkidgen3.opfb import opfb_bin_number
+import numpy.typing as nt
+
 from typing import Iterable
 import subprocess
 
 
 def compute_max_val(x) -> float:
     return max(x.real.max(), x.imag.max(), np.abs(x.imag.min()), np.abs(x.imag.min()))
+
+
+def rx_power(data: nt.NDArray[np.int32] | nt.NDArray[np.complex64]) -> tuple[float, float, float]:
+    """
+    Compute ADC average power received in milliwatts and dBm and maximum vppd.
+    Args:
+        data: ADC capture data: complex and integer data normalized to max val = 1.0 or raw ints are all supported
+              normalized non-complex data will pass straight through to the power calculations.
+
+    Returns: tuple: Average Power in mW, Average power in dBm, Maximum VPPD seen by ADC
+
+    """
+    if np.iscomplex(data).any():
+        if np.any(abs(data.real) > 1.0) or np.any(abs(data.imag) > 1.0):  # normalize
+            data = np.concatenate((np.int16(data.real[:, np.newaxis]), np.int16(data.imag[:, np.newaxis])), axis=1)/2**15
+
+        else:  # already normalized
+            data = np.concatenate((np.float64(data.real[:, np.newaxis]), np.float64(data.imag[:, np.newaxis])), axis=1)
+
+    elif (abs(data) > 1.0).any():
+        data = data / 2**15
+
+    term = 100  # ohms
+    vppd = data
+    max_adc = np.max(np.abs(vppd), axis=0)
+    current = vppd / term  # amps
+    p_inst = np.square(current.real)*term # watts
+    p_avg_mw = np.sum(p_inst, axis=0)*1000/vppd.size  # mean milliwatts
+    dbm_avg = 10*np.log10(p_avg_mw)
+    return p_avg_mw, dbm_avg, max_adc
 
 
 def convert_freq_to_ddc_bin(freqs: Iterable[float | int]) -> np.ndarray:

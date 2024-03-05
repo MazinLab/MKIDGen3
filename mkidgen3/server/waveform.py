@@ -5,8 +5,7 @@ import numpy.typing as nt
 import platform
 import matplotlib.pyplot as plt
 
-from mkidgen3.system_parameters import (ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE,
-                                        SYSTEM_BANDWIDTH, DAC_FREQ_RES)
+from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH, DAC_FREQ_RES
 
 
 def _same(a, b):
@@ -283,7 +282,7 @@ class FreqlistWaveform(Waveform):
 
 def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None,
                     n_samples=DAC_LUT_SIZE, sample_rate=DAC_SAMPLE_RATE, amplitudes=None, phases=None,
-                    iq_ratios=None, phase_offsets=None, seed=2, dac_dynamic_range=1.0, compute=False,):
+                    iq_ratios=None, phase_offsets=None, seed=2, dac_dynamic_range=1.0, compute=False):
     if output_waveform is not None:
         return TabulatedWaveform(tabulated_values=output_waveform, sample_rate=sample_rate)
     if n_uniform_tones is not None:

@@ -1,5 +1,7 @@
 import matplotlib.pyplot as plt
 from mkidgen3.opfb import opfb_bin_spectrum, opfb_bin_frequencies
+from mkidgen3.util import rx_power
+import numpy.typing as nt
 import numpy as np
 
 
@@ -23,6 +25,116 @@ import numpy as np
 #     plot_fft(fft_freqs[::2], y_fft[::2] - max(y_fft), ax=axd['fftzoom'], xlim=fft_zoom)
 #
 #     fig.suptitle('ADC Data')
+
+def plot_phase(phase: nt.NDArray[np.int16], xlim: tuple) -> None:
+    """
+
+    Args:
+        phase: phase data
+
+    Returns:
+
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(15, 10))
+    t = 1e3 * np.arange(phase.size) / 2e6
+    ax.plot(t, phase)
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Phase (radians)')
+    ax.set_xlim(xlim);
+    ax.set_ylim(-np.pi, np.pi);
+
+
+def plot_ddc(ddciq: nt.NDArray[np.complex128], phase: nt.NDArray[np.int16], chan_plt: list[int]) -> None:
+    """
+    Plot post-DDC IQ and phase for given channels
+    Args:
+        ddciq: complex data from ddciq tap
+        phase: phase data
+        chan_plt: channels to plot
+
+    Returns:
+
+    """
+    fig, axes = plt.subplots(4, len(chan_plt), figsize=(15, 10))
+    for j, (i, ax) in enumerate(zip(chan_plt, axes.T)):
+        plot_waveforms(ddciq[:100, i], 2e6, mode='iq', ax=ax[0], label='DDC Out' if not j else '')
+        plot_waveforms(ddciq[:50, i], 1e6, mode='sw_phase', ax=ax[1], label='Phase/pi (software)' if not j else '')
+        plot_waveforms(phase[:50, i] / 2 ** 15, 1e6, mode='phase', ax=ax[2], label='Phase/pi (FPGA)' if not j else '')
+        plt.ylim([-1, 1])
+        err = np.angle(ddciq[:50, i]) - np.pi * phase[:50, i] / 2 ** 15
+        plot_waveforms(err, 1e6, mode='phase', ax=ax[3], label='Phase error (radians)' if not j else '')
+    plt.suptitle('Gen3 DSP Pipeline (OPFB Out, DDC, Software phase, FPGA (cordic) phase)');
+
+
+def plot_comp_sat(
+        ol,
+        ifboard,
+        output_atten=0,
+        input_range=(60, 50, 1),
+        **kwargs,
+):
+    input_attens = np.arange(
+        input_range[1],
+        input_range[0],
+        1 if len(input_range) == 2 else input_range[2],
+    )[::-1]
+    dbms_i, dbms_q = [], []
+    adcs_i, adcs_q = [], []
+    for input_atten in input_attens:
+        ifboard.set_attens(output_attens=output_atten, input_attens=input_atten)
+        _, dbm, adc = rx_power(ol.capture.capture_adc(2 ** 19, complex=False))
+        dbms_i.append(dbm[0])
+        adcs_i.append(adc[0])
+        dbms_q.append(dbm[1])
+        adcs_q.append(adc[1])
+    ifboard.set_attens(output_attens=output_atten, input_attens=input_attens[0])
+    dbms_i, dbms_q = np.array(dbms_i), np.array(dbms_q)
+    adcs_i, adcs_q = np.array(adcs_i), np.array(adcs_q)
+
+    fig, (ax1, ax3, ax2) = plt.subplots(3, sharex=True, **kwargs)
+    ax1.plot(input_attens, dbms_i, label="I")
+    ax1.plot(input_attens, dbms_q, label="Q")
+    ax1.plot(
+        input_attens,
+        np.min(dbms_i) - (input_attens - np.max(input_attens)),
+        linestyle='--',
+        color='gray',
+        label="Ideal",
+    )
+    ax1.set_ylabel("RX Power @ ZU48DR Port (dBm)")
+
+    ax3.plot(input_attens, dbms_i - (np.min(dbms_i) - (input_attens - np.max(input_attens))), label="I")
+    ax3.plot(input_attens, dbms_q - (np.min(dbms_i) - (input_attens - np.max(input_attens))), label="Q")
+    ax3.plot(
+        input_attens,
+        np.zeros_like(input_attens),
+        linestyle='--',
+        color='gray',
+        label="Ideal",
+    )
+    ax3.set_ylabel("Residual (dBm)")
+
+    pg = lambda db: 10 ** (db / 10)
+
+    ax2.plot(input_attens, adcs_q, label='I')
+    ax2.plot(input_attens, adcs_i, label='Q')
+    ax2.plot(
+        input_attens,
+        adcs_i[np.argmax(input_attens)] * np.sqrt(pg(np.max(input_attens) - input_attens)),
+        label='expected gain')
+    ax2.set_ylim(0, 1.1)
+    ax2.axhline(1, label="Saturation Point", color="black", zorder=-1, linestyle='-.')
+    ax2.set_ylabel("ADC Max Magnitude [0, 1)")
+    ax2.set_xlabel("Input Attenuation (dB)")
+
+    ax1.legend()
+    ax2.legend()
+    ax2.invert_xaxis()
+    ax2.set_xlim(np.max(input_attens), np.min(input_attens))
+    plt.tight_layout()
+    plt.show()
+
+    return dbms_i, dbms_q, adcs_i, adcs_q
 
 
 def adc_test_plot(adc_data, timerange, fft_range, fft_zoom, db=True, fs=4.096e9, figsize=(16, 8), **mosaic_kw):
