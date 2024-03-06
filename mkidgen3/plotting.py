@@ -26,6 +26,29 @@ import numpy as np
 #
 #     fig.suptitle('ADC Data')
 
+def plot_single_res_sweep(lo_sweep_freqs, tones, iq_vals, lo_res_freq = None, iq_val_res = None):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    plt.rcParams.update({'font.size': 12})
+
+    ax1.plot(lo_sweep_freqs + tones[0], 20 * np.log10(np.abs(iq_vals)), linestyle=" ", marker=".", markersize=10)
+    if lo_res_freq is not None:
+        ax1.plot(lo_res_freq * 1e6 + tones[0], 20 * np.log10(np.abs(iq_val_res)), linestyle=" ", marker=".", markersize=10,
+             label='bias point')
+    ax1.set_ylabel('|S21| [dB]')
+    ax1.set_xlabel('Frequency [GHz]')
+    ax1.set_title('Transmission')
+    ax1.legend(loc='center left')
+
+    ax2.plot(iq_vals.real, iq_vals.imag, 'o')
+    if lo_res_freq is not None:
+        ax2.plot(iq_val_res.real, iq_val_res.imag, 'o', label='bias point')
+    ax2.set_xlabel('Real(S21)')
+    ax2.set_aspect('equal')
+    ax2.set_ylabel('Imag(S21)')
+    ax2.set_title('IQ Loop')
+    ax2.legend(loc='center left')
+    plt.tight_layout()
+
 def plot_phase(phase: nt.NDArray[np.int16], xlim: tuple) -> None:
     """
 

@@ -235,6 +235,27 @@ def compute_power_sweep_attenuations(dac_attn_start: float, adc_attn_start: floa
     return [(dac, adc) for dac, adc in zip(dac_attns, adc_attns)]
 
 
+def single_res_sweep(if_board, lo_sweep_freqs, ol):
+    iq_vals = np.zeros(lo_sweep_freqs.size, dtype=np.complex64)
+    for x in range(len(lo_sweep_freqs)):
+        if_board.set_lo(lo_sweep_freqs[x] * 1e-6)
+        iq_vals[x] = get_iq_point(ol)
+    return iq_vals
+
+
+def get_iq_point(ol, n=256):
+    """
+    Args:
+        n: int
+        how many points to average
+    Returns: a single averaged iq data point captured from res channel 0
+    """
+    x = ol.capture.capture_iq(n, [0, 1], tap_location='ddciq')
+    tmp = np.zeros(x.shape[1:])
+    x.mean(axis=0, out=tmp)
+    del x
+    return tmp[0, 0] + 1j * tmp[0, 1]
+
 def compute_lo_steps(center: float | int, resolution: float | int, bandwidth: float | int) -> np.ndarray[float | int]:
     """
     Compute LO steps.
