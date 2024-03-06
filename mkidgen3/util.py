@@ -7,9 +7,33 @@ from logging import getLogger
 import zmq
 from mkidgen3.opfb import opfb_bin_number
 import numpy.typing as nt
-
+from mkidgen3.system_parameters import OPFB_CHANNEL_SAMPLE_RATE, ADC_SAMPLE_RATE, N_OPFB_CHANNELS
 from typing import Iterable
 import subprocess
+
+
+def pseudo_random_tones(n: int, buffer=300e3) -> nt.NDArray[float]:
+    """
+    Generate a 1D array of tones where each tone in randomly placed in an OPFB bin
+    Args:
+        n: number of tones
+        buffer: bandwidth from the edges of the bin where tones will not be placed[Hz]
+    Returns:
+        A 1D array of tones where there's 1 tone per OPFB bin and buffer away from the upper and lower bin edges.
+    Tones are placed symmetrically around DC, 1 per bin with the specified buffer
+
+    """
+    opfb_halfband = OPFB_CHANNEL_SAMPLE_RATE / 2
+    assert n % 2 == 0, "Only even number of tones is supported."
+    assert n < 4095, "Max number of tones is 4095 (one per bin excluding DC bin)."
+    assert buffer < opfb_halfband, f"Buffer size is larger than channel width, max buffer allowed is {opfb_halfband}."
+    rand_offsets = np.random.uniform(low=buffer-opfb_halfband, high=opfb_halfband/2-buffer,
+                                    size=n)
+    bc = (ADC_SAMPLE_RATE / N_OPFB_CHANNELS) * np.linspace(-N_OPFB_CHANNELS / 2, N_OPFB_CHANNELS / 2 - 1,
+                                                                    N_OPFB_CHANNELS)
+    tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2+1:+bc.size//2+n//2+1]))
+    return tone_bin_centers + rand_offsets
+
 
 
 def compute_max_val(x) -> float:
@@ -46,7 +70,7 @@ def rx_power(data: nt.NDArray[np.int32] | nt.NDArray[np.complex64]) -> tuple[flo
     return p_avg_mw, dbm_avg, max_adc
 
 
-def convert_freq_to_ddc_bin(freqs: Iterable[float | int]) -> np.ndarray:
+def convert_freq_to_ddc_bins(freqs: Iterable[float | int]) -> np.ndarray:
     """
     Convert frequecnies to bins coming out of the OPFB--useful for programming bin2res
     Args:

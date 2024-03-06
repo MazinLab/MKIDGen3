@@ -1,7 +1,7 @@
 import numpy as np
 from hashlib import md5
 import copy
-from mkidgen3.util import convert_freq_to_ddc_bin
+from mkidgen3.util import convert_freq_to_ddc_bins
 
 
 
@@ -519,7 +519,7 @@ class ChannelConfig(_FLConfigMixin):
         if self._hashed:
             return
         if freqs is not None:
-            bins = convert_freq_to_ddc_bin(freqs)
+            bins = convert_freq_to_ddc_bins(freqs)
         self.bins = bins
 
 
@@ -576,7 +576,7 @@ class WaveformConfig(_FLConfigMixin):
         """A convenience method to get a ChannelConfig using all the waveform's frequencies.
         Default channel config is not available for tabulated waveforms."""
         freqs = self.waveform.freqs
-        bins = convert_freq_to_ddc_bin(freqs)
+        bins = convert_freq_to_ddc_bins(freqs)
         return ChannelConfig(bins=bins, freqs=freqs)
 
     @property

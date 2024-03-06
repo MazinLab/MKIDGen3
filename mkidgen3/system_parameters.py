@@ -24,6 +24,7 @@ N_IQ_GROUPS = 256  # See HLS and the iq drivers, the AXI streams are 8 channels 
 N_POSTAGE_CHANNELS = 8  # see HLS and the postage filter driver
 SYSTEM_BANDWIDTH = 4.096e9  # Hz Full readout bandwidth
 OS = 2  # OPFB Overlap factor
+OPFB_CHANNEL_SAMPLE_RATE = OS * ADC_SAMPLE_RATE / N_OPFB_CHANNELS
 
 
 # PHASE_IQ_INPUT_FRACTIONAL_BITS = 14  #commented as no clear meaning, no doc, and no usage in codebase
