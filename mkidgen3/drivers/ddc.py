@@ -357,3 +357,14 @@ class ThreepartDDC(CenteringDDC):
 
         u32d = np.frombuffer(self._bram_cache, dtype=np.uint32)
         self.mmio.array[:u32d.size] = u32d
+
+    def reset_phase_center(self) -> None:
+        """
+        Don't update tone increments but reset centers and phase offsets (loop centering + rotation) to uncentered,
+        unrotated state.
+        Returns: None
+
+        """
+        centers = np.zeros(2048, dtype=np.complex64)
+        phase_offsets = np.zeros(2048)
+        self.configure(tones=None, phase_offset=phase_offsets, loop_center=centers)
