@@ -253,7 +253,7 @@ class Sweep(AbstractSweep):
 
     def plot_loops(self, ax):
         for i in range(self.iq.shape[0]):
-            ax.plot(self.iq[i].real, self.iq[i].imag)
+            ax.plot(self.iq[i].real, self.iq[i].imag, "-o")
         ax.set_aspect("equal")
         ax.set_xlabel("I")
         ax.set_ylabel("Q")
