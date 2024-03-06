@@ -64,7 +64,7 @@ class SweepConfig:
         return SweepConfig(steps, waveform, lo_center, average, attens)
 
     def reset_ddc(self, ddccontrol) -> "SweepConfig":
-        ddccontrol.configure(**self.waveform.default_ddc_config.settings_dict())
+        ddccontrol.reset_phase_center()
         return self
 
     def run_sweep(self, ifboard, capture, progress = True) -> "Sweep":
