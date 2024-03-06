@@ -585,7 +585,9 @@ class WaveformConfig(_FLConfigMixin):
         Default channel config is not available for tabulated waveforms."""
         ddc_tones = np.zeros(2048)
         ddc_tones[:self.waveform.freqs.size] = self.waveform.freqs
-        return DDCConfig(tones=ddc_tones)
+        centers = np.zeros(2048, dtype=np.complex64)
+        phase_offsets = np.zeros(2048)
+        return DDCConfig(tones=ddc_tones, phase_offset=phase_offsets, loop_center=centers)
 
 
 class FeedlineConfig(_FLMetaconfigMixin):
