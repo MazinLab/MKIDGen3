@@ -155,7 +155,7 @@ def rotate_and_center(
 
     iqs, iqrs = sweep.iq, sweep.iqsigma
 
-    for t in range(iqs.shape[0]):
+    for t in range(len(targets)):
         i = iqs[t].real
         q = iqs[t].imag
         if plot:
@@ -212,7 +212,7 @@ def rotate_and_center(
     ddc_centers /= 2**15
 
     ddc_config = DDCConfig(
-        tones=sweep.config.waveform.default_ddc_config.tones,
+        tones=None,
         phase_offset=phase_offsets,
         loop_center=ddc_centers,
     )
