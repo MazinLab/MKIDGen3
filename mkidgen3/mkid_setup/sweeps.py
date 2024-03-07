@@ -213,11 +213,14 @@ class Sweep(AbstractSweep):
         ax,
         stacked: bool = False,
         newtones: Optional[list[float] | nt.NDArray[np.float64]] = None,
+        channels: Optional[slice] | None = None,
         label_tones: bool = False,
         power: bool = True,
         **kwargs,
     ):
-        for i in range(self.iq.shape[0]):
+        if channels is None:
+            channels = slice(0, self.iq.shape[0])
+        for i in range(self.iq[channels, :].shape[0]):
             line = ax.semilogy(
                 (self.frequencies[i] / 1e6 if not stacked else self.config.steps),
                 np.abs(self.iq[i]) if not power else np.abs(self.iq[i]) ** 2,
@@ -251,8 +254,10 @@ class Sweep(AbstractSweep):
         ax.set_ylabel("S21 (Magnitude)" if not power else "S21 (Power)")
         ax.set_xlabel("Frequency (MHz)")
 
-    def plot_loops(self, ax):
-        for i in range(self.iq.shape[0]):
+    def plot_loops(self, ax, channels: slice | None = None):
+        if channels is None:
+            channels = slice(0, self.iq.shape[0])
+        for i in range(self.iq[channels, :].shape[0]):
             ax.plot(self.iq[i].real, self.iq[i].imag, "-o")
         ax.set_aspect("equal")
         ax.set_xlabel("I")
