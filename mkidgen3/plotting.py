@@ -177,8 +177,8 @@ def adc_test_plot(adc_data, timerange, fft_range, fft_zoom, db=True, fs=4.096e9,
     if db:
         y_fft = 20 * np.log10(y_fft)
 
-    plot_fft(fft_freqs[::2], y_fft[::2] - max(y_fft), ax=fftax)
-    plot_fft(fft_freqs[::2], y_fft[::2] - max(y_fft), ax=fftzoomax, xlim=fft_zoom)
+    plot_fft(fft_freqs[::2]*1e-6, y_fft[::2] - max(y_fft), ax=fftax)
+    plot_fft(fft_freqs[::2]*1e-6, y_fft[::2] - max(y_fft), ax=fftzoomax, xlim=fft_zoom)
 
     fig.suptitle('ADC Data')
 
@@ -213,7 +213,7 @@ def adc_timeseries(data, timerange=(None, None), fs=4.096e9, ax=None, **kwargs):
     plt.title('Time Series')
 
 
-def plot_fft(f, y, db=True, xlim=(-2.048e9, 2.048e9), ylim=None, ax=None):
+def plot_fft(f, y, db=True, xlim=(-2048, 2048), ylim=None, ax=None):
     if ax is not None:
         plt.sca(ax)
     plt.plot(f, y, color='#346B76', linewidth=3)
@@ -222,7 +222,7 @@ def plot_fft(f, y, db=True, xlim=(-2.048e9, 2.048e9), ylim=None, ax=None):
         plt.ylim(*ylim)
     if xlim is not None:
         plt.xlim(*xlim)
-    plt.xlabel("Frequency (Hz)", position=(0.5, 0.5))
+    plt.xlabel("Frequency (MHz)", position=(0.5, 0.5))
     plt.ylabel("power (linear)", position=(1, 0.5))
     if db:
         plt.ylabel("power (dB)", position=(1, 0.5))
