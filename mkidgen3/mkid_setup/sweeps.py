@@ -68,7 +68,7 @@ class SweepConfig:
         return self
 
     def run_sweep(self, ifboard, capture, progress = True) -> "Sweep":
-        tones = self.waveform.waveform.freqs
+        tones = self.waveform.waveform.quant_freqs
         iq = np.empty((tones.size, self.steps.size), np.complex64)
         rms = np.empty((tones.size, self.steps.size), np.complex64)
         if self.attens:
@@ -102,7 +102,7 @@ class SweepConfig:
         return Sweep(iq, rms / np.sqrt(self.average), self)
 
     def frequencies(self) -> nt.NDArray[np.float64]:
-        tones = self.waveform.waveform.freqs
+        tones = self.waveform.waveform.quant_freqs
         freqs = np.zeros((tones.size, self.steps.size), dtype=np.float64)
         freqs += self.lo_center * 1e6
         freqs += self.steps * 1e6
@@ -116,7 +116,7 @@ class SweepConfig:
             how many points to average
         Returns: a single averaged iq data point captured from res channel 0
         """
-        tones = self.waveform.waveform.freqs
+        tones = self.waveform.waveform.quant_freqs
         time.sleep(self._idle)
         if self._flush:
             x = capture.capture_iq(self._flush, tap_location=self.tap)
@@ -153,7 +153,7 @@ class CombSweepConfig(SweepConfig):
     overlap: int = 1
 
     def __post_init__(self):
-        tones = self.waveform.waveform.freqs
+        tones = self.waveform.waveform.quant_freqs
         if not np.allclose(
             tones, tones[0] + np.arange(tones.size) * (tones[1] - tones[0])
         ):
@@ -176,7 +176,7 @@ class CombSweepConfig(SweepConfig):
         if overlap < 1:
             raise ValueError("Overlap should be >= 1 to enable stitching")
 
-        tones = waveform.waveform.freqs
+        tones = waveform.waveform.quant_freqs
 
         steps = np.linspace(0, tones[1] - tones[0], points, endpoint=False) / 1e6
         steps_overlap = steps[:overlap] + (tones[1] - tones[0]) / 1e6
