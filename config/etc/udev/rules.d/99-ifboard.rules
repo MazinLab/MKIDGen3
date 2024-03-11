@@ -1,0 +1,2 @@
+# IFBoard udev rule
+SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", ATTRS{idProduct}=="800d", SYMLINK+="ifboard", OWNER="root", MODE="0666"
