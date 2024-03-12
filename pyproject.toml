@@ -57,7 +57,8 @@ server = [
 ]
 
 client = [
-  "tables>=3.9.0", # TODO: Check this version, packaging is also a disaster
+  "h5py>=3.10.0",
+  "hdf5plugin>=4.4.0",
   "npy-append-array==0.9.16", # TODO: This project appears very, possibly vendor this or reevaluate use
   "mkidgen3[sccommon]",
 ]
