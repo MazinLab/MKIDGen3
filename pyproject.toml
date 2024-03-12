@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+dynamic = ["version"]
+
+name = "mkidgen3"
+description = "Drivers and Client/Server control library for Mazin Labs 3rd generation MKID readout"
+readme = "README.md"
+
+# Listed names per poster on the wall feel free to adjust
+authors = [
+  {name = "John I. Bailey, III"},
+  {name = "Jennifer Pearl Smith"},
+  {name = "Aled V. Cuda"},
+  {name = "Mazin Lab contributors"}
+]
+maintainers = [
+  {name = "Jennifer Pearl Smith"},
+  {name = "Aled V. Cuda", email = "aled@ucsb.edu"}
+]
+
+license = {file = "LICENSE.txt"}
+
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.21",
+  "scipy>=1.8.0", # Unclear if this needs to be mandatory, we only use it in a few spots
+  "pyyaml>=5.4.1", # We use this in exactly one place, consider refactoring to use one of the formats in the standard library instead
+]
+
+[project.optional-dependencies]
+board = [
+  "pynq>=3.0.1",
+  "pyserial>=3.5",
+  "fpbinary==1.5.8", # TODO: Project looks imature, possibly vendor this or reevaluate use
+  # The packaging on these two is a mess, consider vendoring:
+  "xrfdc==2.0",
+  "xrfclk==2.0",
+]
+
+# TODO: Potentially rip this out?
+anritsu = [
+  "requests>=2.25.0"
+]
+
+sccommon = [
+  "pyzmq>=23.2.0",
+  "blosc2>=2.2.0",
+  "tqdm>=4.64.0", # TODO: Put this with plotting?
+]
+
+server = [
+  "psutil>=5.9.0",
+  "mkidgen3[board,sccommon]",
+]
+
+client = [
+  "tables>=3.9.0", # TODO: Check this version, packaging is also a disaster
+  "npy-append-array==0.9.16", # TODO: This project appears very, possibly vendor this or reevaluate use
+  "mkidgen3[sccommon]",
+]
+
+plotting = [
+  "matplotlib>=3.5.1"
+]
+
+[tool.setuptools]
+packages = ["mkidgen3"]

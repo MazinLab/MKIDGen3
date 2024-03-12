@@ -1,7 +1,0 @@
-fpbinary
-pyserial
-numpy
-pynq
-blosc2
-pyzmq
-bitstruct==8.17
