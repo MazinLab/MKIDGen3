@@ -3,6 +3,7 @@ from logging import getLogger
 try:
     import pynq
     from .drivers import *
+    from .equipment_drivers import *
     from .opfb import opfb_bin_number, opfb_bin_center, quantize_frequencies
     from .drivers.ddc import tone_increments
     from . import util
