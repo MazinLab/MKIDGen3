@@ -27,6 +27,8 @@ Login to the 4x2 and apply the changes described in [https://github.com/MazinLab
     cd ~/src/mkidgen3
     pip install -e '.[server,plotting]'
 
+You will likely want to do this in the `pynq-venv` (`source /etc/profile.d/pynq_venv.sh` as root) otherwise you will manually have to install the `xrfclk` package and the (patched) `xrfdc` package as they are not published on pypi or conda-forge
+
 To use the interpreter within PyCharm use /usr/local/share/pynq-venv/bin/python as the remote interpreter, execute with sudo, and ensure that the following envirnoment variables are set:
 
     BOARD=RFSoC4x2
