@@ -10,8 +10,14 @@ ADC_DAC_INTERFACE_WORD_LENGTH = 16  # bits see PG269 p.219
 ADC_MAX_INT = 2**(ADC_RESOLUTION-1)-1 << (ADC_DAC_INTERFACE_WORD_LENGTH-ADC_RESOLUTION) # see above
 ADC_INPUT_WARN = 0.7*ADC_MAX_INT
 ADC_MAX_INPUT_DBM = 1  # [dBm] see Xilinx DS926
-ADC_MAX_V = 1/(2*np.sqrt(5))  # [V]. 1 dbM is 1 mW, using P = V^2/R where P is 1 mW and R is 100 ohms,
-# V is 1/sqrt(10) volts at the die termination which means the max-scale V is  1/2*sqrt(5) at the SMA input.
+
+# per DS926 Table RF-ADC Electrical Characteristics for ZU4xDR Devices
+# (https://docs.xilinx.com/r/en-US/ds926-zynq-ultrascale-plus-rfsoc/RF-ADC-Electrical-Characteristics)
+ADC_MAX_V = 0.7
+ADC_MAX_V_DIFF = 1.4
+ADC_MAX_V_CONSERVATIVE = 0.4
+ADC_MAX_V_DIFF_CONSERVATIVR = 0.8
+
 DAC_RESOLUTION = 14  # bits see PG269 p.219
 DAC_LUT_SIZE = 2 ** 19  # values
 ADC_SAMPLE_RATE = 4.096e9  # Hz
@@ -40,12 +46,8 @@ MAXIMUM_DESIGN_COUNTRATE_PER_S = 5000
 
 PHOTON_POSTAGE_WINDOW_LENGTH = 127  # Must be 1 less than the HLS value, this is the number of IQ values captured for a photon event
 
-# per DS926 Table RF-ADC Electrical Characteristics for ZU2xDR Devices
-# (https://docs.xilinx.com/r/en-US/ds926-zynq-ultrascale-plus-rfsoc/RF-ADC-Electrical-Characteristics)
-ADC_MAX_VOLTAGE = 0.22360679774997896  # 0.5/np.sqrt(5) per p.
 
-
-from mkidgen3.drivers.ifboard import MAX_IN_ATTEN, IF_ATTN_STEP, MAX_OUT_ATTEN
+from mkidgen3.equipment_drivers.ifboard import MAX_IN_ATTEN, IF_ATTN_STEP, MAX_OUT_ATTEN
 
 
 def channel_to_iqgroup(channels: Iterable | int) -> set:

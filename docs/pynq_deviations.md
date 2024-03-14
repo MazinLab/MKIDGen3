@@ -394,7 +394,7 @@ Login shell was changed to zsh
 
 ### UDEV Rules
 
-`/etc/udev/99-ifboard.rules`
+Available in `config/etc/udev/rules.d/99-ifboard.rules, copy to `/etc/udev/rules.d/99-ifboard.rules` and run `udevadm control --reload-rules && udevadm trigger` as root
 
 ```udev
 # IFBoard udev rule

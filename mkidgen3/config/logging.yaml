@@ -19,18 +19,6 @@ loggers:
       level: WARNING
       propagate: False
     __main__: DEBUG
-  gen3-flask:
-    werkzeug: ERROR
-    pynq: INFO
-    mkidgen3: DEBUG
-    "":
-      handlers: [ default ]
-      level: WARNING
-      propagate: False
-    __main__:
-      handlers: [ default ]
-      level: DEBUG
-      propagate: False
 
 version: 1
 disable_existing_loggers: False

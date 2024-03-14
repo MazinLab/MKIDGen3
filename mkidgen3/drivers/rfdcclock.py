@@ -1,5 +1,5 @@
 import re
-import pkg_resources
+import importlib.resources
 from logging import getLogger
 from mkidgen3.mkidpynq import get_board_name
 
@@ -47,7 +47,7 @@ def _patch_xrfclk_lmk():
 
     for clock_part in _CLOCK_CONFIG_DICT:
         for programming_key, fname in _CLOCK_CONFIG_DICT[clock_part].items():
-            tpro_file = pkg_resources.resource_filename('mkidgen3',fname)
+            tpro_file = importlib.resources.files('mkidgen3').joinpath(fname)
             xrfclk.xrfclk._Config[clock_part][programming_key] = _parse_ticspro(tpro_file)
 
 

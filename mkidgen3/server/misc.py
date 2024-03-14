@@ -1,6 +1,6 @@
 import zmq
-import binascii
 import os
+import uuid
 
 
 def zpipe(ctx):
@@ -13,7 +13,7 @@ def zpipe(ctx):
     b = ctx.socket(zmq.PAIR)
     a.linger = b.linger = 0
     a.hwm = b.hwm = 1
-    iface = "inproc://%s" % binascii.hexlify(os.urandom(8))
+    iface = "inproc://%s" % uuid.uuid4().hex
     a.bind(iface)
     b.connect(iface)
     return a, b
