@@ -217,12 +217,12 @@ class FeedlineReadoutServer:
             try:
                 cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
             except zmq.ZMQError as e:
-                if e.errno != zmq.EAGAIN:
-                    self._abort_all(reason='Keyboard interrupt')
-                    if e.errno == zmq.ETERM:
-                        break
-                    else:
-                        raise e  # real error
+                if e.errno == zmq.ETERM:
+                    self._abort_all(reason='ZMQ ETERM')
+                    break
+                elif e.errno != zmq.EAGAIN:
+                    self._abort_all(reason=str(e))
+                    raise e  # real error
 
             if cmd not in ('exit', 'abort', 'capture', ''):
                 getLogger(__name__).error(f'Received invalid command "{cmd}"')
@@ -256,8 +256,8 @@ class FeedlineReadoutServer:
                         data.set_status('queued', f'Queued', destablish=True)
                         q.append(data)
                     except zmq.ZMQError as e:
-                        getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
-                                                  f' {data.id}')
+                        getLogger(__name__).error(f'Unable to update status due to {e}. '
+                                                  f'Silently dropping request {data.id}')
 
                 # cant be run because there might be something more important (we check anyway),
                 # the tap is in use (we check when the tap finishes)
@@ -273,7 +273,8 @@ class FeedlineReadoutServer:
 
             try:
                 if self._tap_threads[cr.type] is not None:
-                    cr.set_status('queued', f'tap location in use by: {self._tap_threads[cr.type].request.id}')
+                    cr.set_status('queued', f'tap location in use by:'
+                                            f' {self._tap_threads[cr.type].request.id}')
                     self._checked.append(cr)
                     continue
                 else:
@@ -297,6 +298,10 @@ class FeedlineReadoutServer:
 
             self.start_tap_thread(cr)
 
+        try:
+            pipe.close()
+        except zmq.error.ContextTerminated:
+            pass
         aio_eloop.close()
         getLogger(__name__).info('Capture thread exiting')
 
@@ -314,10 +319,7 @@ class FeedlineReadoutServer:
         cap_runners = {'engineering': self.hardware.plram_cap, 'photon': self.hardware.photon_cap,
                        'postage': self.hardware.postage_cap}
         target = cap_runners[cr.type]
-
-
         cr.set_status('running', f'Started at UTC {datetime.utcnow()}', destablish=True)
-
         self._tap_threads[cr.type] = TapThread(target, cr)
 
 
@@ -406,24 +408,21 @@ if __name__ == '__main__':
     while True:
         try:
             cmd, arg = socket.recv_pyobj()
-        except zmq.ZMQError as e:
+            getLogger(__name__).debug(f'Received command "{cmd}" with args {arg}')
+        except (zmq.ZMQError, KeyboardInterrupt) as e:
             getLogger(__name__).error(f'Caught {e}, aborting and shutting down')
-            fr.terminate_capture_handler()
-            break
-        except KeyboardInterrupt:
-            getLogger(__name__).error(f'Keyboard Interrupt, aborting and shutting down')
             fr.terminate_capture_handler()
             break
         except pickle.UnpicklingError:
             socket.send_pyobj('ERROR: Ignoring unpicklable command')
             getLogger(__name__).error(f'Ignoring unpicklable command')
             continue
-        else:
-            if not thread.is_alive():
-                getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
-                                             f'never complete. Exiting.')
-                socket.send_pyobj('ERROR')
-                break
+
+        if not thread.is_alive():
+            getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
+                                         f'never complete. Exiting.')
+            socket.send_pyobj('ERROR: Capture thread is dead. Exiting.')
+            break
 
         getLogger(__name__).debug(f'Received command "{cmd}" with args {arg}')
 

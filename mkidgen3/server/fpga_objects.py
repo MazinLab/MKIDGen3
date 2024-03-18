@@ -265,10 +265,10 @@ class FeedlineHardware:
             usr_channels = cr.channels
             if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
                 getLogger(__name__).debug(f'Requested channel capture of {format_bytes(cr.size_bytes)} '
-                                          f'requires {format_bytes(hw_size_bytes)}')
-                getLogger(__name__).debug(f'Requested channel subset of hardware capture '
-                                              f'will copy {format_bytes(cr.size_bytes)} '
-                                              f'PL buffer to PS RAM.')
+                                          f'requires {format_bytes(hw_size_bytes)} \n'
+                                          f'Requested channel subset of hardware capture '
+                                          f'will copy {format_bytes(cr.size_bytes)} '
+                                          f'PL buffer to PS RAM.')
                 channel_sel = np.where(np.in1d(hw_channels, usr_channels))[0]
                 buf_shape = (chunks[0], len(usr_channels))
                 if 'iq' in cr.tap:
@@ -348,7 +348,7 @@ class FeedlineHardware:
             return
 
         q, q_other = zpipe(zmq.Context.instance())
-        # q = q_other = queue.SimpleQueue()  #an alternative
+        # q = q_other = queue.Queue()  #an alternative
 
         fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=True)
 
@@ -360,20 +360,19 @@ class FeedlineHardware:
             try:
                 cr.establish(context=context)
                 while True:
-                    tic = datetime.utcnow()
+                    tic = time.perf_counter()
                     if toc:
                         delt = tic - toc
-                        delts.append(delt.seconds*1e6+delt.microseconds)
+                        delts.append(delt)
                         x = tic.strftime('%M:%S.%f')
-                        log.debug(f'Prep send @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
+                        log.debug(f'Prep send @ {tic}, since last wait ended {delt:.06} s')
 
                     x = q.recv()
                     if x == b'':
-                        toc = datetime.utcnow()
                         cr.finish()
                         break
                     photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE)
-                    toc = datetime.utcnow()
+                    toc = time.perf_counter()
 
                     cr.send_data(unpack_photons(photons) if unpack else photons, copy=False, compress=True)
             except Exception as e:
@@ -396,12 +395,11 @@ class FeedlineHardware:
                 check_zmq_abort_pipe(pipe)
         except AbortedException as e:
             getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
-            stop.set()
         except Exception as e:
             getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            stop.set()
         finally:
             self._ol.trigger_system.photon_maxi_0.stop_capture()
+            stop.set()
             fountain.join()
             sender.join()
             getLogger(__name__).debug(f'Deleting {cr} as all work is complete')

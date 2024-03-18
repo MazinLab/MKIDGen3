@@ -1,5 +1,5 @@
 import numpy as np
-import pynq.buffer as buffer
+import pynq.buffer
 from pynq import allocate, DefaultIP, DefaultHierarchy
 import time
 import asyncio
@@ -240,7 +240,7 @@ class CaptureHierarchy(DefaultHierarchy):
         self.axis2mm.start(continuous=False, increment=True)
         del buffer
 
-    def looping_capture(self, source: str, n: int, buffers: buffer.PynqBuffer, callback):
+    def looping_capture(self, source: str, n: int, buffers: pynq.buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')
         if self.switch is not None:
             self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)

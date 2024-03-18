@@ -1,7 +1,6 @@
 import zmq
-import os
 import uuid
-
+from logging import getLogger
 
 def zpipe(ctx):
     """
@@ -9,6 +8,7 @@ def zpipe(ctx):
     mimic pipe used in czmq zthread_fork.
     Returns a pair of PAIRs connected via inproc
     """
+    getLogger('mkidgen3.zmq').debug(f'Creating inproc pipe with context {ctx}')
     a = ctx.socket(zmq.PAIR)
     b = ctx.socket(zmq.PAIR)
     a.linger = b.linger = 0

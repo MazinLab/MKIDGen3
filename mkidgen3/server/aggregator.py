@@ -67,7 +67,7 @@ class PhotonAggregator:
             photons_buf = np.recarray(len(avail)*MAX_PHOTON_PER_CR_SEND, dtype=INSTRUMENT_PHOTON_TYPE)
 
             for job in (j for j in list(self._jobs) if j.datasink.socket in avail):
-                raw_phot_data = job.datasink.receive()
+                raw_phot_data = job.datasink._receive()
 
                 if raw_phot_data is None:
                     getLogger(__name__).debug(f'Photon data stream over for {job}')

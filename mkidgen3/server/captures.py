@@ -220,6 +220,7 @@ class CaptureRequest:
         if self._status_socket is not None or self._data_socket is not None:
             getLogger(__name__).warning(f'{self} already established')
             return
+        getLogger('zmqflow.captures').debug(f'Establishing {self.id} command with context {context or "instance()"}')
         context = context or zmq.Context.instance()
         self._status_socket = context.socket(zmq.PUB)
         self._status_socket.connect(self.STATUS_ENDPOINT)
@@ -464,16 +465,20 @@ class CaptureSink(threading.Thread):
 
     def start(self):
         assert not self._started.is_set()
+        getLogger(__name__).debug(f'Starting {self}')
         self._pipe = zpipe(zmq.Context.instance())
         super(CaptureSink, self).start()
 
     def kill(self):
-        self._pipe[0].send(b'')
-        self._pipe[0].recv()
-        self._pipe[1].close()
-        self._pipe[0].close()
+        if self._pipe:
+            self._pipe[0].send(b'')
+            self._pipe[0].recv()
+            self._pipe[1].close()
+            self._pipe[0].close()
 
     def _accumulate_data(self, d):
+        getLogger(__name__).getChild('data').debug(f'Received {format_bytes(len(d))} of '
+                                                   f'{format_bytes(self._expected_bytes)} for {self}')
         self._buf.append(d)
 
     def _finish_accumulation(self):
@@ -483,20 +488,25 @@ class CaptureSink(threading.Thread):
         raise NotImplementedError
 
     def establish(self, ctx: zmq.Context = None):
+        getLogger('zmqflow.captures').debug(f'Establishing sink {self} with context {ctx or "instance()"}')
         ctx = ctx or zmq.Context.instance()
         self.socket = ctx.socket(zmq.SUB)
         self.socket.setsockopt(zmq.SUBSCRIBE, self.cap_id)
         self.socket.connect(self.data_source)
         return self.socket
 
-    def receive(self):
+    def _receive(self):
         id, data = self.socket.recv_multipart(copy=False)
         if not data:
-            self.socket.close()
+            self.destablish()
             return None
         return blosc2.decompress(data) if not self._compression_override else data
 
     def destablish(self):
+        if self.socket is None:
+            getLogger(__name__).debug(f'Destablish called when {self} is not established')
+            return
+        getLogger(__name__).debug(f'Destablishing {self}')
         self.socket.close()
         self.socket = None
 
@@ -515,19 +525,15 @@ class CaptureSink(threading.Thread):
                 if self._pipe[1] in avail:
                     getLogger(__name__).debug(f'Received shutdown order, terminating data acq. of {self}')
                     break
-                data = self.receive()  # does decompression
+                data = self._receive()  # does decompression
                 if not data:
-                    getLogger(__name__).debug(f'Received null, capture data stream over')
+                    getLogger(__name__).getChild('data').debug(f'Received null, capture data stream over')
                     break
-                getLogger(__name__).debug(f'Received {format_bytes(len(data))} of {format_bytes(self._expected_bytes)} for {self}')
                 self._accumulate_data(data)
             self._finish_accumulation()
             self._finalize_data()
-            if self.result:
-                getLogger(__name__).info(f'Capture data for {self.cap_id} processed into {self.result.data.shape} '
-                                         f'{self.result.data.dtype}: {self.result}')
-            else:
-                getLogger(__name__).info(f"Capture data for {self.cap_id} processed 'None'")
+            msg = f'{self.result.data.shape} {self.result.data.dtype}: {self.result}' if self.result else 'None'
+            getLogger(__name__).getChild('data').info(f'Capture data for {self.cap_id} processed into {msg}')
 
         except zmq.ZMQError as e:
             getLogger(__name__).warning(f'Shutting down {self} due to {e}')
@@ -602,6 +608,7 @@ class PhaseCaptureSink(StreamCaptureSink):
 
 class SimplePhotonSink(CaptureSink):
     def _accumulate_data(self, d):
+        super()._accumulate_data(d)
         self._buf.append(d)
         if sum(map(len, self._buf)) / 1024 ** 2 > 100:  # limit to 100MiB
             self._buf.pop(0)
@@ -723,14 +730,16 @@ class StatusListener(threading.Thread):
 
     def start(self):
         assert not self._started.is_set()
+        getLogger(__name__).debug(f'Starting {self}')
         self._pipe = zpipe(zmq.Context.instance())
         super(StatusListener, self).start()
 
     def kill(self):
-        self._pipe[0].send(b'')
-        self._pipe[0].recv()
-        self._pipe[0].close()
-        self._pipe[1].close()
+        if self._pipe:
+            self._pipe[0].send(b'')
+            self._pipe[0].recv()
+            self._pipe[0].close()
+            self._pipe[1].close()
 
     @staticmethod
     def is_final_status_message(update):
@@ -753,6 +762,7 @@ class StatusListener(threading.Thread):
                 poller.register(sock, flags=zmq.POLLIN)
                 getLogger(__name__).debug(f'Listening for status updates to {self.id}')
                 self._pipe[1].send(b'')
+
                 while True:
                     avail = dict(poller.poll())
                     if self._pipe[1] in avail:
@@ -765,9 +775,10 @@ class StatusListener(threading.Thread):
                     assert id == self.id or not self.id
                     update = update.decode()
                     self._status_messages.append(update)
-                    getLogger(__name__).debug(f'Status update for {id}: {update}')
+                    getLogger(__name__).getChild('status').debug(f'{id}: {update}')
                     if self.is_final_status_message(update):
                         break
+
         except zmq.ZMQError as e:
             getLogger(__name__).critical(f"{self} died due to {e}")
         finally:
@@ -780,7 +791,7 @@ class StatusListener(threading.Thread):
         return tuple(self._status_messages)
 
     def ready(self):
-        self._pipe[0].recv()  # TODO make this line block
+        self._pipe[0].recv()
 
 
 class ADCCaptureData:
