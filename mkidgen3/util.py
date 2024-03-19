@@ -12,12 +12,13 @@ from typing import Iterable
 import subprocess
 
 
-def pseudo_random_tones(n: int, buffer=300e3) -> nt.NDArray[float]:
+def pseudo_random_tones(n: int, buffer=300e3, spread=True) -> nt.NDArray[float]:
     """
     Generate a 1D array of tones where each tone in randomly placed in an OPFB bin
     Args:
         n: number of tones
         buffer: bandwidth from the edges of the bin where tones will not be placed[Hz]
+        spread: use every other opfb channels so tones are more spread out.
     Returns:
         A 1D array of tones where there's 1 tone per OPFB bin and buffer away from the upper and lower bin edges.
     Tones are placed symmetrically around DC, 1 per bin with the specified buffer
@@ -31,6 +32,8 @@ def pseudo_random_tones(n: int, buffer=300e3) -> nt.NDArray[float]:
                                     size=n)
     bc = (ADC_SAMPLE_RATE / N_OPFB_CHANNELS) * np.linspace(-N_OPFB_CHANNELS / 2, N_OPFB_CHANNELS / 2 - 1,
                                                                     N_OPFB_CHANNELS)
+    if spread:
+        bc = bc[::2]
     tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2+1:+bc.size//2+n//2+1]))
     return tone_bin_centers + rand_offsets
 
