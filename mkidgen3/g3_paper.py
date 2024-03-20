@@ -6,15 +6,15 @@ from mkidgen3.server.feedline_config import *
 from mkidgen3.server.waveform import WaveformFactory
 
 
-def fit_psd_floor(freqs, spect):
+def fit_psd_floor(freqs, spect, cutoff=30e3):
     def flatoverf(freq, a, b):
         return a + b / freq
 
-    fitcutoff = np.argmin(np.abs(freqs - 30.e3))  # remove rolloff
+    fitcutoff = np.argmin(np.abs(freqs - cutoff))  # remove rolloff
     popt, pcov = spo.curve_fit(flatoverf, freqs[1:fitcutoff], spect[1:fitcutoff], sigma=spect[1:fitcutoff])
     return popt[0]
 
-def get_single_tone_phase_psd(tone, dac_dynamic_range, ol, program_matched_filt=False, plot=True):
+def get_single_tone_phase_psd(tone, dac_dynamic_range, ol, psd_rolloff_cutoff, program_matched_filt=False, plot=True):
     # Run DAC
     tones = tone
     wvfm_cfg = WaveformConfig(waveform=WaveformFactory(frequencies=tones, seed=6, dac_dynamic_range=dac_dynamic_range, compute=True))
@@ -39,7 +39,7 @@ def get_single_tone_phase_psd(tone, dac_dynamic_range, ol, program_matched_filt=
 
     f, psd = welch(phase0, fs=1e6, nperseg=1e6 / 1e3)
 
-    floor = fit_psd_floor(f, psd)
+    floor = fit_psd_floor(f, psd, psd_rolloff_cutoff)
 
     if plot:
         fig, ax = plt.subplots()

@@ -7,7 +7,8 @@ from logging import getLogger
 import zmq
 from mkidgen3.opfb import opfb_bin_number
 import numpy.typing as nt
-from mkidgen3.system_parameters import OPFB_CHANNEL_SAMPLE_RATE, ADC_SAMPLE_RATE, N_OPFB_CHANNELS
+from mkidgen3.system_parameters import (OPFB_CHANNEL_SAMPLE_RATE, ADC_SAMPLE_RATE, N_OPFB_CHANNELS, DAC_FREQ_MIN,
+                                        DAC_FREQ_MAX)
 from typing import Iterable
 import subprocess
 
@@ -28,14 +29,14 @@ def pseudo_random_tones(n: int, buffer=300e3, spread=True) -> nt.NDArray[float]:
     assert n % 2 == 0, "Only even number of tones is supported."
     assert n < 4095, "Max number of tones is 4095 (one per bin excluding DC bin)."
     assert buffer < opfb_halfband, f"Buffer size is larger than channel width, max buffer allowed is {opfb_halfband}."
-    rand_offsets = np.random.uniform(low=buffer-opfb_halfband, high=opfb_halfband/2-buffer,
-                                    size=n)
+    rand_offsets = np.random.uniform(low=buffer-opfb_halfband, high=opfb_halfband-buffer, size=n)
     bc = (ADC_SAMPLE_RATE / N_OPFB_CHANNELS) * np.linspace(-N_OPFB_CHANNELS / 2, N_OPFB_CHANNELS / 2 - 1,
                                                                     N_OPFB_CHANNELS)
     if spread:
         bc = bc[::2]
-    tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2+1:+bc.size//2+n//2+1]))
-    return tone_bin_centers + rand_offsets
+    tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2:+bc.size//2+n//2]))
+
+    return np.clip(tone_bin_centers + rand_offsets, DAC_FREQ_MIN, DAC_FREQ_MAX)
 
 
 
