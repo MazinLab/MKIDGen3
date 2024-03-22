@@ -8,7 +8,7 @@ import zmq
 from mkidgen3.opfb import opfb_bin_number
 import numpy.typing as nt
 from mkidgen3.system_parameters import (OPFB_CHANNEL_SAMPLE_RATE, ADC_SAMPLE_RATE, N_OPFB_CHANNELS, DAC_FREQ_MIN,
-                                        DAC_FREQ_MAX)
+                                        DAC_FREQ_MAX, DAC_FREQ_RES)
 from typing import Iterable
 import subprocess
 
@@ -36,7 +36,7 @@ def pseudo_random_tones(n: int, buffer=300e3, spread=True) -> nt.NDArray[float]:
         bc = bc[::2]
     tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2:+bc.size//2+n//2]))
 
-    return np.clip(tone_bin_centers + rand_offsets, DAC_FREQ_MIN, DAC_FREQ_MAX)
+    return np.clip(tone_bin_centers + rand_offsets, DAC_FREQ_MIN+DAC_FREQ_RES, DAC_FREQ_MAX-DAC_FREQ_RES)
 
 
 
