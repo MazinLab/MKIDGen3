@@ -75,30 +75,30 @@ class SweepConfig:
             ifboard.set_attens(
                 input_attens=self.attens[1], output_attens=self.attens[0]
             )
-        for i, step in enumerate(self.steps):
-            ifboard.set_lo(
-                step + self.lo_center,
-                fractional=True,
-                g2_mode=False,
-                full_calibration=True,
-            )
-            piq, prms = self._get_iq_point_rms(capture)
-            iq[::, i] = piq[: tones.size]
-            rms[::, i] = prms[: tones.size]
-        ifboard.set_lo(
-            self.lo_center, fractional=True, g2_mode=False, full_calibration=True
-        )
-        it = enumerate(self.steps)
         if progress:
+            it = enumerate(self.steps)
             import tqdm.notebook as tqdm
 
             it = tqdm.tqdm(it, total=len(self.steps), desc="FREQ")
-        for i, step in it:
-            ifboard.set_lo(step + self.lo_center)
-            piq, prms = self._get_iq_point_rms(capture)
-            iq[::, i] = piq[: tones.size]
-            rms[::, i] = prms[: tones.size]
-        ifboard.set_lo(self.lo_center)
+            for i, step in it:
+                ifboard.set_lo(step + self.lo_center)
+                piq, prms = self._get_iq_point_rms(capture)
+                iq[::, i] = piq[: tones.size]
+                rms[::, i] = prms[: tones.size]
+            ifboard.set_lo(self.lo_center)
+
+        else:
+            for i, step in enumerate(self.steps):
+                ifboard.set_lo(
+                    step + self.lo_center,
+                    fractional=True,
+                    g2_mode=False,
+                    full_calibration=True,
+                )
+                piq, prms = self._get_iq_point_rms(capture)
+                iq[::, i] = piq[: tones.size]
+                rms[::, i] = prms[: tones.size]
+            ifboard.set_lo(self.lo_center, fractional=True, g2_mode=False, full_calibration=True)
         return Sweep(iq, rms / np.sqrt(self.average), self)
 
     def frequencies(self) -> nt.NDArray[np.float64]:
@@ -221,9 +221,9 @@ class Sweep(AbstractSweep):
         if channels is None:
             channels = slice(0, self.iq.shape[0])
         for i in range(self.iq[channels, :].shape[0]):
-            line = ax.semilogy(
+            line = ax.plot(
                 (self.frequencies[i] / 1e6 if not stacked else self.config.steps),
-                np.abs(self.iq[i]) if not power else np.abs(self.iq[i]) ** 2,
+                np.abs(self.iq[i]) if not power else 20*np.log10(np.abs(self.iq[i])),
                 label=(
                     "Tone: {:.3f} MHz".format(
                         self.config.waveform.default_ddc_config.tones[i] / 1e6
@@ -251,7 +251,7 @@ class Sweep(AbstractSweep):
             ax.axvline(0, color="black", lw=0.1, label="LO")
         if label_tones:
             ax.legend()
-        ax.set_ylabel("S21 (Magnitude)" if not power else "S21 (Power)")
+        ax.set_ylabel("S21 (Magnitude)" if not power else "S21 (Power [dB])")
         ax.set_xlabel("Frequency (MHz)")
 
     def plot_loops(self, ax, channels: slice | None = None):
