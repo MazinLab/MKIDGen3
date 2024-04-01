@@ -5,7 +5,7 @@ import yaml
 import importlib.resources
 from logging import getLogger
 import zmq
-from mkidgen3.opfb import opfb_bin_number
+from mkidgen3.opfb import opfb_bin_number, opfb_bin_center
 import numpy.typing as nt
 from mkidgen3.system_parameters import (OPFB_CHANNEL_SAMPLE_RATE, ADC_SAMPLE_RATE, N_OPFB_CHANNELS, DAC_FREQ_MIN,
                                         DAC_FREQ_MAX, DAC_FREQ_RES)
@@ -40,12 +40,13 @@ def pseudo_random_tones(n: int, buffer: float = 300e3, spread: bool = True, excl
     tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2:+bc.size//2+n//2]))
 
     if exclude.any():
-        exclude_bin_centers = opfb_bin_number(exclude, ssr_raw_order=False)
+        exclude_bin_centers = opfb_bin_center(opfb_bin_number(exclude, ssr_raw_order=False), ssr_order=False)
         exclude_idx = []
         for i, tone_bin in enumerate(tone_bin_centers):
             if (tone_bin == exclude_bin_centers).any():
-                exclude_idx.apppend(i)
-        np.delete(tone_bin_centers, exclude_idx)
+                exclude_idx.append(i)
+        tone_bin_centers = np.delete(tone_bin_centers, exclude_idx)
+        rand_offsets = np.delete(rand_offsets, exclude_idx)
     return np.clip(tone_bin_centers + rand_offsets, DAC_FREQ_MIN+DAC_FREQ_RES, DAC_FREQ_MAX-DAC_FREQ_RES)
 
 
