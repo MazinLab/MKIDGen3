@@ -32,7 +32,7 @@ def pseudo_random_tones(n: int, buffer: float = 300e3, spread: bool = True, excl
     assert n % 2 == 0, "Only even number of tones is supported."
     assert n < 4095, "Max number of tones is 4095 (one per bin excluding DC bin)."
     assert buffer < opfb_halfband, f"Buffer size is larger than channel width, max buffer allowed is {opfb_halfband}."
-    rand_offsets = np.random.uniform(low=buffer-opfb_halfband, high=opfb_halfband-buffer, size=n)
+    rand_offsets = np.random.default_rng(seed=2).uniform(low=buffer-opfb_halfband, high=opfb_halfband-buffer, size=n)
     bc = (ADC_SAMPLE_RATE / N_OPFB_CHANNELS) * np.linspace(-N_OPFB_CHANNELS / 2, N_OPFB_CHANNELS / 2 - 1,
                                                                     N_OPFB_CHANNELS)
     if spread:
