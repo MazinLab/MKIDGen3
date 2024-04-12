@@ -115,7 +115,7 @@ def quantize_frequencies(freqs: Iterable[float | int], rate: float = 4.096e9, n_
     """
     freqs = ensure_array_or_scalar(freqs)
     freq_res = rate / n_samples
-    return np.round(freqs / freq_res) * freq_res
+    return np.asarray(np.round(freqs / freq_res) * freq_res)
 
 
 def predict_quantization_error(resolution: int = DAC_RESOLUTION, signed: bool = True):
