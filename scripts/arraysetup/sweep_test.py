@@ -95,8 +95,8 @@ test_eng_jobs = list(map(CaptureJob, (CaptureRequest(1024, 'adc', fc, frsu),
 
 test_adc_only_job.submit(True, True)
 
-for j in test_eng_jobs:
-    j.submit(True, True)
+#for j in test_eng_jobs:
+#    j.submit(True, True)
 
 if large_job_test:
     for j in test_large_file_jobs:
@@ -135,8 +135,8 @@ def hammer(sendhashed=False, precomputewave=True):
         if sendhashed and i==0:
             fc = fc.hashed_form
 
-hammer(sendhashed=False, precomputewave=True)
-hammer(sendhashed=True, precomputewave=True)
+#hammer(sendhashed=False, precomputewave=True)
+#hammer(sendhashed=True, precomputewave=True)
 
 
 channels_plt = [0, 1]
@@ -151,8 +151,8 @@ j.submit(True, True)
 
 # Compute Phase Needed to Move average to Zero
 phase = j.data()
-phase_offsets = -phase.data.mean(axis=0)
-phase_offsets[2:] = 0
+phase_offsets = np.zeros(2048)
+phase_offsets[:2] = -phase.data.mean(axis=0)[:2]
 
 # Capture phase with new offsets
 offset_ddc = copy.copy(no_offset_ddc)
