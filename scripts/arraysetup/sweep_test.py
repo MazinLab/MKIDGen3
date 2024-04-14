@@ -179,7 +179,7 @@ axes.ravel()[-1].legend()
 plt.show()
 
 postage_job = CaptureJob(CaptureRequest(6730, 'postage', offset_fc, frsu, channels=[0, 1, 2]))
-photon_job = CaptureJob(CaptureRequest(1200, 'photon', offset_fc, frsu))
+photon_job = CaptureJob(CaptureRequest(1200, 'photon', offset_fc, frsu)) # buffer interval is n ms
 
 postage_job.submit(True, True)
 photon_job.submit(True, True)
