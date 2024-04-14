@@ -220,7 +220,7 @@ class FreqlistWaveform(Waveform):
 
         phases = self.phases if phases is None else phases
 
-        if self.phase_offsets.any() or (self.iq_ratios != 1).any():
+        if self.phase_offsets.any() or (self.iq_ratios != 1).any() or self.phases.ndim > 1:
             logging.getLogger(__name__).debug(
                 f'Computing net waveform with {self.freqs.size} tones in a loop to apply IQ ratios and phase offsets.\n'
                 f'For 2048 tones this takes about 7 min.')
@@ -299,3 +299,25 @@ def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None
     return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
                             amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
                             seed=seed, dac_dynamic_range=dac_dynamic_range, compute=compute)
+
+
+if __name__ == '__main__':
+    """
+    Test code for debugging waveform generation.
+    """
+    from mkidgen3.util import pseudo_random_tones
+    from mkidgen3.server.feedline_config import *
+    import matplotlib.pyplot as plt
+
+    tone = 400e6
+    exclude = np.array([tone - 4e6, tone - 3e6, tone - 2e6, tone - 1e6, tone, tone + 1e6, tone + 2e6, tone + 3e6, tone + 4e6])
+    random_tones = pseudo_random_tones(n=2048, buffer=300e3, spread=True, exclude=exclude)
+    wvfm_tones = np.append(np.array([tone]), random_tones)
+    wvfm_cfg = WaveformConfig(
+        waveform=WaveformFactory(frequencies=wvfm_tones, seed=5, dac_dynamic_range=1 / 150, compute=True))
+    wvfm_fft = np.abs(np.fft.fftshift(np.fft.fft(wvfm_cfg.waveform.output_waveform)))
+    freqs = np.linspace(-2.048e9, 2.048e9 - 7.8125e3, 2 ** 19)
+    plt.plot(freqs, wvfm_fft)
+    plt.xlim(395e6, 405e6)
+    plt.show()
+    print('hi')

@@ -501,14 +501,14 @@ class IFConfig(_FLConfigMixin):
 class TriggerConfig(_FLConfigMixin):
     _settings = ('holdoffs', 'thresholds')
 
-    def __init__(self, holdoffs: np.ndarray = None, thresholds: np.ndarray = None, _hashed=None):
+    def __init__(self, holdoffs: np.ndarray | list = None, thresholds: np.ndarray | list = None, _hashed=None):
         """ See drivers.PhotonTrigger for notes on what these values should be"""
         self._hashed = _hashed
         if self._hashed:
             return
 
-        self.holdoffs = holdoffs
-        self.thresholds = thresholds
+        self.holdoffs = np.asarray(holdoffs) if holdoffs is not None else None
+        self.thresholds = np.asarray(thresholds) if thresholds is not None else None
 
 
 class ChannelConfig(_FLConfigMixin):

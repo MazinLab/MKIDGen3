@@ -19,7 +19,7 @@ frsa = FRSClient(url='mkidrfsoc4x2.physics.ucsb.edu', command_port=8888, data_po
 frsb = FRSClient(url='rfsoc4x2b.physics.ucsb.edu', command_port=8888, data_port=8889, status_port=8890)
 
 large_job_test = False
-send_wave = ''
+send_wave = 'computed'
 frsu = frsa
 
 
@@ -37,7 +37,7 @@ def synthetic_photon_waveform_generator():
     amplitudes = np.full(tones.size, fill_value=0.8 / tones.shape[0])
     phases = [-theta, -theta2]
     waveform = WaveformConfig(waveform=WaveformFactory(frequencies=tones, amplitudes=amplitudes,
-                                                       phases=phases, maximize_dynamic_range=False))
+                                                       phases=phases, dac_dynamic_range=1.0))
     return waveform
 
 
@@ -68,7 +68,7 @@ for k in waveforms:
     if send_wave == 'hash':
         waveforms[k] = waveforms[k].hashed_form
     elif send_wave == 'computed':
-        waveforms[k] = waveforms[k].output_waveform  # trigger waveform computation
+        waveforms[k].waveform.output_waveform  # trigger waveform computation
 
 fc_adconly = FeedlineConfig(bitstream=bitstream, rfdc_clk=rfdc_clk, rfdc=rfdc)
 
