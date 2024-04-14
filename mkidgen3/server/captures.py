@@ -233,17 +233,25 @@ class CaptureRequest:
         self._send_status('established')
 
     def destablish(self):
+        if self._status_socket is not None:
+            log = True
+            getLogger(__name__).debug(f'de-establishing status...')
         try:
             # NB the context or socket's linger setting determines how long any pending messages have to get sent off
             self._status_socket.close()
             self._status_socket = None
         except AttributeError:
             pass
+        if self._data_socket is not None:
+            log = True
+            getLogger(__name__).debug(f'de-establishing data...')
         try:
             self._data_socket.close()
             self._data_socket = None
         except AttributeError:
             pass
+        if log:
+            getLogger(__name__).debug(f'...de-established.')
 
     def fail(self, message, raise_exception=False):
         if self.completed:

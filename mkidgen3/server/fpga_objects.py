@@ -320,6 +320,7 @@ class FeedlineHardware:
         finally:
             cr.destablish()
             del ps_buf
+            getLogger(__name__).debug(f'plram cap complete')
 
     def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
         """
