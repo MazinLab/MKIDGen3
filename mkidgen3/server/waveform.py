@@ -5,7 +5,8 @@ import numpy.typing as nt
 import platform
 import matplotlib.pyplot as plt
 
-from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH, DAC_FREQ_RES
+from mkidgen3.system_parameters import (ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_SAMPLE_RATE, SYSTEM_BANDWIDTH,
+                                        DAC_FREQ_RES, DAC_FREQ_MAX, DAC_FREQ_MIN)
 
 
 def _same(a, b):
@@ -127,6 +128,9 @@ class FreqlistWaveform(Waveform):
             compute: compute waveform
         """
         self.freqs = np.asarray(frequencies)
+        assert (DAC_FREQ_MIN <= self.freqs).all() and (self.freqs <= DAC_FREQ_MAX).all(), (f"freqs must be in "
+                                                                                      f"[{DAC_FREQ_MIN}, "
+                                                                                      f"{DAC_FREQ_MAX}]")
         self.n_samples = n_samples
         self.amps = amplitudes if amplitudes is not None else np.ones_like(frequencies)
         self._sample_rate = sample_rate
@@ -295,9 +299,3 @@ def WaveformFactory(n_uniform_tones=None, output_waveform=None, frequencies=None
     return FreqlistWaveform(frequencies=frequencies, n_samples=n_samples, sample_rate=sample_rate,
                             amplitudes=amplitudes, phases=phases, iq_ratios=iq_ratios, phase_offsets=phase_offsets,
                             seed=seed, dac_dynamic_range=dac_dynamic_range, compute=compute)
-
-
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
-    a = WaveformFactory(frequencies=[200e6, 400e6+7812.5], amplitudes=[2,3], compute=True)
-    print('hi')

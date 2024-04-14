@@ -1,5 +1,6 @@
 import copy
 from logging import getLogger
+import numpy.typing as nt
 import numpy as np
 from mkidgen3.system_parameters import ADC_DAC_INTERFACE_WORD_LENGTH, DAC_RESOLUTION, DAC_LUT_SIZE, N_CHANNELS, \
     SYSTEM_BANDWIDTH, IF_ATTN_STEP, ADC_MAX_V, PHASE_FRACTIONAL_BITS
@@ -256,7 +257,7 @@ def get_iq_point(ol, n=256):
     del x
     return tmp[0, 0] + 1j * tmp[0, 1]
 
-def compute_lo_steps(center: float | int, resolution: float | int, bandwidth: float | int) -> np.ndarray[float | int]:
+def compute_lo_steps(center: float | int, resolution: float | int, bandwidth: float | int) -> nt.NDArray[float | int]:
     """
     Compute LO steps.
     Args:

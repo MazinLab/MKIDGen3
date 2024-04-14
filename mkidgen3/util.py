@@ -5,34 +5,49 @@ import yaml
 import importlib.resources
 from logging import getLogger
 import zmq
-from mkidgen3.opfb import opfb_bin_number
+from mkidgen3.opfb import opfb_bin_number, opfb_bin_center
 import numpy.typing as nt
-from mkidgen3.system_parameters import OPFB_CHANNEL_SAMPLE_RATE, ADC_SAMPLE_RATE, N_OPFB_CHANNELS
+from mkidgen3.system_parameters import (OPFB_CHANNEL_SAMPLE_RATE, ADC_SAMPLE_RATE, N_OPFB_CHANNELS, DAC_FREQ_MIN,
+                                        DAC_FREQ_MAX, DAC_FREQ_RES)
 from typing import Iterable
 import subprocess
 
 
-def pseudo_random_tones(n: int, buffer=300e3) -> nt.NDArray[float]:
+def pseudo_random_tones(n: int, buffer: float = 300e3, spread: bool = True, exclude: Iterable = None) -> (
+        nt.NDArray)[float]:
     """
     Generate a 1D array of tones where each tone in randomly placed in an OPFB bin
     Args:
         n: number of tones
         buffer: bandwidth from the edges of the bin where tones will not be placed[Hz]
+        spread: use every other opfb channels so tones are more spread out.
+        exclude: list of tones whose bin will not have a tone placed anywhere in the same bin.
     Returns:
         A 1D array of tones where there's 1 tone per OPFB bin and buffer away from the upper and lower bin edges.
     Tones are placed symmetrically around DC, 1 per bin with the specified buffer
 
     """
     opfb_halfband = OPFB_CHANNEL_SAMPLE_RATE / 2
+    exclude = np.asarray(exclude)
     assert n % 2 == 0, "Only even number of tones is supported."
     assert n < 4095, "Max number of tones is 4095 (one per bin excluding DC bin)."
     assert buffer < opfb_halfband, f"Buffer size is larger than channel width, max buffer allowed is {opfb_halfband}."
-    rand_offsets = np.random.uniform(low=buffer-opfb_halfband, high=opfb_halfband/2-buffer,
-                                    size=n)
+    rand_offsets = np.random.default_rng(seed=2).uniform(low=buffer-opfb_halfband, high=opfb_halfband-buffer, size=n)
     bc = (ADC_SAMPLE_RATE / N_OPFB_CHANNELS) * np.linspace(-N_OPFB_CHANNELS / 2, N_OPFB_CHANNELS / 2 - 1,
                                                                     N_OPFB_CHANNELS)
-    tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2+1:+bc.size//2+n//2+1]))
-    return tone_bin_centers + rand_offsets
+    if spread:
+        bc = bc[::2]
+    tone_bin_centers = np.concatenate((bc[bc.size//2-n//2:bc.size//2], bc[bc.size//2:+bc.size//2+n//2]))
+
+    if exclude.any():
+        exclude_bin_centers = opfb_bin_center(opfb_bin_number(exclude, ssr_raw_order=False), ssr_order=False)
+        exclude_idx = []
+        for i, tone_bin in enumerate(tone_bin_centers):
+            if (tone_bin == exclude_bin_centers).any():
+                exclude_idx.append(i)
+        tone_bin_centers = np.delete(tone_bin_centers, exclude_idx)
+        rand_offsets = np.delete(rand_offsets, exclude_idx)
+    return np.clip(tone_bin_centers + rand_offsets, DAC_FREQ_MIN+DAC_FREQ_RES, DAC_FREQ_MAX-DAC_FREQ_RES)
 
 
 
