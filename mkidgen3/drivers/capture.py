@@ -464,7 +464,7 @@ class CaptureHierarchy(DefaultHierarchy):
         else:
             return buffer
 
-    def wait(self, duration=0, interrupt=False):
+    def wait(self, duration=0, interrupt=True):
         """Wait for a capture to complete, use interrupt on axis2mm by default, otherwise sleep for duration"""
         if not interrupt:
             time.sleep(duration)
