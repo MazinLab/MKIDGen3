@@ -1,7 +1,11 @@
+import logging
+
 import numpy as np
 from hashlib import md5
 import copy
 from mkidgen3.util import convert_freq_to_ddc_bins
+from logging import getLogger
+
 
 
 
@@ -176,7 +180,12 @@ class _FLConfigMixin:
                         d[k] = ov
                         continue
                     if isinstance(ov, np.ndarray):
-                        if not (sv==ov).all():
+                        try:
+                            if not (sv==ov).all():
+                                d[k] = ov
+                        except ValueError:
+                            getLogger(__name__).warning(f'Array data comparison issue in {type(self)}.{k}.'
+                                                        f'Check config definitions.')
                             d[k] = ov
                     elif sv != ov:
                         d[k] = ov
