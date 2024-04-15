@@ -14,7 +14,6 @@ from mkidgen3.server.captures import CaptureRequest
 from mkidgen3.util import check_zmq_abort_pipe, AbortedException, format_bytes, compute_max_val, format_time
 from ..interrupts import ThreadedPLInterruptManager
 import zmq
-from mkidgen3.server.misc import zpipe
 import threading
 import pynq
 import time
@@ -191,11 +190,11 @@ class FeedlineHardware:
         if fl_setup.if_board:
             self._if_board.settle()
 
-    def plram_cap(self, pipe, cr: CaptureRequest, context=None):
+    def plram_cap(self, pipe_name:  str, cr: CaptureRequest, context=None):
         """
 
         Args:
-            pipe: An inproc
+            pipe_name: An inproc://address for zmq
             context:
             cr: A CaptureRequest object
 
@@ -203,250 +202,266 @@ class FeedlineHardware:
 
         """
 
-        failmsg = ''
-        try:
-            assert cr.type == 'engineering', 'Incorrect capture request type'
-            assert self._ol.capture.is_ready(), 'Capture Subsystem is busy'
-        except AssertionError as e:
-            failmsg = str(e)
-        except AttributeError as e:
-            failmsg = f'Something is fundamentally wrong. Check your bitstream. ({str(e)})'
+        context = context or zmq.Context.instance()
+        with context.socket(zmq.PAIR) as pipe:
+            pipe.linger = 0
+            pipe.hwm = 1
+            pipe.connect(pipe_name)
 
-        try:
-            cr.establish(context=context)
-        except zmq.ZMQError as e:
-            failmsg += f"Unable to establish capture {cr.id} due to {e}, dropping request."
-
-        if not failmsg and cr.fail_saturation_frac:  # check for ADC saturation
-            buf = self._ol.capture.capture_adc(2**19, complex=False)
-            max_val = np.abs(buf).max()
-            del buf
-            if max_val >= ADC_MAX_INT*cr.fail_saturation_frac:
-                failmsg = (f"ADC levels ({max_val}) above saturation failure "
-                           f"level ({ADC_MAX_INT*cr.fail_saturation_frac:.0f})")
-
-        if failmsg:
-            getLogger(__name__).error(failmsg)
-            cr.fail(failmsg, raise_exception=False)
+            failmsg = ''
             try:
-                pipe.close()
-            except zmq.ZMQError:
-                pass
-            return
+                assert cr.type == 'engineering', 'Incorrect capture request type'
+                assert self._ol.capture.is_ready(), 'Capture Subsystem is busy'
+            except AssertionError as e:
+                failmsg = str(e)
+            except AttributeError as e:
+                failmsg = f'Something is fundamentally wrong. Check your bitstream. ({str(e)})'
 
-        self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
-        hw_channels = tuple(sorted(self._ol.capture.kept_channels(cr.tap)))
-
-        capture_atom_bytes = len(hw_channels)*cr.dwid
-        hw_size_bytes = capture_atom_bytes*cr.nsamp
-        demands = None
-        chunking_thresh = determine_max_chunk('ps', demands=demands,
-                                              assume_compression=not cr.data_endpoint.startswith('file://'))
-        nchunks = hw_size_bytes // chunking_thresh
-        partial = hw_size_bytes - chunking_thresh * nchunks
-        chunks = [chunking_thresh // capture_atom_bytes] * nchunks
-        if partial:
-            chunks.append(partial // capture_atom_bytes)
-
-        if len(chunks) > 1 and cr.numpy_metric:
-            failmsg = ('Reducing captures via numpy metrics is not supported chunked captures. '
-                       'Decrease the capture size or compute the metric client-side.')
-            getLogger(__name__).error(failmsg)
-            cr.fail(failmsg, raise_exception=False)
             try:
-                pipe.close()
-            except zmq.ZMQError:
-                pass
-            return
+                cr.establish(context=context)
+            except zmq.ZMQError as e:
+                failmsg += f"Unable to establish capture {cr.id} due to {e}, dropping request."
 
-        channel_sel = None
-        ps_buf = None
-        if cr.channels is not None:  # channel-specific capture
-            usr_channels = cr.channels
-            if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
-                getLogger(__name__).debug(f'Requested channel capture of {format_bytes(cr.size_bytes)} '
-                                          f'requires {format_bytes(hw_size_bytes)}')
-                getLogger(__name__).debug(f'Requested channel subset of hardware capture '
-                                              f'will copy {format_bytes(cr.size_bytes)} '
-                                              f'PL buffer to PS RAM.')
-                channel_sel = np.where(np.in1d(hw_channels, usr_channels))[0]
-                buf_shape = (chunks[0], len(usr_channels))
-                if 'iq' in cr.tap:
-                    buf_shape += (2,)
-                ps_buf = np.empty(buf_shape,  dtype=np.int16)
+            if not failmsg and cr.fail_saturation_frac:  # check for ADC saturation
+                buf = self._ol.capture.capture_adc(2**19, complex=False)
+                max_val = np.abs(buf).max()
+                del buf
+                if max_val >= ADC_MAX_INT*cr.fail_saturation_frac:
+                    failmsg = (f"ADC levels ({max_val}) above saturation failure "
+                               f"level ({ADC_MAX_INT*cr.fail_saturation_frac:.0f})")
 
-        getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
+            if failmsg:
+                getLogger(__name__).error(failmsg)
+                cr.fail(failmsg, raise_exception=False)
+                try:
+                    pipe.close()
+                except zmq.ZMQError:
+                    pass
+                return
 
-        try:
-            for i, csize in enumerate(chunks):
-                times = [time.perf_counter()]
+            self._ol.capture.keep_channels(cr.tap, cr.channels if cr.channels else 'all')
+            hw_channels = tuple(sorted(self._ol.capture.kept_channels(cr.tap)))
 
-                check_zmq_abort_pipe(pipe)
+            capture_atom_bytes = len(hw_channels)*cr.dwid
+            hw_size_bytes = capture_atom_bytes*cr.nsamp
+            demands = None
+            chunking_thresh = determine_max_chunk('ps', demands=demands,
+                                                  assume_compression=not cr.is_file_endpoint)
+            nchunks = hw_size_bytes // chunking_thresh
+            partial = hw_size_bytes - chunking_thresh * nchunks
+            chunks = [chunking_thresh // capture_atom_bytes] * nchunks
+            if partial:
+                chunks.append(partial // capture_atom_bytes)
 
-                times.append(time.perf_counter())
-                data = self._ol.capture.capture(csize, cr.tap, groups=None, wait=True)
-                times.append(time.perf_counter())
-                if isinstance(data, dict):
-                    raise RuntimeError(f'PL axis2mm capture failed: {data}. '
-                                       f'Note decode errors are indicative of a memory address and '
-                                       f'should never happen issue.')
-                if channel_sel is None:
-                    data_to_send = data
-                else:
-                    data_to_send = np.take(data, channel_sel, axis=1, out=ps_buf[:csize])
-                times.append(time.perf_counter())
+            if len(chunks) > 1 and cr.numpy_metric:
+                failmsg = ('Reducing captures via numpy metrics is not supported chunked captures. '
+                           'Decrease the capture size or compute the metric client-side.')
+                getLogger(__name__).error(failmsg)
+                cr.fail(failmsg, raise_exception=False)
+                try:
+                    pipe.close()
+                except zmq.ZMQError:
+                    pass
+                return
 
-                zmqtmp = zmq.COPY_THRESHOLD
-                zmq.COPY_THRESHOLD = 0
-                tracker = cr.send_data(data_to_send, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
-                times.append(time.perf_counter())
+            channel_sel = None
+            ps_buf = None
+            if cr.channels is not None:  # channel-specific capture
+                usr_channels = cr.channels
+                if hw_channels != usr_channels:  # strip off extra channels required by hardware capture
+                    getLogger(__name__).debug(f'Requested channel capture of {format_bytes(cr.size_bytes)} '
+                                              f'requires {format_bytes(hw_size_bytes)}')
+                    getLogger(__name__).debug(f'Requested channel subset of hardware capture '
+                                                  f'will copy {format_bytes(cr.size_bytes)} '
+                                                  f'PL buffer to PS RAM.')
+                    channel_sel = np.where(np.in1d(hw_channels, usr_channels))[0]
+                    buf_shape = (chunks[0], len(usr_channels))
+                    if 'iq' in cr.tap:
+                        buf_shape += (2,)
+                    ps_buf = np.empty(buf_shape,  dtype=np.int16)
 
-                if tracker is not None:
-                    tracker.wait()
-                zmq.COPY_THRESHOLD = zmqtmp
-                times.append(time.perf_counter())
+            getLogger(__name__).debug(f'Beginning plram capture loop of {len(chunks)} chunk(s) at {cr.tap}')
 
-                del data
-                times.append(time.perf_counter())
-                times_str = [format_time(x) for x in np.diff((times))]
-                labels = ['check abort','execute capture','optionally slice','send data','wait for tracker','free buffer']
-                getLogger(__name__).debug(list(zip(labels, times_str)))
-            cr.finish()
-        except AbortedException as e:
-            cr.abort(e)
-        except Exception as e:
-            getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            cr.fail(f'Aborted due to {e}', raise_exception=False)
-        finally:
-            cr.destablish()
-            del ps_buf
-            getLogger(__name__).debug(f'plram cap complete')
+            try:
+                for i, csize in enumerate(chunks):
+                    times = [time.perf_counter()]
 
-    def photon_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context=None):
+                    check_zmq_abort_pipe(pipe)
+
+                    times.append(time.perf_counter())
+                    data = self._ol.capture.capture(csize, cr.tap, groups=None, wait=True)
+                    times.append(time.perf_counter())
+                    if isinstance(data, dict):
+                        raise RuntimeError(f'PL axis2mm capture failed: {data}. '
+                                           f'Note decode errors are indicative of a memory address and '
+                                           f'should never happen issue.')
+                    if channel_sel is None:
+                        data_to_send = data
+                    else:
+                        data_to_send = np.take(data, channel_sel, axis=1, out=ps_buf[:csize])
+                    times.append(time.perf_counter())
+
+                    zmqtmp = zmq.COPY_THRESHOLD
+                    zmq.COPY_THRESHOLD = 0
+                    tracker = cr.send_data(data_to_send, status=f'{i + 1}/{len(chunks)}', copy=False, compress=True)
+                    times.append(time.perf_counter())
+
+                    if tracker is not None:
+                        tracker.wait()
+                    zmq.COPY_THRESHOLD = zmqtmp
+                    times.append(time.perf_counter())
+
+                    del data
+                    times.append(time.perf_counter())
+                    times_str = [format_time(x) for x in np.diff((times))]
+                    labels = ['check abort','execute capture','optionally slice','send data','wait for tracker','free buffer']
+                    getLogger(__name__).debug(list(zip(labels, times_str)))
+                cr.finish()
+            except AbortedException as e:
+                cr.abort(e)
+            except Exception as e:
+                getLogger(__name__).error(f'Terminating {cr} due to {e}')
+                cr.fail(f'Aborted due to {e}', raise_exception=False)
+            finally:
+                cr.destablish()
+                del ps_buf
+                getLogger(__name__).debug(f'plram cap complete')
+
+    def photon_cap(self, pipe_name: str, cr: CaptureRequest, context=None):
         """
         pipe: a zmq pair pipe to detect abort
         cr: the capture request
         """
-        failmsg = ''
-        photon_maxi = self._ol.trigger_system.photon_maxi_0
-        try:
-            assert cr.type == 'photon', 'Incorrect capture request type'
-        except AssertionError as e:
-            failmsg = str(e)
+        context = context or zmq.Context.instance()
+        with context.socket(zmq.PAIR) as pipe:
+            pipe.linger = 0
+            pipe.hwm = 1
+            pipe.connect(pipe_name)
 
-        try:
-            cr.establish(context=context)
-        except zmq.ZMQError as e:
-            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
-
-        if failmsg:
-            getLogger(__name__).error(failmsg)
+            failmsg = ''
+            photon_maxi = self._ol.trigger_system.photon_maxi_0
             try:
-                cr.fail(failmsg)
-                cr.destablish()
-            except zmq.ZMQError as ez:
-                getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
-            return
+                assert cr.type == 'photon', 'Incorrect capture request type'
+            except AssertionError as e:
+                failmsg = str(e)
 
-        q, q_other = zpipe(zmq.Context.instance())
-        # q = q_other = queue.SimpleQueue()  #an alternative
-
-        fountain, stop = photon_maxi.photon_fountain(q_other, spawn=True, copy_buffer=True)
-
-        def photon_sender(q: zmq.Socket, cr, unpack=False):
-            log = getLogger(__name__)
-            from datetime import datetime
-            toc = 0
-            delts = []
             try:
                 cr.establish(context=context)
-                while True:
-                    tic = datetime.utcnow()
-                    if toc:
-                        delt = tic - toc
-                        delts.append(delt.seconds*1e6+delt.microseconds)
-                        x = tic.strftime('%M:%S.%f')
-                        log.debug(f'Prep send @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
+            except zmq.ZMQError as e:
+                failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
 
-                    x = q.recv()
-                    if x == b'':
-                        toc = datetime.utcnow()
-                        cr.finish()
-                        break
-                    photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE)
-                    toc = datetime.utcnow()
+            if failmsg:
+                getLogger(__name__).error(failmsg)
+                try:
+                    cr.fail(failmsg)
+                    cr.destablish()
+                except zmq.ZMQError as ez:
+                    getLogger(__name__).warning(f'Failed to send abort/destablish for {cr} due to {ez}')
+                return
 
-                    cr.send_data(unpack_photons(photons) if unpack else photons, copy=False, compress=True)
+            fountain, stop = photon_maxi.photon_fountain("inproc://photon_fountain.inproc", spawn=True, copy_buffer=True)
+
+            def photon_sender( cr, unpack=False):
+                with zmq.Context.instance().socket(zmq.PAIR) as q:
+                    q.linger = 0
+                    q.hwm = 1
+                    q.bind("inproc://photon_fountain.inproc")
+                    log = getLogger(__name__)
+                    from datetime import datetime
+                    toc = 0
+                    delts = []
+                    try:
+                        cr.establish(context=context)
+                        while True:
+                            tic = datetime.utcnow()
+                            if toc:
+                                delt = tic - toc
+                                delts.append(delt.seconds*1e6+delt.microseconds)
+                                x = tic.strftime('%M:%S.%f')
+                                log.debug(f'Prep send @ {x}, since last wait ended {delt.seconds}.{delt.microseconds:06}s')
+
+                            x = q.recv()
+                            if x == b'':
+                                toc = datetime.utcnow()
+                                cr.finish()
+                                break
+                            photons = np.frombuffer(x, dtype=photon_maxi.PHOTON_PACKED_DTYPE)
+                            toc = datetime.utcnow()
+
+                            cr.send_data(unpack_photons(photons) if unpack else photons, copy=False, compress=True)
+                    except Exception as e:
+                        cr.abort(f'Uncaught exception in photon sender: {e}')
+                        raise e
+                    finally:
+                        cr.destablish()
+                    log.info(f'Sending done. Time between send waits: {delts} us')
+
+            cr.destablish()
+            sender = threading.Thread(target=photon_sender, args=(cr,), name='Photon Sender')
+
+            try:
+                sender.start()
+                fountain.start()
+                time.sleep(.2)
+                photon_maxi.capture(buffer_time_ms=cr.nsamp)
+                while not cr.completed:
+                    check_zmq_abort_pipe(pipe)
+            except AbortedException as e:
+                getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
+                stop.set()
             except Exception as e:
-                cr.abort(f'Uncaught exception in photon sender: {e}')
-                raise e
+                getLogger(__name__).error(f'Terminating {cr} due to {e}')
+                stop.set()
             finally:
-                cr.destablish()
-                q.close()
-            log.info(f'Sending done. Time between send waits: {delts} us')
+                self._ol.trigger_system.photon_maxi_0.stop_capture()
+                fountain.join()
+                sender.join()
+                getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
+                del cr
 
-        cr.destablish()
-        sender = threading.Thread(target=photon_sender, args=(q, cr), name='Photon Sender')
+    def postage_cap(self, pipe_name: str, cr: CaptureRequest, context: zmq.Context = None):
 
-        try:
-            sender.start()
-            fountain.start()
-            time.sleep(.2)
-            photon_maxi.capture(buffer_time_ms=cr.nsamp)
-            while not cr.completed:
-                check_zmq_abort_pipe(pipe)
-        except AbortedException as e:
-            getLogger(__name__).error(f'Aborting photon capture {cr} due user request.')
-            stop.set()
-        except Exception as e:
-            getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            stop.set()
-        finally:
-            self._ol.trigger_system.photon_maxi_0.stop_capture()
-            fountain.join()
-            sender.join()
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
-            if isinstance(q, zmq.Socket):
-                q.close()
-                q_other.close()
+        context = context or zmq.Context.instance()
+        with context.socket(zmq.PAIR) as pipe:
+            pipe.linger = 0
+            pipe.hwm = 1
+            pipe.connect(pipe_name)
 
-    def postage_cap(self, pipe: zmq.Socket, cr: CaptureRequest, context: zmq.Context = None):
-        failmsg = ''
-        postage_filt = self._ol.trigger_system.postage_filter_0
-        postage_maxi = self._ol.trigger_system.postage_maxi_0
-        try:
-            assert cr.type == 'postage', 'Incorrect capture request type'
-            assert postage_maxi.register_map.CTRL.AP_IDLE == 1, 'Postage MAXI is busy'
-        except AssertionError as e:
-            failmsg = str(e)
+            failmsg = ''
+            postage_filt = self._ol.trigger_system.postage_filter_0
+            postage_maxi = self._ol.trigger_system.postage_maxi_0
+            try:
+                assert cr.type == 'postage', 'Incorrect capture request type'
+                assert postage_maxi.register_map.CTRL.AP_IDLE == 1, 'Postage MAXI is busy'
+            except AssertionError as e:
+                failmsg = str(e)
 
-        try:
-            cr.establish(context=context)
-        except zmq.ZMQError as e:
-            failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
+            try:
+                cr.establish(context=context)
+            except zmq.ZMQError as e:
+                failmsg = f"Unable to establish capture {cr.id} due to {e}, dropping request."
 
-        if failmsg:
-            getLogger(__name__).error(failmsg)
-            cr.fail(failmsg, raise_exception=False)
-            return
+            if failmsg:
+                getLogger(__name__).error(failmsg)
+                cr.fail(failmsg, raise_exception=False)
+                return
 
-        try:
-            postage_filt.configure(monitor_channels=cr.channels)
-            _, postdone = ThreadedPLInterruptManager.get_monitor(postage_maxi, id='frs_postage_cap')
-            postdone.clear()
-            postage_maxi.capture(max_events=cr.nsamp, wait=False)
+            try:
+                postage_filt.configure(monitor_channels=cr.channels)
+                _, postdone = ThreadedPLInterruptManager.get_monitor(postage_maxi, id='frs_postage_cap')
+                postdone.clear()
+                postage_maxi.capture(max_events=cr.nsamp, wait=False)
 
-            while not postdone.is_set():
-                check_zmq_abort_pipe(pipe)
-                time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
-            cr.send_data(postage_maxi.get_postage(rawbuffer=True), copy=False, compress=True)
-            cr.finish()
-        except AbortedException as e:
-            cr.abort(e, raise_exception=False)
-        except Exception as e:
-            getLogger(__name__).error(f'Terminating {cr} due to {e}')
-            cr.fail(f'Failed due to {e}', raise_exception=False)
-        finally:
-            getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
-            del cr
+                while not postdone.is_set():
+                    check_zmq_abort_pipe(pipe)
+                    time.sleep(min(postage_maxi.MAX_CAPTURE_TIME_S / 10, .1))
+                cr.send_data(postage_maxi.get_postage(rawbuffer=True), copy=False, compress=True)
+                cr.finish()
+            except AbortedException as e:
+                cr.abort(e, raise_exception=False)
+            except Exception as e:
+                getLogger(__name__).error(f'Terminating {cr} due to {e}')
+                cr.fail(f'Failed due to {e}', raise_exception=False)
+            finally:
+                getLogger(__name__).debug(f'Deleting {cr} as all work is complete')
+                del cr

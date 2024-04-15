@@ -348,7 +348,7 @@ class PhotonMAXI(DefaultIP):
     def stop_capture(self):
         self.register_map.CTRL.AUTO_RESTART = 0
 
-    def photon_fountain(self, q: (zmq.Socket, queue.SimpleQueue), kill=None, copy_buffer=False, spawn=True,
+    def photon_fountain(self, q: str | queue.Queue, kill=None, copy_buffer=False, spawn=True,
                         discard_initial=3):
         """
         Is both the target for and can spawn a thread of the same
@@ -377,6 +377,16 @@ class PhotonMAXI(DefaultIP):
         assert isinstance(kill, threading.Event)
 
         log = getLogger(__name__)
+
+        if isinstance(q, str):
+            q_name = q
+            ctx = zmq.Context.instance()
+            q = ctx.socket(zmq.PAIR)
+            # hang around for 300 ms on the off chance the listener is grabbing the last batch of photons
+            #  zmq default is 30000 which is excessive
+            q.linger = 300
+            q.connect(q_name)
+
         sender = q.put if hasattr(q, 'put') else lambda x: q.send(x, copy=False)
 
         _, int_event = ThreadedPLInterruptManager.get_monitor(self._interrupts['interrupt']['fullpath'])
@@ -407,6 +417,9 @@ class PhotonMAXI(DefaultIP):
 
         ThreadedPLInterruptManager.remove_monitor(int_event)
         sender(b'')
+
+        if not isinstance(q, queue.Queue):
+            q.close()
 
     @property
     def buffer_count_interval(self):

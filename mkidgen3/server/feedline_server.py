@@ -7,27 +7,31 @@ from logging import getLogger
 from mkidgen3.server.captures import CaptureRequest
 from mkidgen3.server.feedline_config import RFDCConfig
 from mkidgen3.server.fpga_objects import FeedlineHardware, DEFAULT_BIT_FILE
-from mkidgen3.server.misc import zpipe
 from mkidgen3.util import check_active_jupyter_notebook
+import mkidgen3.server.captures
 import asyncio
 import zmq
 import threading
 from mkidgen3.util import setup_logging
 from datetime import datetime
 import argparse
+import uuid
 
 COMMAND_LIST = ('reset', 'capture', 'bequiet', 'status')
 
 
 class TapThread:
     def __init__(self, target, cr:CaptureRequest):
-        context = zmq.Context().instance()
-        a, b = zpipe(context)
-        t = threading.Thread(target=target, name=f"TapThread: {cr.tap}:{cr.id}", args=(b, cr), kwargs=dict(context=context))
+        context = zmq.Context.instance()
+        a = context.socket(zmq.PAIR)
+        a.linger = 0
+        a.hwm = 1
+        iface = "inproc://%s" % uuid.uuid4().hex
+        a.bind(iface)
+        t = threading.Thread(target=target, name=f"TapThread: {cr.tap}:{cr.id}", args=(iface, cr), kwargs=dict(context=context))
         self.thread = t
         self.request = cr
         self._pipe = a
-        self._other_pipe = b
         t.start()
 
     def __repr__(self):
@@ -46,7 +50,6 @@ class TapThread:
     def __del__(self):
         try:
             self._pipe.close()
-            self._other_pipe.close()
         except zmq.error.ContextTerminated:
             pass
 
@@ -125,9 +128,15 @@ class FeedlineReadoutServer:
             getLogger(__name__).info(f'Capture request {id} is unknown and cannot be aborted.')
 
     def create_capture_handler(self, start=True, daemon=False, context: zmq.Context = None):
-        self._cap_pipe, self._cap_pipe_thread = zpipe(context or zmq.Context.instance())
-
-        thread = threading.Thread(name='FRS CR Handler', target=self._main, args=(self._cap_pipe_thread,),
+        """Only one capture handler may exist at a time!"""
+        if self._cap_pipe:
+            raise RuntimeError('A capture handeler appears to already be running.')
+        ctx = context or zmq.Context.instance()
+        self._cap_pipe = ctx.socket(zmq.PAIR)
+        self._cap_pipe.linger = 0
+        self._cap_pipe.hwm = 1
+        self._cap_pipe.bind("inproc://frs_cr_handler.inproc")
+        thread = threading.Thread(name='FRS CR Handler', target=self._main,
                                   kwargs={'context': context}, daemon=daemon)
         if start:
             thread.start()
@@ -138,12 +147,7 @@ class FeedlineReadoutServer:
         if self._cap_pipe:
             self._cap_pipe.send_pyobj(('exit', None))
             self._cap_pipe.close()
-
-    def __del__(self):
-        try:
-            self._cap_pipe_thread.close()
-        except:
-            pass
+            self._cap_pipe = None
 
     def abort_all(self):
         if self._cap_pipe:
@@ -177,7 +181,7 @@ class FeedlineReadoutServer:
 
         return effective_changed
 
-    def _main(self, pipe: zmq.Socket, context: zmq.Context = None):
+    def _main(self, context: zmq.Context = None):
         """
         Enqueue a list of capture requests for future handling. Invalid requests are dealt with immediately and not
         enqueued.
@@ -189,115 +193,119 @@ class FeedlineReadoutServer:
         Returns: None
 
         """
-        context = context or zmq.Context().instance()
+        context = context or zmq.Context.instance()
 
-        #THIS LOOP SEEMS TO ACTUALLY be getting used ONLY to be deleted with the pynq.UIO reader deletion
-        #when the threaded interrupt manager starts stuff up and nixes pynqs reader
+        # THIS LOOP SEEMS TO ACTUALLY be getting used ONLY to be deleted with the pynq.UIO reader deletion
+        # when the threaded interrupt manager starts stuff up and nixes pynqs reader
         # (that apparently exists in this thread)
         try:
             aio_eloop = asyncio.get_running_loop()
+            close_loop = False
         except RuntimeError:
+            close_loop = True
             aio_eloop = asyncio.new_event_loop()
-            getLogger(__name__).warning('Creating but not starting a thread that really should be axed and '
-                                        'optimized away')
-            t=threading.Thread(daemon=True, target=aio_eloop.run_forever, name='plramcap_eloop')
+            asyncio.set_event_loop(aio_eloop)
 
-        asyncio.set_event_loop(aio_eloop)
+        with context.socket(zmq.PAIR) as pipe:
+            getLogger(__name__).info('Main thread starting, listening on inproc://frs_cr_handler.inproc')
+            pipe.linger = 0
+            pipe.hwm = 1
+            pipe.connect("inproc://frs_cr_handler.inproc")
 
-        getLogger(__name__).info('Main thread starting')
-        while True:
+            while True:
 
-            effective_changed = self._cleanup_completed()
+                effective_changed = self._cleanup_completed()
 
-            running_by_id = {tt.request.id: tt for tt in self._tap_threads.values() if tt is not None}
+                running_by_id = {tt.request.id: tt for tt in self._tap_threads.values() if tt is not None}
 
-            cr = None  # CR is the capture request that will be ckicked off this iteration of the loop
-            # check for any incoming info: CapRequest, ABORT id|all, EXIT
-            cmd, data = '', ''
-            try:
-                cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
-            except zmq.ZMQError as e:
-                if e.errno != zmq.EAGAIN:
-                    self._abort_all(reason='Keyboard interrupt')
-                    if e.errno == zmq.ETERM:
-                        break
-                    else:
-                        raise e  # real error
-
-            if cmd not in ('exit', 'abort', 'capture', ''):
-                getLogger(__name__).error(f'Received invalid command "{cmd}"')
+                cr = None  # CR is the capture request that will be ckicked off this iteration of the loop
+                # check for any incoming info: CapRequest, ABORT id|all, EXIT
                 cmd, data = '', ''
-
-            if cmd == 'exit':
-                self._abort_all(join=True)
-                break
-            elif cmd == 'abort':
-                if data == 'all':
-                    self._abort_all(join=True)
-                else:
-                    self._abort_by_id(data)
-            elif cmd == 'capture':
-                self.hardware.config_manager.learn(data.feedline_config)
-                unknown = self.hardware.config_manager.unlearned_hashes(data.feedline_config)
-                if unknown:  # We've never been sent the full config necessary
-                    try:
-                        data.establish()
-                        #TODO this code seems to imply json "{'resp': 'ERROR', 'data': unknown}"
-                        data.fail(f'ERROR: Full FeedlineConfig never sent: {unknown}')
-                    except zmq.ZMQError as e:
-                        getLogger(__name__).error(f'Unable to fail request with hashed config due to {e}. '
-                                                  f'Silently dropping request {data.id}')
-                elif (not self._to_check and self._tap_threads[data.type] is None and
-                      self.hardware.config_compatible_with(data.feedline_config)):
-                    cr = data  # this can be run and nothing else, so it will be done below
-                else:
-                    q = self._to_check if self._to_check else self._checked
-                    try:
-                        data.set_status('queued', f'Queued', destablish=True)
-                        q.append(data)
-                    except zmq.ZMQError as e:
-                        getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
-                                                  f' {data.id}')
-
-                # cant be run because there might be something more important (we check anyway),
-                # the tap is in use (we check when the tap finishes)
-                # settings aren't compatible (we will check when something finishes)
-
-            if not cr:
                 try:
-                    cr = self._to_check.pop(0)
-                except IndexError:
-                    continue
+                    cmd, data = pipe.recv_pyobj(zmq.NOBLOCK)
+                except zmq.ZMQError as e:
+                    if e.errno != zmq.EAGAIN:
+                        self._abort_all(reason='Keyboard interrupt')
+                        if e.errno == zmq.ETERM:
+                            break
+                        else:
+                            raise e  # real error
 
-            assert isinstance(cr, CaptureRequest)
+                if cmd not in ('exit', 'abort', 'capture', ''):
+                    getLogger(__name__).error(f'Received invalid command "{cmd}"')
+                    cmd, data = '', ''
 
-            try:
-                if self._tap_threads[cr.type] is not None:
-                    cr.set_status('queued', f'tap location in use by: {self._tap_threads[cr.type].request.id}')
-                    self._checked.append(cr)
-                    continue
-                else:
-                    if not self.hardware.config_compatible_with(cr.feedline_config):
-                        cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
+                if cmd == 'exit':
+                    self._abort_all(join=True)
+                    break
+                elif cmd == 'abort':
+                    if data == 'all':
+                        self._abort_all(join=True)
+                    else:
+                        self._abort_by_id(data)
+                elif cmd == 'capture':
+                    self.hardware.config_manager.learn(data.feedline_config)
+                    unknown = self.hardware.config_manager.unlearned_hashes(data.feedline_config)
+                    if unknown:  # We've never been sent the full config necessary
+                        try:
+                            data.establish()
+                            #TODO this code seems to imply json "{'resp': 'ERROR', 'data': unknown}"
+                            data.fail(f'ERROR: Full FeedlineConfig never sent: {unknown}')
+                        except zmq.ZMQError as e:
+                            getLogger(__name__).error(f'Unable to fail request with hashed config due to {e}. '
+                                                      f'Silently dropping request {data.id}')
+                    elif (not self._to_check and self._tap_threads[data.type] is None and
+                          self.hardware.config_compatible_with(data.feedline_config)):
+                        cr = data  # this can be run and nothing else, so it will be done below
+                    else:
+                        q = self._to_check if self._to_check else self._checked
+                        try:
+                            data.set_status('queued', f'Queued', destablish=True)
+                            q.append(data)
+                        except zmq.ZMQError as e:
+                            getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
+                                                      f' {data.id}')
+
+                    # cant be run because there might be something more important (we check anyway),
+                    # the tap is in use (we check when the tap finishes)
+                    # settings aren't compatible (we will check when something finishes)
+
+                if not cr:
+                    try:
+                        cr = self._to_check.pop(0)
+                    except IndexError:
+                        continue
+
+                assert isinstance(cr, CaptureRequest)
+
+                try:
+                    if self._tap_threads[cr.type] is not None:
+                        cr.set_status('queued', f'tap location in use by: {self._tap_threads[cr.type].request.id}')
                         self._checked.append(cr)
                         continue
-            except zmq.ZMQError as e:
-                getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
-                continue
+                    else:
+                        if not self.hardware.config_compatible_with(cr.feedline_config):
+                            cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
+                            self._checked.append(cr)
+                            continue
+                except zmq.ZMQError as e:
+                    getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
+                    continue
 
-            cr.destablish()  # ensure nothing lingers from any status messages
+                cr.destablish()  # ensure nothing lingers from any status messages
 
-            try:
-                self.hardware.apply_config(cr.id, cr.feedline_config)
-            except Exception as e:
-                self.hardware.derequire_config(id)  # Not  necessary as we are dying, but let's die in a clean house
-                getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
-                self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False, also=cr)
-                break
+                try:
+                    self.hardware.apply_config(cr.id, cr.feedline_config)
+                except Exception as e:
+                    self.hardware.derequire_config(id)  # Not  necessary as we are dying, but let's die in a clean house
+                    getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
+                    self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False, also=cr)
+                    break
 
-            self.start_tap_thread(cr)
+                self.start_tap_thread(cr)
 
-        aio_eloop.close()
+            if close_loop:
+                aio_eloop.close()
         getLogger(__name__).info('Capture thread exiting')
 
     def start_tap_thread(self, cr):
