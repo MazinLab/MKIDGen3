@@ -237,6 +237,7 @@ class CaptureRequest:
         self._send_status('established')
 
     def destablish(self):
+        log = False
         if self._status_socket is not None:
             log = True
             getLogger(__name__).debug(f'de-establishing status...')
