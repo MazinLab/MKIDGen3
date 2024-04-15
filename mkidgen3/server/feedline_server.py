@@ -349,23 +349,23 @@ def parse_cl():
     return parser.parse_args()
 
 
-def start_zmq_devices(cap_addr, stat_addr):
-    from zmq.devices import ThreadDevice, ProcessDevice
+def start_zmq_devices(cap_addr, stat_addr, use_process=False):
+    from zmq.devices import ProcessProxy, ThreadProxy
 
-    use_process = False
     if use_process:
-        cap_addr_internal = "tcp://localhost:11337"
-        stat_addr_internal = "tcp://localhost:11338"
+        # don't use localhost, see https://stackoverflow.com/questions/6024003/why-doesnt-zeromq-work-on-localhost
+        cap_addr_internal = "tcp://127.0.0.1:11337"
+        stat_addr_internal = "tcp://127.0.0.1:11338"
         mkidgen3.server.captures.DATA_ENDPOINT = cap_addr_internal
         mkidgen3.server.captures.STATUS_ENDPOINT = stat_addr_internal
-        TheDevice = ProcessDevice
+        TheDevice = ProcessProxy
     else:
-        TheDevice = ThreadDevice
+        TheDevice = ThreadProxy
         cap_addr_internal = mkidgen3.server.captures.DATA_ENDPOINT
         stat_addr_internal = mkidgen3.server.captures.STATUS_ENDPOINT
 
     # Set up a proxy for routing all the capture requests
-    dtd = TheDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    dtd = TheDevice(zmq.XSUB, zmq.XPUB)
     dtd.setsockopt_in(zmq.LINGER, 0)
     dtd.setsockopt_out(zmq.LINGER, 0)
     dtd.bind_in(cap_addr_internal)
@@ -374,7 +374,7 @@ def start_zmq_devices(cap_addr, stat_addr):
     dtd.start()
     getLogger(__name__).info(f'Publishing capture data to {cap_addr} from relay @ {cap_addr_internal}')
 
-    std = TheDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    std = TheDevice(zmq.XSUB, zmq.XPUB)
     std.setsockopt_in(zmq.LINGER, 0)
     std.setsockopt_out(zmq.LINGER, 0)
     std.bind_in(stat_addr_internal)
@@ -408,7 +408,7 @@ if __name__ == '__main__':
     # Set up proxies for routing all the capture data and status
     cap_addr = f'tcp://*:{args.capture_port}'
     stat_addr = f'tcp://*:{args.status_port}'
-    start_zmq_devices(cap_addr, stat_addr)
+    start_zmq_devices(cap_addr, stat_addr, use_process=True)
 
     # Set up a command port
     command_port = args.port

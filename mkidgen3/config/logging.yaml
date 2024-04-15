@@ -32,5 +32,5 @@ formatters:
   brieffmt:
     format: '%(message)s'
   default:
-    format: '%(asctime)s %(name)s:%(levelname)-8s (%(threadName)s) %(message)s'
+    format: '%(asctime)s.%(msecs)03d %(name)s:%(levelname)-8s (%(threadName)s) %(message)s'
     datefmt: '%H:%M:%S'
