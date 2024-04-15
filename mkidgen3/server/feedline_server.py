@@ -342,12 +342,22 @@ def parse_cl():
 
 
 def start_zmq_devices(cap_addr, stat_addr):
-    from zmq.devices import ThreadDevice
+    from zmq.devices import ThreadDevice, ProcessDevice
 
-    cap_addr_internal = 'inproc://cap_data.xsub'
-    stat_addr_internal = 'inproc://cap_stat.xsub'
+    use_process = False
+    if use_process:
+        cap_addr_internal = "tcp://localhost:11337"
+        stat_addr_internal = "tcp://localhost:11338"
+        mkidgen3.server.captures.DATA_ENDPOINT = cap_addr_internal
+        mkidgen3.server.captures.STATUS_ENDPOINT = stat_addr_internal
+        TheDevice = ProcessDevice
+    else:
+        TheDevice = ThreadDevice
+        cap_addr_internal = mkidgen3.server.captures.DATA_ENDPOINT
+        stat_addr_internal = mkidgen3.server.captures.STATUS_ENDPOINT
+
     # Set up a proxy for routing all the capture requests
-    dtd = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    dtd = TheDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
     dtd.setsockopt_in(zmq.LINGER, 0)
     dtd.setsockopt_out(zmq.LINGER, 0)
     dtd.bind_in(cap_addr_internal)
@@ -356,7 +366,7 @@ def start_zmq_devices(cap_addr, stat_addr):
     dtd.start()
     getLogger(__name__).info(f'Publishing capture data to {cap_addr} from relay @ {cap_addr_internal}')
 
-    std = ThreadDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
+    std = TheDevice(zmq.QUEUE, zmq.XSUB, zmq.XPUB)
     std.setsockopt_in(zmq.LINGER, 0)
     std.setsockopt_out(zmq.LINGER, 0)
     std.bind_in(stat_addr_internal)
