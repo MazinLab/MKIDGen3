@@ -9,12 +9,12 @@
     </envs>
     <option name="SDK_HOME" value="" />
     <option name="SDK_NAME" value="GodofLight 3.10.13" />
-    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/arraysetup" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/scripts/arraysetup" />
     <option name="IS_MODULE_SDK" value="false" />
     <option name="ADD_CONTENT_ROOTS" value="false" />
     <option name="ADD_SOURCE_ROOTS" value="false" />
     <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
-    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/arraysetup/sweep_test.py" />
+    <option name="SCRIPT_NAME" value="$PROJECT_DIR$/scripts/arraysetup/sweep_test.py" />
     <option name="PARAMETERS" value="" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
