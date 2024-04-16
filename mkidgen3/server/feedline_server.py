@@ -452,14 +452,16 @@ if __name__ == '__main__':
             fr.terminate_capture_handler()
             break
         except pickle.UnpicklingError:
-            socket.send_pyobj('ERROR: Ignoring unpicklable command')
+            socket.send_pyobj({'resp': 'ERROR', 'code': 1, 'data': 'Unable to unpickle command.'})
             getLogger(__name__).error(f'Ignoring unpicklable command')
             continue
         else:
             if not thread.is_alive():
                 getLogger(__name__).critical(f'Capture thread has died prematurely. All existing captures will '
                                              f'never complete. Exiting.')
-                socket.send_pyobj('ERROR')
+                socket.send_pyobj({'resp': 'ERROR', 'code': 2,
+                                   'data': 'Capture thread has died prematurely. '
+                                           'All existing captures will never complete. Exiting.'})
                 break
 
         getLogger(__name__).debug(f'Received command "{cmd}" with args {arg}')
@@ -477,15 +479,15 @@ if __name__ == '__main__':
             except Exception as e:
                 status = {'hardware': str(e)}
             status['id'] = f'FRS {args.fl_id} @ {args.port}/{args.cap_port}'
-            socket.send_pyobj(status)
+            socket.send_pyobj({'resp': 'OK', 'code': 0, 'data':status})
 
         elif cmd == 'bequiet':
             fr.abort_all()
             try:
                 fr.hardware.bequiet(**arg)  # This might take a while and fail
-                socket.send_pyobj('OK')
+                socket.send_pyobj({'resp': 'OK', 'code': 0})
             except Exception as e:
-                socket.send_pyobj(f'ERROR: {e}')
+                socket.send_pyobj({'resp': 'ERROR', 'code': 2, 'data': str(e)})
 
         elif cmd == 'capture':
             getLogger(__name__).debug(f'Forwarding {arg.id} to FRS CR Handler...')
@@ -498,7 +500,7 @@ if __name__ == '__main__':
             socket.send_pyobj({'resp': 'OK', 'code': 0})
 
         else:
-            socket.send_pyobj({'resp': 'ERROR', 'code': 0})
+            socket.send_pyobj({'resp': 'ERROR', 'code': 1, 'data': f'Unknown command'})
 
     thread.join()
     socket.close()
