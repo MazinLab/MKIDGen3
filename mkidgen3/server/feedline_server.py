@@ -167,9 +167,11 @@ class FeedlineReadoutServer:
         complete = [k for k, t in self._tap_threads.items() if t is not None and not t.thread.is_alive()]
         # for each finished capture thread remove its settings from the requirements pot and cleanup
 
+        moved = 0
         if bool(complete):  # need to check up to the size of the queue if anything finished
             # if the effective settings didn't change on completion we don't need to recheck stuff
             #  ignore this optimization for now
+            moved = len(self._checked)
             self._to_check.extend(self._checked)
             self._checked = []
 
@@ -178,6 +180,11 @@ class FeedlineReadoutServer:
             effective_changed |= self.hardware.derequire_config(self._tap_threads[k].request.id)
             del self._tap_threads[k]
             self._tap_threads[k] = None
+
+        if complete:
+            move = f', moved {moved} requests from _checked to _to_check' if moved else ''
+            effective = ' The required effective config changed.' if effective_changed else ''
+            getLogger(__name__).debug(f'Capture threads ({len(complete)}) finished{move}.{effective}')
 
         return effective_changed
 
@@ -236,31 +243,36 @@ class FeedlineReadoutServer:
                     cmd, data = '', ''
 
                 if cmd == 'exit':
+                    getLogger(__name__).info(f'Received exit. Aborting all and shutting down.')
                     self._abort_all(join=True)
                     break
                 elif cmd == 'abort':
+                    getLogger(__name__).info(f'Received abort for {data}, Complying.')
                     if data == 'all':
                         self._abort_all(join=True)
                     else:
                         self._abort_by_id(data)
                 elif cmd == 'capture':
+                    getLogger(__name__).info(f'Received capture {data.id}.')
                     self.hardware.config_manager.learn(data.feedline_config)
                     unknown = self.hardware.config_manager.unlearned_hashes(data.feedline_config)
                     if unknown:  # We've never been sent the full config necessary
+                        getLogger(__name__).warning(f'Received capture {data.id} with unlearned hashes. Failing capture.')
                         try:
                             data.establish()
-                            #TODO this code seems to imply json "{'resp': 'ERROR', 'data': unknown}"
                             data.fail(f'ERROR: Full FeedlineConfig never sent: {unknown}')
                         except zmq.ZMQError as e:
                             getLogger(__name__).error(f'Unable to fail request with hashed config due to {e}. '
                                                       f'Silently dropping request {data.id}')
                     elif (not self._to_check and self._tap_threads[data.type] is None and
                           self.hardware.config_compatible_with(data.feedline_config)):
+                        getLogger(__name__).info(f'Received capture {data.id}, running immediately.')
                         cr = data  # this can be run and nothing else, so it will be done below
                     else:
                         q = self._to_check if self._to_check else self._checked
                         try:
                             data.set_status('queued', f'Queued', destablish=True)
+                            getLogger(__name__).info(f'Received capture {data.id}, enqueued.')
                             q.append(data)
                         except zmq.ZMQError as e:
                             getLogger(__name__).error(f'Unable to update status due to {e}. Silently dropping request'
@@ -279,25 +291,31 @@ class FeedlineReadoutServer:
                 assert isinstance(cr, CaptureRequest)
 
                 try:
+                    # this block doesn't need sleep as it is only hit when one or more captures finish,
+                    # triggering a cycle through all the requests that need to be checked to see if they can now run
                     if self._tap_threads[cr.type] is not None:
-                        cr.set_status('queued', f'tap location in use by: {self._tap_threads[cr.type].request.id}')
+                        cr.set_status('queued',
+                                      f'tap location in use by: {self._tap_threads[cr.type].request.id}')
                         self._checked.append(cr)
                         continue
                     else:
                         if not self.hardware.config_compatible_with(cr.feedline_config):
-                            cr.set_status('queued', f'incompatible with one or more of: {running_by_id.keys()}')
+                            cr.set_status('queued',
+                                          f'incompatible with one or more of: {running_by_id.keys()}')
                             self._checked.append(cr)
                             continue
                 except zmq.ZMQError as e:
+                    cr.fail('Sending status update failed, dropping request', raise_exception=False)
                     getLogger(__name__).error(f'Unable to update status due to {e}. Silently aborting request {cr}.')
                     continue
 
                 cr.destablish()  # ensure nothing lingers from any status messages
 
                 try:
+                    getLogger(__name__).info(f'Applying configuration required by {cr.id}.')
                     self.hardware.apply_config(cr.id, cr.feedline_config)
                 except Exception as e:
-                    self.hardware.derequire_config(id)  # Not  necessary as we are dying, but let's die in a clean house
+                    self.hardware.derequire_config(id)  # Not necessary as we are dying, but let's die in a clean house
                     getLogger(__name__).critical(f'Hardware settings failure: {e}. Aborting all requests and dying.')
                     self._abort_all(reason='Hardware settings failure', raisezmqerror=False, join=False, also=cr)
                     break
@@ -323,7 +341,7 @@ class FeedlineReadoutServer:
                        'postage': self.hardware.postage_cap}
         target = cap_runners[cr.type]
 
-
+        getLogger(__name__).info(f'Starting TapThread for {cr.id} with target {target.__qualname__}.')
         cr.set_status('running', f'Started at UTC {datetime.utcnow()}', destablish=True)
 
         self._tap_threads[cr.type] = TapThread(target, cr)
@@ -423,6 +441,7 @@ if __name__ == '__main__':
 
     while True:
         try:
+            getLogger(__name__).debug(f'Waiting for command...')
             cmd, arg = socket.recv_pyobj()
         except zmq.ZMQError as e:
             getLogger(__name__).error(f'Caught {e}, aborting and shutting down')
@@ -469,7 +488,9 @@ if __name__ == '__main__':
                 socket.send_pyobj(f'ERROR: {e}')
 
         elif cmd == 'capture':
+            getLogger(__name__).debug(f'Forwarding {arg.id} to FRS CR Handler...')
             fr.capture(arg)
+            getLogger(__name__).debug(f'...done.')
             socket.send_pyobj({'resp': 'OK', 'code': 0})
 
         elif cmd == 'abort':
