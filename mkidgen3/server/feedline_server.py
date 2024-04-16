@@ -134,7 +134,7 @@ class FeedlineReadoutServer:
         ctx = context or zmq.Context.instance()
         self._cap_pipe = ctx.socket(zmq.PAIR)
         self._cap_pipe.linger = 0
-        self._cap_pipe.hwm = 1
+        # self._cap_pipe.hwm = 1
         self._cap_pipe.bind("inproc://frs_cr_handler.inproc")
         thread = threading.Thread(name='FRS CR Handler', target=self._main,
                                   kwargs={'context': context}, daemon=daemon)
@@ -216,12 +216,12 @@ class FeedlineReadoutServer:
         with context.socket(zmq.PAIR) as pipe:
             getLogger(__name__).info('Main thread starting, listening on inproc://frs_cr_handler.inproc')
             pipe.linger = 0
-            pipe.hwm = 1
+            # pipe.hwm = 1
             pipe.connect("inproc://frs_cr_handler.inproc")
 
             while True:
 
-                effective_changed = self._cleanup_completed()
+                self._cleanup_completed()
 
                 running_by_id = {tt.request.id: tt for tt in self._tap_threads.values() if tt is not None}
 
@@ -286,6 +286,8 @@ class FeedlineReadoutServer:
                     try:
                         cr = self._to_check.pop(0)
                     except IndexError:
+                        time.sleep(0.010)  # play nice, we don't have any in the queue, stuff is running
+                        # (or nothing to do) so we can afford to catch our breath.
                         continue
 
                 assert isinstance(cr, CaptureRequest)
