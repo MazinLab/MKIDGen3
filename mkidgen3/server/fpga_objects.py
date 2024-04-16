@@ -7,7 +7,7 @@ from pynq import Overlay
 from logging import getLogger
 from mkidgen3.mkidpynq import DummyOverlay
 from mkidgen3.system_parameters import ADC_MAX_INT
-from mkidgen3.drivers.ifboard import IFBoard
+from mkidgen3.equipment_drivers.ifboard import IFBoard
 from mkidgen3.server.feedline_config import (FeedlineConfig, FeedlineConfigManager,
                                              BitstreamConfig, RFDCClockingConfig, RFDCConfig)
 from mkidgen3.server.captures import CaptureRequest

@@ -1,6 +1,6 @@
 import mkidgen3.overlay_helpers
 from mkidgen3.funcs import *
-from mkidgen3.drivers.ifboard import IFBoard
+from mkidgen3.equipment_drivers.ifboard import IFBoard
 from mkidgen3.system_parameters import N_CHANNELS
 
 bitstream='/home/xilinx/bit/cordic_16_15_fir_22_0.bit'

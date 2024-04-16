@@ -1,11 +1,11 @@
 import mkidgen3 as g3
 import numpy as np
-from mkidgen3.drivers.ifboard import IFBoard
+from mkidgen3.equipment_drivers.ifboard import IFBoard
 from logging import getLogger, basicConfig
 import matplotlib.pyplot as plt
 
 #basicConfig()
-#getLogger("mkidgen3.drivers.ifboard").setLevel("DEBUG")
+#getLogger("mkidgen3.equipment_drivers.ifboard").setLevel("DEBUG")
 
 
 bitstream='/home/xilinx/bit/cordic_16_15_fir_22_0.bit'
@@ -46,5 +46,3 @@ plt.plot(np.linspace(-2.048e9,2.048e9,2**19), data2 - data1.max())
 plt.grid(True)
 #plt.xlim([200e6,700e6])
 plt.show()
-
-

@@ -1,11 +1,11 @@
 import mkidgen3 as g3
-from mkidgen3.drivers.ifboard import IFBoard
+from mkidgen3.equipment_drivers.ifboard import IFBoard
 from mkidgen3.funcs import *
 from logging import getLogger, basicConfig
 import matplotlib.pyplot as plt
 
 # basicConfig()
-# getLogger("mkidgen3.drivers.ifboard").setLevel("DEBUG")
+# getLogger("mkidgen3.equipment_drivers.ifboard").setLevel("DEBUG")
 
 # DOWNLOAD OVERLAY
 bitstream = '/home/xilinx/bit/cordic_16_15_fir_22_0.bit'
@@ -108,4 +108,3 @@ for x in range(len(lo_sweep_freqs)):
     iq_vals_centered[x] = get_iq_point()
 
 plot_sweep(lo_sweep_freqs, iq_vals_centered/2**15)
-
