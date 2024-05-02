@@ -272,7 +272,7 @@ class Sweep(AbstractSweep):
             raise ValueError(
                 "Neither the current equalized gain, nor the original gain is known"
             )
-        applied_gain = current_gain - refered_gain
+        applied_gain = refered_gain - current_gain
         return self.__class__(
             iq=apply_gain(self.iq, applied_gain),
             iqsigma=apply_gain(self.iqsigma, applied_gain),
