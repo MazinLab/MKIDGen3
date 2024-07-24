@@ -252,17 +252,17 @@ class Sweep(AbstractSweep):
         ax.set_ylabel("S21 (Magnitude)" if not power else "S21 (Power [dB])")
         ax.set_xlabel("Frequency (MHz)")
 
-    def plot_loops(self, ax, channels: Optional[slice] = None, newtones: Optional[list[float] | nt.NDArray[np.float64]] = None):
+    def plot_loops(self, ax, channels: Optional[slice] = None, newtones: Optional[list[float] | nt.NDArray[np.float64]] = None, **kwargs):
         if channels is None:
             channels = slice(0, self.iq.shape[0])
         for i in range(self.iq[channels, :].shape[0]):
-            ax.plot(self.iq[channels][i].real, self.iq[channels][i].imag, "-o")
+            ax.plot(self.iq[channels][i].real, self.iq[channels][i].imag, "-o", **kwargs)
         if newtones is not None:
             newtones = np.array(newtones)
             freqs = self.frequencies - self.config.lo_center * 1e6
             for i, t in enumerate(newtones[channels]):
                 v = np.argmin(np.abs(freqs[channels][i] - t))
-                ax.scatter(self.iq[channels][i][v].real, self.iq[channels][i][v].imag, c='k', zorder=len(newtones) + 1, s = 5)
+                ax.scatter(self.iq[channels][i][v].real, self.iq[channels][i][v].imag, marker="*", c='r', zorder=len(newtones) + 1, s = 24)
         ax.set_aspect("equal")
         ax.set_xlabel("I")
         ax.set_ylabel("Q")
