@@ -73,7 +73,7 @@ class SimpleFreqlistWaveform(Waveform):
         else:
             self.amps = np.asarray(amplitudes)
         if phases is None:
-            self.phases = np.zeros_like(self.freqs)
+            self.phases = np.random.random(self.freqs.size)*2*np.pi
         else:
             self.phases = np.asarray(phases)
         self.n_samples = n_samples
@@ -81,15 +81,18 @@ class SimpleFreqlistWaveform(Waveform):
         self.allow_sat = allow_sat
 
     @property
-    def quant_freq(self):
+    def quant_freqs(self):
         return self.freqs
 
     @property
     def _values(self):
-        times = np.arange(0, self.n_samples) / self.sample_rate
-        data = np.zeros_like(times, dtype=np.complex64)
+        fft_freqs = np.fft.fftfreq(self.n_samples, 1 / self.sample_rate)
+        fft = np.zeros_like(fft_freqs, dtype=np.complex128)
         for i, f in enumerate(self.freqs):
-            data += self.amps[i] * np.exp(2j * np.pi * f * times + 1j * self.phases[i])
+            idx = np.argmin(np.abs(fft_freqs - f))
+            fft[idx] += self.amps[i] * np.exp(1.j * self.phases[i]) * self.n_samples
+        data = np.fft.ifft(fft)
+
         if self.allow_sat:
             data.real = np.clip(data.real, -1, 1)
             data.imag = np.clip(data.imag, -1, 1)
@@ -103,7 +106,7 @@ class SimpleFreqlistWaveform(Waveform):
                         np.max(data.imag),
                     )
                 )
-        return data * ((1 << 15) - 1)
+        return data * ((1 << 15) - 6)
 
 
 class FreqlistWaveform(Waveform):

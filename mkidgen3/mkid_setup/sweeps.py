@@ -186,8 +186,8 @@ class CombSweepConfig(SweepConfig):
             steps, waveform, lo_center, average, attens, overlap=overlap
         )
 
-    def run_sweep(self, ifboard, capture) -> "CombSweep":
-        s = super().run_sweep(ifboard, capture)
+    def run_sweep(self, ifboard, capture, progress=True) -> "CombSweep":
+        s = super().run_sweep(ifboard, capture, progress)
         return CombSweep(s.iq, s.iqsigma, self)
 
 
@@ -213,7 +213,7 @@ class Sweep(AbstractSweep):
         ax,
         stacked: bool = False,
         newtones: Optional[list[float] | nt.NDArray[np.float64]] = None,
-        channels: Optional[slice] | None = None,
+        channels: Optional[slice] = None,
         label_tones: bool = False,
         power: bool = True,
         **kwargs,
@@ -222,11 +222,11 @@ class Sweep(AbstractSweep):
             channels = slice(0, self.iq.shape[0])
         for i in range(self.iq[channels, :].shape[0]):
             line = ax.plot(
-                (self.frequencies[i] / 1e6 if not stacked else self.config.steps),
-                np.abs(self.iq[i]) if not power else 20*np.log10(np.abs(self.iq[i])),
+                (self.frequencies[channels][i] / 1e6 if not stacked else self.config.steps),
+                np.abs(self.iq[channels][i]) if not power else 20*np.log10(np.abs(self.iq[channels][i])),
                 label=(
                     "Tone: {:.3f} MHz".format(
-                        self.config.waveform.default_ddc_config.tones[i] / 1e6
+                        self.config.waveform.default_ddc_config.tones[channels][i] / 1e6
                     )
                     if label_tones
                     else None
@@ -236,14 +236,14 @@ class Sweep(AbstractSweep):
             if newtones:
                 if stacked:
                     ax.axvline(
-                        newtones[i] / 1e6
-                        - self.config.waveform.default_ddc_config.tones[i] / 1e6,
+                        newtones[channels][i] / 1e6
+                        - self.config.waveform.default_ddc_config.tones[channels][i] / 1e6,
                         color=line[0].get_color(),
                         linestyle="--",
                     )
                 else:
                     ax.axvline(
-                        newtones[i] / 1e6 + self.config.lo_center,
+                        newtones[channels][i] / 1e6 + self.config.lo_center,
                         color=line[0].get_color(),
                         linestyle="--",
                     )
@@ -254,11 +254,17 @@ class Sweep(AbstractSweep):
         ax.set_ylabel("S21 (Magnitude)" if not power else "S21 (Power [dB])")
         ax.set_xlabel("Frequency (MHz)")
 
-    def plot_loops(self, ax, channels: slice | None = None):
+    def plot_loops(self, ax, channels: Optional[slice] = None, newtones: Optional[list[float] | nt.NDArray[np.float64]] = None):
         if channels is None:
             channels = slice(0, self.iq.shape[0])
         for i in range(self.iq[channels, :].shape[0]):
-            ax.plot(self.iq[i].real, self.iq[i].imag, "-o")
+            ax.plot(self.iq[channels][i].real, self.iq[channels][i].imag, "-o")
+        if newtones is not None:
+            newtones = np.array(newtones)
+            freqs = self.frequencies - self.config.lo_center * 1e6
+            for i, t in enumerate(newtones[channels]):
+                v = np.argmin(np.abs(freqs[channels][i] - t))
+                ax.scatter(self.iq[channels][i][v].real, self.iq[channels][i][v].imag, c='k', zorder=len(newtones) + 1, s = 5)
         ax.set_aspect("equal")
         ax.set_xlabel("I")
         ax.set_ylabel("Q")
@@ -423,6 +429,7 @@ class PowerSweep:
         output_range: Optional[tuple[OutputAtten, OutputAtten]] = None,
         equalize: Optional[AttenRefered] = 0,
         power: bool = True,
+        channels: Optional[slice] = None,
         cmap=None,
     ):
         if cmap is None:
@@ -458,4 +465,4 @@ class PowerSweep:
         smap = cm.ScalarMappable(norm, cmap)
         fig.colorbar(smap, ax=ax, label="Output Attenuation (dB)")
         for output_atten, (_, sweep) in sweeps.items():
-            sweep.plot(ax, color=cmap(norm(output_atten)))
+            sweep.plot(ax, channels = channels, color=cmap(norm(output_atten)))
