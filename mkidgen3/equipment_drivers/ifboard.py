@@ -193,12 +193,11 @@ class IFBoard(SerialDevice):
         # Per Aled/Jenny 150us is the maximum settling time
         time.sleep(.000150)
 
-    def set_lo(self, freq_mhz, fractional: Optional[bool] = None, full_calibration=True, g2_mode=False):
-        if g2_mode:
-            raise DeprecationWarning("No longer implemented")
-        if full_calibration == False:
-            raise DeprecationWarning("To set lo without full calibration obtain a calibration certificate")
-        self.trf_control.set_output(freq_mhz / 2, wait_for_lock=False, fractional = fractional)
+    def set_lo(self, freq, fractional: Optional[bool] = None):
+        if type(freq) is TRFCalibrationCertificate:
+            assert fractional is None
+            self.trf_control.set_output(freq, wait_for_lock=False)
+        self.trf_control.set_output(freq / 2, wait_for_lock=False, fractional = fractional)
 
     def set_attens(self, output_attens: (float, Tuple[float], List[float], None) = None,
                    input_attens: (float, Tuple[float], List[float], None) = None):
@@ -356,9 +355,17 @@ class IFStatus:
 
 # It's ugly but its the best we can reasonably do atm
 class _TRFReg(MetaRegister):
-    def __init__(self, address, rwhandle):
+    cacheacc = 0
+    totalacc = 0
+    readacc = 0
+    readcacc = 0
+    def __init__(self, address, rwhandle, cached=True, nocache=0, readcache=False):
         self.address = address
         self.rwhandle = rwhandle
+        self.cached = cached
+        self.nocache = 0
+        self.cache = None
+        self.readcache = readcache
 
     def __len__(self):
         return 32
@@ -366,10 +373,24 @@ class _TRFReg(MetaRegister):
     def __get__(self, obj, objtype=None):
         if obj is None or ((objtype is not None) and issubclass(objtype, MetaRegister)):
             return self
-        return self.rwhandle[0](self.address)
+        self.readacc += 1
+        if self.readcache and self.cache is not None:
+            self.readcacc += 1
+            return self.cache
+        self.cache = self.rwhandle[0](self.address)
+        return self.cache
 
     def __set__(self, obj, val: int):
+        self.totalacc += 1
+        if self.cache is not None:
+            if self.cache == val and self.cached and not (val & self.nocache):
+                self.cacheacc += 1
+                return
+        self.cache = val
         self.rwhandle[1](self.address, val)
+
+    def invalidate(self):
+        self.cache = None
 
 class TRFPowerDown(IntFlag):
     PLL = auto()
@@ -598,14 +619,16 @@ class TRFCalibrationCertificate:
         return self.divider_config.frequency
 
 class TRF3765:
+    tcal_total = 0.0
+
     def __init__(self, rwhandle, f_ref, outputs = TRFPowerDown.BUFF1):
-        self.r0 = _TRFReg(0, rwhandle)
-        self.r1 = _TRFReg(1, rwhandle)
-        self.r2 = _TRFReg(2, rwhandle)
-        self.r3 = _TRFReg(3, rwhandle)
-        self.r4 = _TRFReg(4, rwhandle)
-        self.r5 = _TRFReg(5, rwhandle)
-        self.r6 = _TRFReg(6, rwhandle)
+        self.r0 = _TRFReg(0, rwhandle, cached=False)
+        self.r1 = _TRFReg(1, rwhandle, readcache=True)
+        self.r2 = _TRFReg(2, rwhandle, nocache=1<<31, readcache=True)
+        self.r3 = _TRFReg(3, rwhandle, readcache=True)
+        self.r4 = _TRFReg(4, rwhandle, readcache=True)
+        self.r5 = _TRFReg(5, rwhandle, readcache=True)
+        self.r6 = _TRFReg(6, rwhandle, readcache=True)
 
         self.__token = int.from_bytes(token_bytes(16), byteorder='big')
         self.f_ref = f_ref
@@ -613,12 +636,16 @@ class TRF3765:
 
     def set_output(self, frequency: float | Fraction | TRFCalibrationCertificate, wait_for_lock: bool = True, fractional: Optional[bool] = None):
         if frequency is TRFCalibrationCertificate:
-            raise ValueError("Currently unimplemented")
+            if frequency.token != self.__token:
+                raise ValueError("Calibration certificate is not for this LO")
+            self.__program_divider(frequency.divider_config)
+            self.vco_sel = frequency.vco_calibration.vco_sel
+            self.vco_trim = frequency.vco_calibration.vco_trim
         else:
             divider_config = TRFDividerConfig.from_target(frequency, self.f_ref)
             self.__program(divider_config, True, True, fractional)     
-            if wait_for_lock:
-                raise ValueError("Currently unimplemented")
+        if wait_for_lock:
+            raise ValueError("Currently unimplemented")
 
     def get_certificate(self) -> TRFCalibrationCertificate:
         return TRFCalibrationCertificate(
@@ -670,9 +697,12 @@ class TRF3765:
             self.__set_fractional_cal(DEFAULT_FRACCAL)
         self.en_frac = fractional
         if calibrate:
+            start_cal = time.time()
             self.en_cal = True
             while self.en_cal:
+                self.r2.invalidate()
                 pass
+            self.tcal_total += time.time() - start_cal
         self.powerdown_parts = (TRFPowerDown.BUFF1 | TRFPowerDown.BUFF2 | TRFPowerDown.BUFF3 | TRFPowerDown.BUFF4) ^ self.outputs
 
     def __set_fractional_cal(self, frac_calibration: TRFFractionalCalibration):
