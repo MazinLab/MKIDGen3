@@ -9,7 +9,6 @@ from typing import Optional, Any
 
 from mkidgen3.server.waveform import SimpleFreqlistWaveform
 from mkidgen3.server.feedline_config import WaveformConfig
-from mkidgen3.mkid_setup.loop_locator import rotate_and_center
 from mkidgen3.mkid_setup.sweeps import (
     SweepConfig,
     PowerSweepConfig,
@@ -119,6 +118,8 @@ class MKIDSetup:
         )
 
         if recenter:
+            from mkidgen3.mkid_setup.loop_locator import rotate_and_center
+
             print("Centering...")
             centeringsweep = SweepConfig.from_bandwidth(
                 bandwidth=0.25e6,
@@ -257,6 +258,8 @@ class MKIDSetup:
         import tqdm.autonotebook as tqdm
         from IPython.display import display
         from jupyter_ui_poll import ui_events
+
+        from mkidgen3.mkid_setup.loop_locator import rotate_and_center
 
         ol, ifb = overlay, ifboard
         spacing = np.fft.fftfreq(1 << 19, 1 / 4.096e9)[1]
