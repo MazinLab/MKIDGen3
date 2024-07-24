@@ -41,9 +41,10 @@ class SweepConfig:
     average: int = 1024
     attens: Optional[tuple[OutputAtten, InputAtten]] = None
     tap: str = "ddciq"
+    rmses: bool = True
 
-    _idle = 0.01
-    _flush = 64
+    _idle = 0.0
+    _flush = 0
 
     @classmethod
     def from_bandwidth(
@@ -70,36 +71,28 @@ class SweepConfig:
     def run_sweep(self, ifboard, capture, progress = True) -> "Sweep":
         tones = self.waveform.waveform.quant_freqs
         iq = np.empty((tones.size, self.steps.size), np.complex64)
-        rms = np.empty((tones.size, self.steps.size), np.complex64)
+        if self.rmses:
+            rms = np.empty((tones.size, self.steps.size), np.complex64)
+        else:
+            rms = None
         if self.attens:
             ifboard.set_attens(
                 input_attens=self.attens[1], output_attens=self.attens[0]
             )
+
+        it = enumerate(self.steps)
         if progress:
-            it = enumerate(self.steps)
             import tqdm.notebook as tqdm
 
-            it = tqdm.tqdm(it, total=len(self.steps), desc="FREQ")
-            for i, step in it:
-                ifboard.set_lo(step + self.lo_center)
-                piq, prms = self._get_iq_point_rms(capture)
-                iq[::, i] = piq[: tones.size]
+        it = tqdm.tqdm(it, total=len(self.steps), desc="FREQ")
+        for i, step in it:
+            ifboard.set_lo(step + self.lo_center)
+            piq, prms = self._get_iq_point_rms(capture)
+            iq[::, i] = piq[: tones.size]
+            if self.rmses:
                 rms[::, i] = prms[: tones.size]
-            ifboard.set_lo(self.lo_center)
-
-        else:
-            for i, step in enumerate(self.steps):
-                ifboard.set_lo(
-                    step + self.lo_center,
-                    fractional=True,
-                    g2_mode=False,
-                    full_calibration=True,
-                )
-                piq, prms = self._get_iq_point_rms(capture)
-                iq[::, i] = piq[: tones.size]
-                rms[::, i] = prms[: tones.size]
-            ifboard.set_lo(self.lo_center, fractional=True, g2_mode=False, full_calibration=True)
-        return Sweep(iq, rms / np.sqrt(self.average), self)
+        ifboard.set_lo(self.lo_center)
+        return Sweep(iq, (rms / np.sqrt(self.average)) if self.rmses else rms, self)
 
     def frequencies(self) -> nt.NDArray[np.float64]:
         tones = self.waveform.waveform.quant_freqs
@@ -117,7 +110,8 @@ class SweepConfig:
         Returns: a single averaged iq data point captured from res channel 0
         """
         tones = self.waveform.waveform.quant_freqs
-        time.sleep(self._idle)
+        if self._idle:
+            time.sleep(self._idle)
         if self._flush:
             x = capture.capture_iq(self._flush, tap_location=self.tap)
             del x
@@ -133,19 +127,23 @@ class SweepConfig:
         del x
 
         means = np.sum(ps_buf, axis=0) / np.float32(self.average)
-        ps_buf -= means.reshape((1, tones.size, 2))
-        ps_buf *= ps_buf
-        rmses = np.sqrt(np.sum(ps_buf, axis=0) / np.float32(self.average))
+        if self.rmses:
+            ps_buf -= means.reshape((1, tones.size, 2))
+            ps_buf *= ps_buf
+            rmses = np.sqrt(np.sum(ps_buf, axis=0) / np.float32(self.average))
 
         if hasattr(self, "verify"):
             means_golden = np.empty((tones.size, 2), dtype=np.float64)
-            rmses_golden = np.empty((tones.size, 2), dtype=np.float64)
             ps_buf_old.mean(axis=0, out=means_golden)
-            ps_buf_old.std(axis=0, out=rmses_golden)
             assert np.allclose(means_golden, means)
-            assert np.allclose(rmses_golden, rmses)
+            if rmses:
+                rmses_golden = np.empty((tones.size, 2), dtype=np.float64)
+                ps_buf_old.std(axis=0, out=rmses_golden)
+                assert np.allclose(rmses_golden, rmses)
 
-        return means[::, 0] + 1j * means[::, 1], rmses[::, 0] + 1j * rmses[::, 1]
+        if self.rmses:
+            return means[::, 0] + 1j * means[::, 1], rmses[::, 0] + 1j * rmses[::, 1]
+        return means[::, 0] + 1j * means[::, 1], None
 
 
 @dataclass
@@ -200,7 +198,7 @@ class AbstractSweep(ABC):
 @dataclass
 class Sweep(AbstractSweep):
     iq: nt.NDArray[np.complex64]
-    iqsigma: nt.NDArray[np.complex64]
+    iqsigma: Optional[nt.NDArray[np.complex64]]
     config: "SweepConfig"
     equalized_gain: Optional[AttenRefered] = None
 

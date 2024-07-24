@@ -29,6 +29,7 @@ def _patch_xrfclk_lmk():
         '256.0_MTS': 'config/LMK04828_256.0_MTS.txt',
         '512.0_MTS': 'config/LMK04828_512.0_MTS.txt',
         '512.0_MTS_dualloop': 'config/LMK04828_512_dualloop.txt',
+        '4096.0_MTS': 'config/LMK04828_512_dualloop.txt',
         '500.0_MTS': 'config/LMK04828_500.0_MTS.txt'
     }
 
@@ -36,6 +37,7 @@ def _patch_xrfclk_lmk():
         '500.0_MTS': 'config/LMX2594_500.0_MTS.txt',
         '512.0_MTS': 'config/LMX2594_512.0_MTS.txt',
         '512.0_MTS_dualloop': 'config/LMX2594_512.0_MTS.txt',
+        '4096.0_MTS': 'config/LMX2594_4096.0.txt',
         '409.6_MTS': 'config/LMX2594_409.6_256FoscMTS.txt'
     }
 
@@ -58,6 +60,7 @@ def configure(programming_key: str | None = None, clock_source: str| None = None
         programming_key: Ignored on the ZCU111.
             '4.096GSPS_MTS' MTS compatible with 4.096 GSPS Sampling Fequency (RFSoC4x2 Only)
             '4.096GSPS_MTS_dualloop'
+            '4.096GSPS_MTS_direct'
             '5.000GSPS_MTS' MTS compatible with 5.000 GSPS Sampling Frequency (RFSoC4x2 Only)
         clock_source: internal | external | None. External pulls LMK clock source from 10 MHz Ref
 
@@ -84,6 +87,8 @@ def configure(programming_key: str | None = None, clock_source: str| None = None
             xrfclk.set_ref_clks(lmk_freq='512.0_MTS', lmx_freq='512.0_MTS')
         if programming_key == '4.096GSPS_MTS_dualloop':
             xrfclk.set_ref_clks(lmk_freq='512.0_MTS_dualloop', lmx_freq='512.0_MTS_dualloop')
+        if programming_key == '4.096GSPS_MTS_direct':
+            xrfclk.set_ref_clks(lmk_freq='4096.0_MTS', lmx_freq='4096.0_MTS')
         elif programming_key == '5.000GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='500.0_MTS', lmx_freq='500.0_MTS')
         else:
