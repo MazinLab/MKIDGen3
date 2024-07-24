@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools >= 61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
 
 [project]
 dynamic = ["version"]
@@ -21,7 +21,7 @@ maintainers = [
   {name = "Aled V. Cuda", email = "aled@ucsb.edu"}
 ]
 
-license = {file = "LICENSE.txt"}
+license = {file = "LICENSE"}
 
 requires-python = ">=3.10"
 dependencies = [
@@ -66,6 +66,3 @@ client = [
 plotting = [
   "matplotlib>=3.5.1"
 ]
-
-[tool.setuptools]
-packages = ["mkidgen3"]
