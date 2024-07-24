@@ -154,6 +154,8 @@ def rotate_and_center(
     ddc_centers = np.zeros(2048, dtype=np.complex64)
 
     iqs, iqrs = sweep.iq, sweep.iqsigma
+    if iqrs is None:
+        iqrs = np.ones_like(iqs)
 
     for t in range(len(targets)):
         i = iqs[t].real
