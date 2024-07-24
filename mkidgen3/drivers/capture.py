@@ -375,7 +375,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         try:
             buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_0,
-                              cacheable=self.USE_CACHEABLE_BUFFERS)
+                              cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -398,6 +398,8 @@ class CaptureHierarchy(DefaultHierarchy):
             if 'duration' not in wait:
                 wait['duration'] = captime
             self.wait(**wait)
+
+        buffer.invalidate()
 
         return buffer
 
@@ -432,7 +434,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         try:
             buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0,
-                              cacheable=self.USE_CACHEABLE_BUFFERS)
+                              cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -455,6 +457,8 @@ class CaptureHierarchy(DefaultHierarchy):
                 wait['duration'] = captime
             self.wait(**wait)
 
+        buffer.invalidate()
+
         if complex:
             d = np.zeros(n, dtype=np.complex64)
             d.real[:] = buffer[:, 0]
@@ -467,7 +471,8 @@ class CaptureHierarchy(DefaultHierarchy):
     def wait(self, duration=0, interrupt=True):
         """Wait for a capture to complete, use interrupt on axis2mm by default, otherwise sleep for duration"""
         if not interrupt:
-            time.sleep(duration)
+            while not self.axis2mm.complete:
+                time.sleep(duration / 5000)
         else:
             _, e = ThreadedPLInterruptManager.get_monitor(self.axis2mm._interrupts['o_int']['fullpath'], id='capheir')
             e.wait()
@@ -501,7 +506,7 @@ class CaptureHierarchy(DefaultHierarchy):
 
         try:
             buffer = allocate((n, n_groups * 16), dtype='i2', target=self.ddr4_0,
-                              cacheable=self.USE_CACHEABLE_BUFFERS)
+                              cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -524,6 +529,8 @@ class CaptureHierarchy(DefaultHierarchy):
             if 'duration' not in wait:
                 wait['duration'] = captime
             self.wait(**wait)
+
+        buffer.invalidate()
 
         return buffer
 
@@ -593,6 +600,10 @@ class _AXIS2MM:
     def ready(self):
         stat = self.cmd_ctrl_reg
         return not stat['r_busy'] and not stat['r_err'] and not stat['aborting']
+
+    @property
+    def complete(self):
+        return True if ((self.read(0) >> 29) & 1) else False
 
     def abort(self):
         #         self.write(0, (self.read(0)^0xff00)|0x2600)
