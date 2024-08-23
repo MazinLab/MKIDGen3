@@ -269,7 +269,6 @@ def plot_opfb_bins(data, bins, fine_fft_shift=True, fft_shift=True, left_snip=0,
     plt.plot(bin_freqs[sl] * 1e-6, spectra[sl])
     plt.xlabel("Frequency (MHz)", position=(0.5, 0.5))
     plt.ylabel("power (dB)", position=(1, 0.5))
-    plt.xlim(-2000, 2000)
     return bin_freqs[sl], spectra[sl]
 
 
