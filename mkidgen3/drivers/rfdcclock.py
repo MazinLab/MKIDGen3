@@ -85,9 +85,9 @@ def configure(programming_key: str | None = None, clock_source: str| None = None
     if board_name == 'RFSoC4x2':
         if programming_key == '4.096GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='512.0_MTS', lmx_freq='512.0_MTS')
-        if programming_key == '4.096GSPS_MTS_dualloop':
+        elif programming_key == '4.096GSPS_MTS_dualloop':
             xrfclk.set_ref_clks(lmk_freq='512.0_MTS_dualloop', lmx_freq='512.0_MTS_dualloop')
-        if programming_key == '4.096GSPS_MTS_direct':
+        elif programming_key == '4.096GSPS_MTS_direct':
             xrfclk.set_ref_clks(lmk_freq='4096.0_MTS', lmx_freq='4096.0_MTS')
         elif programming_key == '5.000GSPS_MTS':
             xrfclk.set_ref_clks(lmk_freq='500.0_MTS', lmx_freq='500.0_MTS')
