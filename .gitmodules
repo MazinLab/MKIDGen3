@@ -1,0 +1,7 @@
+[submodule "arduino/ifduino"]
+	path = arduino/ifduino
+	url = https://www.github.com/mazinlab/if-board.git
+[submodule "firmware"]
+	path = firmware
+	url = https://github.com/MazinLab/gen3-vivado-top
+	branch = 2021.2

@@ -1,6 +1,6 @@
 from logging import getLogger
 import numpy as np
-
+import os
 
 ISGOOD = 0b1
 ISREVIEWED = 0b10
@@ -31,7 +31,7 @@ def parse_lo(lofreq, frequencies=None, sample_rate=2.048e9):
                                                                                          sample_rate / 2))
         raise ValueError('LO out of bounds')
     elif tofar.any():
-        getLogger(__name__).warning('Frequencies more than half a sample rate from the LO')
+        getLogger(__name__).warning('Frequencies more than half a sample rate from the LO exist')
     return lo
 
 
@@ -134,15 +134,15 @@ class SweepFile(object):
         try:
             if d.shape[0] == 11:
                 self.resIDs, self.flag, self.wsfreq, self.mlfreq, self.mlatten, \
-                self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score, self.phases, self.iqRatios = d
+                    self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score, self.phases, self.iqRatios = d
             if d.shape[0] == 9:
                 self.resIDs, self.flag, self.wsfreq, self.mlfreq, self.mlatten, \
-                self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score = d
+                    self.freq, self.atten, self.ml_isgood_score, self.ml_isbad_score = d
                 self.phases = np.full_like(self.resIDs, 0, dtype=float)
                 self.iqRatios = np.full_like(self.resIDs, 1, dtype=float)
             elif d.shape[0] == 7:
                 self.resIDs, self.flag, self.wsfreq, self.mlfreq, self.mlatten, \
-                self.ml_isgood_score, self.ml_isbad_score = d
+                    self.ml_isgood_score, self.ml_isbad_score = d
                 self.freq = self.mlfreq.copy()
                 self.atten = self.mlatten.copy()
                 self.phases = np.full_like(self.resIDs, 0, dtype=float)
@@ -165,7 +165,7 @@ class SweepFile(object):
                 self.ml_isbad_score = np.full_like(self.resIDs, np.nan, dtype=float)
                 self.phases = np.full_like(self.resIDs, 0, dtype=float)
                 self.iqRatios = np.full_like(self.resIDs, 1, dtype=float)
-        except:
+        except IndexError:
             raise ValueError('Unknown number of columns')
 
         self.freq[np.isnan(self.freq)] = self.mlfreq[np.isnan(self.freq)]
@@ -178,3 +178,27 @@ class SweepFile(object):
         self.ml_isbad_score[self.flag & ISBAD] = 1
         self._vet()
 
+
+class PhaseFIRCoeffFile:
+
+    def __init__(self, file):
+        self.file=file
+        self.coeffs=None
+        self._load()
+
+    def _load(self):
+        # grab FIR coeff from file
+        if os.path.splitext(self.file)[1] == ".npz":
+            q
+            # res_ids = npz['res_ids']
+            self.coeffs = npz['filters']
+            # out = np.zeros((len(self.resIDs), filters.shape[1]))
+            # for index, resID in enumerate(self.resIDs):
+            #     if resID not in resIDs:
+            #         raise ValueError("Filter coefficients missing resID {}".format(resID))
+            #     location = (resIDs == resID)
+            #     if location.sum() > 1:
+            #         raise ValueError("Filter coefficients contain more than one reference to resID {}".format(resID))
+            #     firCoeffs[index, :] = filters[location, :]
+        else:
+            self.coeffs = np.loadtxt(self.file)

@@ -1,0 +1,36 @@
+loggers:
+  feedlinereadoutserver:
+    pynq: INFO
+    mkidgen3: DEBUG
+    mkidgen3.drivers.ifboard.io: INFO
+    mkidgen3.drivers.axififo: INFO
+    mkidgen3.server.captures.statusio: INFO
+    mkidgen3.drivers.phasematch: INFO
+    "":
+      handlers: [ default ]
+      level: WARNING
+      propagate: False
+    __main__: DEBUG
+  feedlineclient:
+    pynq: INFO
+    mkidgen3: DEBUG
+    "":
+      handlers: [ default ]
+      level: WARNING
+      propagate: False
+    __main__: DEBUG
+
+version: 1
+disable_existing_loggers: False
+handlers:
+  default:
+    class : logging.StreamHandler
+    formatter: default
+    level   : DEBUG
+    stream  : ext://sys.stdout
+formatters:
+  brieffmt:
+    format: '%(message)s'
+  default:
+    format: '%(asctime)s %(name)s:%(levelname)-8s (%(threadName)s) %(message)s'
+    datefmt: '%H:%M:%S'
