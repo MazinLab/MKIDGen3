@@ -15,11 +15,12 @@ pip install -e '.[client,plotting]'
 ```
 
 ### Build the Bitstream
-See the instructions in [https://github.com/MazinLab/gen3-vivado-top/blob/main/README.md](the firmware repo)
+
+See the instructions in [the firmware repo](https://github.com/MazinLab/gen3-vivado-top/blob/main/README.md).
 
 ### PYNQ setup
 
-Login to the 4x2 and apply the changes described in [https://github.com/MazinLab/MKIDGen3/blob/develop/docs/pynq_deviations.md](the pynq deviations document) to enable multi-tile synchronization, make the PL DDR4 available, and enable the ifboard, then install this package with:
+Login to the 4x2 and apply the changes described in [the pynq deviations document](https://github.com/MazinLab/MKIDGen3/blob/develop/docs/pynq_deviations.md) to enable multi-tile synchronization, make the PL DDR4 available, and enable the ifboard, then install this package with:
 
     cd ~
     mkdir -p ~/src/mkidgen3/
