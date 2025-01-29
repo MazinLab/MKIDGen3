@@ -19,7 +19,9 @@ from mkidgen3.mkid_setup.sweeps import (
 
 def find_maxiq(freqs, iqs, start):
     i = start
-    while np.abs(iqs[i - 1] - iqs[i]) > np.abs(iqs[i + 1] - iqs[i]) or np.abs(iqs[i - 1]) < np.abs(iqs[i]):
+    while np.abs(iqs[i - 1] - iqs[i]) > np.abs(iqs[i + 1] - iqs[i]) or np.abs(
+        iqs[i - 1]
+    ) < np.abs(iqs[i]):
         i -= 1
     return freqs[i]
 
@@ -38,7 +40,21 @@ def agc(ifb, capture, output_atten, target_fraction=0.2, step=1, input_atten=62)
 
 
 def fft_agc(overlay, target_fraction=0.2, caplen=4096):
-    options = [0xFFF, 0xF7F, 0x77F, 0x777, 0x757, 0x755, 0x555, 0x515, 0x115, 0x111, 0x101, 0x001, 0x000]
+    options = [
+        0xFFF,
+        0xF7F,
+        0x77F,
+        0x777,
+        0x757,
+        0x755,
+        0x555,
+        0x515,
+        0x115,
+        0x111,
+        0x101,
+        0x001,
+        0x000,
+    ]
     gpio = overlay.photon_pipe.opfb.fft.axi_gpio_0
     for i in range(1, len(options)):
         gpio.channel1.write(options[i], 0xFFF)
@@ -65,9 +81,12 @@ class IQCapture:
     filename: str
     savetime: float
     captime: tuple[int, int, int]
+    channel_map: Optional[dict[int, int]]
     usermeta: Any
 
     def load_channel(self, base, channel, sl=None):
+        if self.channel_map:
+            channel = self.channel_map[channel]
         f = np.load(base + self.filename)
         if sl:
             return f[sl, channel, 0] + 1.0j * f[sl, channel, 1]
@@ -111,6 +130,8 @@ class MKIDSetup:
             bphase = np.zeros_like(btones)
             bcent = np.zeros_like(btones, dtype=np.complex64)
 
+        print(btones)
+
         ol.dac_table.configure(**waveform.settings_dict())
         ol.photon_pipe.reschan.bin_to_res.configure(**{"bins": bins})
         ol.photon_pipe.reschan.ddccontrol_0.configure(
@@ -126,7 +147,7 @@ class MKIDSetup:
                 points=256,
                 average=1024 * 64,
                 waveform=waveform,
-                lo_center=6000.0,
+                lo_center=self.lo,
                 attens=self.attenuation,
             ).run_sweep(ifboard=ifb, capture=ol.capture)
 
@@ -144,11 +165,14 @@ class MKIDSetup:
                 points=256,
                 average=1024 * 64,
                 waveform=waveform,
-                lo_center=6000.0,
+                lo_center=self.lo,
                 attens=self.attenuation,
             ).run_sweep(ifboard=ifb, capture=ol.capture)
 
-            bin_setting = [BinConfig(bins[i], btones[i], bphase[i], bcent[i]) for i in range(len(bins))]
+            bin_setting = [
+                BinConfig(bins[i], btones[i], bphase[i], bcent[i])
+                for i in range(len(bins))
+            ]
 
             self.bin_settings.append(bin_setting)
             self.centeringsweeps.append(centeringsweep)
@@ -156,16 +180,18 @@ class MKIDSetup:
             self.darks.append([])
             self.lights.append({})
 
-    def take_snap(self, name, overlay, first_sixteen=False, metacallback=lambda: None):
-
+    def take_snap(
+        self, name, overlay, first_sixteen=False, metacallback=lambda: None, groups=None
+    ):
         #           Mib  Kib  b
         memsize = 4 * 1024 * 1024 * 1024
-        sample_size = 16 * 2 * 2 if first_sixteen else 16 * 2 * 2048
+        sample_size = 16 * 2 * 2 if first_sixteen or groups else 16 * 2 * 2048
         count = memsize // (sample_size * 2)
 
-        data = overlay.capture.capture_iq(
-            count, groups=([0, 1] if first_sixteen else None), tap_location="ddciq"
-        )
+        if first_sixteen:
+            groups = [0, 1]
+
+        data = overlay.capture.capture_iq(count, groups=groups, tap_location="ddciq")
         captime = (
             overlay.capture.axis2mm.mmio.read(0b01 << 2),
             overlay.capture.axis2mm.mmio.read(0b10 << 2),
@@ -174,15 +200,30 @@ class MKIDSetup:
         savetime = time.time()
         fn = "{:s}-{:s}-{:f}.npy".format(self.name, name, savetime)
         if first_sixteen:
-            np.save(self.basedir + fn, data[::, : min(16, len(self.waveform.quant_freqs)), ::])
+            np.save(self.basedir + fn, data[::, :16, ::])
         else:
             np.save(self.basedir + fn, data[::, : len(self.waveform.quant_freqs), ::])
         data.freebuffer()
         del data
 
-        return IQCapture(fn, savetime, captime, metacallback()), count / 2e6
+        channel_map = None
+        if groups:
+            channel_map = {}
+            for i in range(16):
+                channel_map[groups[0] * 16 + i] = i
 
-    def take_darks(self, overlay, *, count=None, time=None, first_sixteen=False, metacallback=lambda: None):
+        return IQCapture(fn, savetime, captime, channel_map, metacallback()), count / 2e6
+
+    def take_darks(
+        self,
+        overlay,
+        *,
+        count=None,
+        time=None,
+        first_sixteen=False,
+        metacallback=lambda: None,
+        groups=None,
+    ):
         import tqdm.autonotebook as tqdm
 
         assert (count is None) or (time is None)
@@ -190,7 +231,11 @@ class MKIDSetup:
         if count:
             for i in tqdm.tqdm(range(count), desc="Darks"):
                 sn, t = self.take_snap(
-                    "dark", overlay, first_sixteen=first_sixteen, metacallback=metacallback
+                    "dark",
+                    overlay,
+                    first_sixteen=first_sixteen,
+                    metacallback=metacallback,
+                    groups=groups,
                 )
                 self.darks[-1].append(sn)
         else:
@@ -198,14 +243,26 @@ class MKIDSetup:
             with tqdm.tqdm(total=time, desc="Darks") as pbar:
                 while total < time:
                     sn, t = self.take_snap(
-                        "dark", overlay, first_sixteen=first_sixteen, metacallback=metacallback
+                        "dark",
+                        overlay,
+                        first_sixteen=first_sixteen,
+                        groups = groups,
+                        metacallback=metacallback,
                     )
                     self.darks[-1].append(sn)
                     total += t
                     pbar.update(t)
 
     def take_lights(
-        self, overlay, source, *, count=None, time=None, first_sixteen=False, metacallback=lambda: None
+        self,
+        overlay,
+        source,
+        *,
+        count=None,
+        time=None,
+        first_sixteen=False,
+        metacallback=lambda: None,
+        groups=None,
     ):
         import tqdm.autonotebook as tqdm
 
@@ -216,7 +273,11 @@ class MKIDSetup:
         if count:
             for i in tqdm.tqdm(range(count), desc="Lights"):
                 sn, t = self.take_snap(
-                    "light", overlay, first_sixteen=first_sixteen, metacallback=metacallback
+                    "light",
+                    overlay,
+                    first_sixteen=first_sixteen,
+                    metacallback=metacallback,
+                    groups=groups,
                 )
                 self.lights[-1][source].append(sn)
         else:
@@ -224,7 +285,11 @@ class MKIDSetup:
             with tqdm.tqdm(total=time, desc="Lights") as pbar:
                 while total < time:
                     sn, t = self.take_snap(
-                        "light", overlay, first_sixteen=first_sixteen, metacallback=metacallback
+                        "light",
+                        overlay,
+                        first_sixteen=first_sixteen,
+                        metacallback=metacallback,
+                        groups=groups,
                     )
                     self.lights[-1][source].append(sn)
                     total += t
@@ -234,10 +299,100 @@ class MKIDSetup:
         pickle.dump(
             self,
             open(
-                self.basedir + self.name + (".pkl" if not savetime else "{:f}.pkl".format(time.time())), "wb"
+                self.basedir
+                + self.name
+                + (".pkl" if not savetime else "{:f}.pkl".format(time.time())),
+                "wb",
             ),
             protocol=pickle.HIGHEST_PROTOCOL,
         )
+    @classmethod
+    def with_selected(cls, name, overlay, ifboard, starting_tones, starting_amps, output_atten, selected_attens, *, maxvel=False, lo=6000.0, target_dynrange=0.25, tied_tones={}):
+        import tqdm.autonotebook as tqdm
+
+        from mkidgen3.mkid_setup.loop_locator import rotate_and_center
+
+        baseline = output_atten
+
+        ol, ifb = overlay, ifboard
+        spacing = np.fft.fftfreq(1 << 19, 1 / 4.096e9)[1]
+
+        tones = np.array(starting_tones)
+        amps = np.array(starting_amps)
+
+        attens = np.array(selected_attens)
+        amps = amps * (10 ** (-(attens - baseline) / 20))
+
+        print("Configuring DAC...")
+
+        waveform = WaveformConfig(
+            waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps)
+        )
+        ol.dac_table.configure(**waveform.settings_dict())
+        chan = waveform.default_channel_config
+        ol.photon_pipe.reschan.bin_to_res.configure(**chan.settings_dict())
+        ddc = waveform.default_ddc_config
+        ol.photon_pipe.reschan.ddccontrol_0.configure(**ddc.settings_dict())
+
+        print("Running AGC...")
+        ifb.set_lo(lo + 5)
+        atten = (baseline, agc(ifb, ol.capture, baseline, target_dynrange, 0.25))
+        fftsetting = fft_agc(ol, target_dynrange)
+        ifb.set_lo(lo)
+
+        if maxvel:
+            print("Finding MAX IQ Velocity...")
+            sweepmaxvel = SweepConfig(
+                np.arange(-128, 16) * spacing / 1e6,
+                waveform,
+                lo,
+                attens=atten,
+                average=1024 * 64,
+            ).run_sweep(ifboard=ifb, capture=ol.capture)
+            start = np.argmin(np.abs(sweepmaxvel.config.steps))
+            newtones = np.array(
+                [
+                    find_maxiq(sweepmaxvel.frequencies[i, ::], sweepmaxvel.iq[i, ::], start)
+                    - lo * 1e6
+                    for i in range(sweepmaxvel.frequencies.shape[0])
+                ]
+            )
+
+            for main, tieds in tied_tones.items():
+                newtones[tieds] = tones[tieds] + (newtones[main] - tones[main])
+            tones = newtones
+
+            waveform = WaveformConfig(
+                waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps)
+            )
+            ol.dac_table.configure(**waveform.settings_dict())
+            chan = waveform.default_channel_config
+            ol.photon_pipe.reschan.bin_to_res.configure(**chan.settings_dict())
+            ddc = waveform.default_ddc_config
+            ol.photon_pipe.reschan.ddccontrol_0.configure(**ddc.settings_dict())
+
+            print("Rerunning AGC...")
+            ifb.set_lo(lo + 5)
+            atten = (baseline, agc(ifb, ol.capture, baseline, target_dynrange, 0.25))
+            fftsetting = fft_agc(ol, target_dynrange)
+            ifb.set_lo(lo)
+        else:
+            sweepmaxvel = None
+
+        setup = MKIDSetup(
+            name,
+            atten,
+            waveform.waveform,
+            [],
+            powersweep=None,
+            biassweep=sweepmaxvel,
+            fftscale=fftsetting,
+            tied_tones=tied_tones,
+            lo=lo,
+        )
+        setup.load(ol, ifb, recenter=True)
+        return setup
+
 
     @classmethod
     def interactive_setup(
@@ -266,7 +421,9 @@ class MKIDSetup:
 
         tones = np.array(starting_tones)
         amps = np.array(starting_amps)
-        waveform = WaveformConfig(waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps))
+        waveform = WaveformConfig(
+            waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps)
+        )
         ol.dac_table.configure(**waveform.settings_dict())
         chan = waveform.default_channel_config
         ol.photon_pipe.reschan.bin_to_res.configure(**chan.settings_dict())
@@ -285,11 +442,15 @@ class MKIDSetup:
         gpio.channel1.write(max(fftscales.values()), 0xFFF)
 
         sweep_base = SweepConfig(
-            np.arange(-128, 64) * spacing / 1e6, waveform, 6000.0, average=1024 * 16, rmses=False
+            np.arange(-128, 64) * spacing / 1e6,
+            waveform,
+            lo,
+            average=1024 * 16,
+            rmses=False,
         )
-        powersweep = PowerSweepConfig(attens=attens, sweep_config=sweep_base).run_powersweep(
-            ifb, ol.capture, progress=True
-        )
+        powersweep = PowerSweepConfig(
+            attens=attens, sweep_config=sweep_base
+        ).run_powersweep(ifb, ol.capture, progress=True)
 
         current_channel = 0
         current_atten = 0
@@ -336,7 +497,9 @@ class MKIDSetup:
             if current_channel >= len(tones):
                 current_channel = len(tones) - 1
             current_atten = (
-                atten_settings[current_channel] if atten_settings[current_channel] != -1 else current_atten
+                atten_settings[current_channel]
+                if atten_settings[current_channel] != -1
+                else current_atten
             )
             atten_settings[current_channel] = current_atten
             update_plot()
@@ -350,7 +513,9 @@ class MKIDSetup:
             if current_channel >= len(tones):
                 current_channel = len(tones) - 1
             current_atten = (
-                atten_settings[current_channel] if atten_settings[current_channel] != -1 else current_atten
+                atten_settings[current_channel]
+                if atten_settings[current_channel] != -1
+                else current_atten
             )
             atten_settings[current_channel] = current_atten
             update_plot()
@@ -377,10 +542,14 @@ class MKIDSetup:
             ax1.set_title(atten_options[current_atten])
             ax2.set_title(current_channel)
             powersweep.sweeps[atten_options[current_atten]][1].plot(
-                ax1, channels=slice(current_channel, current_channel + 1), newtones=list(tones)
+                ax1,
+                channels=slice(current_channel, current_channel + 1),
+                newtones=list(tones),
             )
             powersweep.sweeps[atten_options[current_atten]][1].plot_loops(
-                ax2, channels=slice(current_channel, current_channel + 1), newtones=list(tones)
+                ax2,
+                channels=slice(current_channel, current_channel + 1),
+                newtones=list(tones),
             )
             fig.canvas.draw()
 
@@ -412,7 +581,9 @@ class MKIDSetup:
 
         print("Configuring DAC...")
 
-        waveform = WaveformConfig(waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps))
+        waveform = WaveformConfig(
+            waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps)
+        )
         ol.dac_table.configure(**waveform.settings_dict())
         chan = waveform.default_channel_config
         ol.photon_pipe.reschan.bin_to_res.configure(**chan.settings_dict())
@@ -427,12 +598,17 @@ class MKIDSetup:
 
         print("Finding MAX IQ Velocity...")
         sweepmaxvel = SweepConfig(
-            np.arange(-128, 16) * spacing / 1e6, waveform, 6000.0, attens=atten, average=1024 * 64
+            np.arange(-128, 16) * spacing / 1e6,
+            waveform,
+            lo,
+            attens=atten,
+            average=1024 * 64,
         ).run_sweep(ifboard=ifb, capture=ol.capture)
         start = np.argmin(np.abs(sweepmaxvel.config.steps))
         newtones = np.array(
             [
-                find_maxiq(sweepmaxvel.frequencies[i, ::], sweepmaxvel.iq[i, ::], start) - lo * 1e6
+                find_maxiq(sweepmaxvel.frequencies[i, ::], sweepmaxvel.iq[i, ::], start)
+                - lo * 1e6
                 for i in range(sweepmaxvel.frequencies.shape[0])
             ]
         )
@@ -441,7 +617,9 @@ class MKIDSetup:
             newtones[tieds] = tones[tieds] + (newtones[main] - tones[main])
         tones = newtones
 
-        waveform = WaveformConfig(waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps))
+        waveform = WaveformConfig(
+            waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps)
+        )
         ol.dac_table.configure(**waveform.settings_dict())
         chan = waveform.default_channel_config
         ol.photon_pipe.reschan.bin_to_res.configure(**chan.settings_dict())
@@ -463,6 +641,7 @@ class MKIDSetup:
             biassweep=sweepmaxvel,
             fftscale=fftsetting,
             tied_tones=tied_tones,
+            lo=lo,
         )
         setup.load(ol, ifb, recenter=True)
         return setup
