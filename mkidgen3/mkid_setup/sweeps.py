@@ -147,6 +147,42 @@ class SweepConfig:
 
 
 @dataclass
+class SmoothSweepConfig(SweepConfig):
+    def run_sweep(self, ifboard, capture, progress = True, cache=None) -> "SmoothSweep":
+        tones = self.waveform.waveform.quant_freqs
+        iq = np.empty((tones.size, self.steps.size), np.complex64)
+        if self.rmses:
+            rms = np.empty((tones.size, self.steps.size), np.complex64)
+        else:
+            rms = None
+        if self.attens:
+            ifboard.set_attens(
+                input_attens=self.attens[1], output_attens=self.attens[0]
+            )
+
+        if cache is None:
+            cache = []
+        if cache == []:
+            for step in self.steps:
+                ifboard.set_lo(self.lo_center + step)
+                cache.append(ifboard.trf_control.get_certificate())
+
+        it = enumerate(self.steps)
+        if progress:
+            import tqdm.notebook as tqdm
+
+        it = tqdm.tqdm(it, total=len(self.steps), desc="FREQ")
+        for i, step in it:
+            ifboard.set_lo(cache[i])
+            piq, prms = self._get_iq_point_rms(capture)
+            iq[::, i] = piq[: tones.size]
+            if self.rmses:
+                rms[::, i] = prms[: tones.size]
+        ifboard.set_lo(self.lo_center)
+        return SmoothSweep(iq, (rms / np.sqrt(self.average)) if self.rmses else rms, self, certificates=cache)
+
+
+@dataclass
 class CombSweepConfig(SweepConfig):
     overlap: int = 1
 
@@ -283,7 +319,9 @@ class Sweep(AbstractSweep):
             config=self.config,
             equalized_gain=refered_gain,
         )
-
+@dataclass
+class SmoothSweep(Sweep):
+    certificates: Optional[list["TRFCalibrationCertificate"]] = None
 
 @dataclass
 class CombSweep(Sweep):
@@ -401,6 +439,9 @@ class PowerSweepConfig:
     def run_powersweep(self, ifboard, capture, progress=False) -> "PowerSweep":
         sweeps = {}
         iter = self.attens.items()
+        kwargs = {}
+        if isinstance(self.sweep_config, SmoothSweepConfig):
+            kwargs["cache"] = []
         if progress:
             import tqdm.notebook as tqdm
 
@@ -410,7 +451,7 @@ class PowerSweepConfig:
             this_sweepconfig.attens = (output_atten, input_atten)
             sweeps[output_atten] = (
                 input_atten,
-                this_sweepconfig.run_sweep(ifboard, capture, progress),
+                this_sweepconfig.run_sweep(ifboard, capture, progress, **kwargs),
             )
         return PowerSweep(self, sweeps)
 
