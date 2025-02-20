@@ -197,7 +197,8 @@ class IFBoard(SerialDevice):
         if type(freq) is TRFCalibrationCertificate:
             assert fractional is None
             self.trf_control.set_output(freq, wait_for_lock=False)
-        self.trf_control.set_output(freq / 2, wait_for_lock=False, fractional = fractional)
+        else:
+            self.trf_control.set_output(freq / 2, wait_for_lock=False, fractional = fractional)
 
     def set_attens(self, output_attens: (float, Tuple[float], List[float], None) = None,
                    input_attens: (float, Tuple[float], List[float], None) = None):
@@ -635,7 +636,7 @@ class TRF3765:
         self.outputs = outputs
 
     def set_output(self, frequency: float | Fraction | TRFCalibrationCertificate, wait_for_lock: bool = True, fractional: Optional[bool] = None):
-        if frequency is TRFCalibrationCertificate:
+        if isinstance(frequency, TRFCalibrationCertificate):
             if frequency.token != self.__token:
                 raise ValueError("Calibration certificate is not for this LO")
             self.__program_divider(frequency.divider_config)
