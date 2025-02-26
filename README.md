@@ -17,17 +17,27 @@ pip install -e '.[client,plotting]'
 ### Build the Bitstream
 See the instructions in [https://github.com/MazinLab/gen3-vivado-top/blob/main/README.md](the firmware repo)
 
-### PYNQ setup
+### Board Install
 
-Login to the 4x2 and apply the changes described in [https://github.com/MazinLab/MKIDGen3/blob/develop/docs/pynq_deviations.md](the pynq deviations document) to enable multi-tile synchronization, make the PL DDR4 available, and enable the ifboard, then install this package with:
+These install instructions require the RFSoC to be connected to the internet. See instructions [in the PYNQ documentation](https://pynq.readthedocs.io/en/latest/getting_started/pynq_z1_setup.html) setup for ethernet connection.
 
-    cd ~
-    mkdir -p ~/src/mkidgen3/
-    git clone https://github.com/MazinLab/MKIDGen3.git ~/src/mkidgen3/
-    cd ~/src/mkidgen3
-    pip install -e '.[server,plotting]'
-
-You will likely want to do this in the `pynq-venv` (`source /etc/profile.d/pynq_venv.sh` as root) otherwise you will manually have to install the `xrfclk` package and the (patched) `xrfdc` package as they are not published on pypi or conda-forge
+First clone the source code
+```
+mkdir -p ~/src/mkidgen3/
+git clone https://github.com/MazinLab/MKIDGen3.git ~/src/mkidgen3/
+git clone https://github.com/Xilinx/RFSoC-MTS.git ~/src
+```
+Next, patch the `xrfdc` driver using the install script in the `RFSoC-MTS` repo.
+```
+cd RFSoC-MTS
+./install.sh
+```
+Now install the MKIDGen3 code that runs on the RFSoC
+```
+cd ~/src/mkidgen3
+source /etc/profile.d/pynq_venv.sh
+sudo pip install -e '.[server,plotting]'
+```
 
 To use the interpreter within PyCharm use /usr/local/share/pynq-venv/bin/python as the remote interpreter, execute with sudo, and ensure that the following envirnoment variables are set:
 
