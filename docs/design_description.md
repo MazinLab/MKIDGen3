@@ -1,5 +1,7 @@
 # MKIDGEN3 Software Design Description
 
+Note: the below does not accurately reflect the current state or goals of the project
+
 ## Overview
 The MKIDGEN3 software facilitates using multiple hardware subsystems (RFSoC board, IF board) to set up and read out an MKID array. 
 The core functionality revolves around capturing data at various points in the FPGA DSP pipeline.

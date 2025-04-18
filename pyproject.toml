@@ -27,13 +27,16 @@ requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.21",
   "scipy>=1.8.0", # Unclear if this needs to be mandatory, we only use it in a few spots
+  "pyserial>=3.5",
   "pyyaml>=5.4.1", # We use this in exactly one place, consider refactoring to use one of the formats in the standard library instead
 ]
+
+[tool.pdm.version]
+source = "scm"
 
 [project.optional-dependencies]
 board = [
   "pynq>=3.0.1",
-  "pyserial>=3.5",
   "fpbinary==1.5.8", # TODO: Project looks imature, possibly vendor this or reevaluate use
   # The packaging on these two is a mess, consider vendoring:
   "xrfdc==2.0",
