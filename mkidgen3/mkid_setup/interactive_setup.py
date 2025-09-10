@@ -130,8 +130,6 @@ class MKIDSetup:
             bphase = np.zeros_like(btones)
             bcent = np.zeros_like(btones, dtype=np.complex64)
 
-        print(btones)
-
         ol.dac_table.configure(**waveform.settings_dict())
         ol.photon_pipe.reschan.bin_to_res.configure(**{"bins": bins})
         ol.photon_pipe.reschan.ddccontrol_0.configure(
@@ -307,7 +305,7 @@ class MKIDSetup:
             protocol=pickle.HIGHEST_PROTOCOL,
         )
     @classmethod
-    def with_selected(cls, name, overlay, ifboard, starting_tones, starting_amps, output_atten, selected_attens, *, maxvel=False, lo=6000.0, target_dynrange=0.25, tied_tones={}):
+    def with_selected(cls, name, overlay, ifboard, starting_tones, starting_amps, output_atten, selected_attens, *, maxvel=False, lo=6000.0, fft_override=None, target_dynrange=0.25, phases=None, tied_tones={}):
         import tqdm.autonotebook as tqdm
 
         from mkidgen3.mkid_setup.loop_locator import rotate_and_center
@@ -325,9 +323,14 @@ class MKIDSetup:
 
         print("Configuring DAC...")
 
-        waveform = WaveformConfig(
-            waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps)
-        )
+        if phases is not None:
+            waveform = WaveformConfig(
+                waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps, phases=phases)
+            )
+        else:
+            waveform = WaveformConfig(
+                waveform=SimpleFreqlistWaveform(frequencies=tones, amplitudes=amps)
+            )
         ol.dac_table.configure(**waveform.settings_dict())
         chan = waveform.default_channel_config
         ol.photon_pipe.reschan.bin_to_res.configure(**chan.settings_dict())
@@ -337,7 +340,7 @@ class MKIDSetup:
         print("Running AGC...")
         ifb.set_lo(lo + 5)
         atten = (baseline, agc(ifb, ol.capture, baseline, target_dynrange, 0.25))
-        fftsetting = fft_agc(ol, target_dynrange)
+        fftsetting = fft_agc(ol, target_dynrange) if fft_override is None else fft_override
         ifb.set_lo(lo)
 
         if maxvel:
@@ -374,7 +377,7 @@ class MKIDSetup:
             print("Rerunning AGC...")
             ifb.set_lo(lo + 5)
             atten = (baseline, agc(ifb, ol.capture, baseline, target_dynrange, 0.25))
-            fftsetting = fft_agc(ol, target_dynrange)
+            fftsetting = fft_agc(ol, target_dynrange) if fft_override is None else fft_override
             ifb.set_lo(lo)
         else:
             sweepmaxvel = None
@@ -406,6 +409,7 @@ class MKIDSetup:
         *,
         lo=6000.0,
         target_dynrange=0.25,
+        fft_override=None,
         tied_tones={},
     ):
         import matplotlib.pyplot as plt
@@ -435,7 +439,7 @@ class MKIDSetup:
         ifb.set_lo(lo + 5)
         for atten in tqdm.tqdm(output_attens, desc="Running AGC..."):
             attens[atten] = agc(ifb, ol.capture, atten, target_dynrange, 0.25)
-            fftscales[atten] = fft_agc(ol, target_dynrange)
+            fftscales[atten] = fft_agc(ol, target_dynrange) if fft_override is None else fft_override
         ifb.set_lo(lo)
 
         gpio = overlay.photon_pipe.opfb.fft.axi_gpio_0
@@ -593,7 +597,7 @@ class MKIDSetup:
         print("Rerunning AGC...")
         ifb.set_lo(lo + 5)
         atten = (baseline, agc(ifb, ol.capture, baseline, target_dynrange, 0.25))
-        fftsetting = fft_agc(ol, target_dynrange)
+        fftsetting = fft_agc(ol, target_dynrange) if fft_override is None else fft_override
         ifb.set_lo(lo)
 
         print("Finding MAX IQ Velocity...")
@@ -629,7 +633,7 @@ class MKIDSetup:
         print("Rerunning AGC...")
         ifb.set_lo(lo + 5)
         atten = (baseline, agc(ifb, ol.capture, baseline, target_dynrange, 0.25))
-        fftsetting = fft_agc(ol, target_dynrange)
+        fftsetting = fft_agc(ol, target_dynrange) if fft_override is None else fft_override
         ifb.set_lo(lo)
 
         setup = MKIDSetup(
