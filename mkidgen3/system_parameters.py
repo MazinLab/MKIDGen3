@@ -34,6 +34,8 @@ SYSTEM_BANDWIDTH = 4.096e9  # Hz Full readout bandwidth
 OS = 2  # OPFB Overlap factor
 OPFB_CHANNEL_SAMPLE_RATE = OS * ADC_SAMPLE_RATE / N_OPFB_CHANNELS
 
+PL_DDS_M = 16384
+
 
 # PHASE_IQ_INPUT_FRACTIONAL_BITS = 14  #commented as no clear meaning, no doc, and no usage in codebase
 
