@@ -8,7 +8,10 @@ import pytest
 
 from mkidgen3.drivers.triggerv2 import (PHOTON_V2_DTYPE, PHOTON_V2_PACKED_DTYPE,
                                         unpack_photons_v2, pack_photons_v2,
-                                        photon_times_ns, CYCLE_NS)
+                                        photon_times_ns, CYCLE_NS,
+                                        SENTINEL_U64, valid_photon_prefix,
+                                        unpack_postage, POSTAGE_SAMPLES,
+                                        HOLDOFF_CYCLE_US, us_to_holdoff)
 
 
 def _random_photons(n, rng):
@@ -73,6 +76,54 @@ def test_photon_times():
     t = photon_times_ns(p, hdr)
     assert t[0] == 5_000_000_000
     assert t[1] == 5_000_000_000 + 10 * CYCLE_NS
+
+
+def test_sentinel_cannot_collide_with_real_records():
+    # Real v2 records have zero pad bits [127:113], so the all-ones sentinel
+    # used to prefill capture buffers can never match a gateware-written event.
+    rng = np.random.default_rng(99)
+    packed = pack_photons_v2(_random_photons(50000, rng))
+    assert (packed['hi'] != SENTINEL_U64).all()
+
+
+def test_valid_photon_prefix():
+    rng = np.random.default_rng(5)
+    buf = np.empty(100, dtype=PHOTON_V2_PACKED_DTYPE)
+    buf['lo'] = SENTINEL_U64
+    buf['hi'] = SENTINEL_U64
+    assert valid_photon_prefix(buf) == 0
+    buf[:7] = pack_photons_v2(_random_photons(7, rng))
+    assert valid_photon_prefix(buf) == 7
+    buf[:] = pack_photons_v2(_random_photons(100, rng))
+    assert valid_photon_prefix(buf) == 100
+    # raw uint64 input path (as np.array(pynq_buffer) would provide)
+    as_u64 = np.frombuffer(buf.tobytes(), dtype=np.uint64)
+    assert valid_photon_prefix(as_u64) == 100
+
+
+def test_unpack_postage():
+    # Stamp word layout: real[15:0] | imag[31:16], int16 each, little endian.
+    n = 3
+    real = np.arange(-64, -64 + n * POSTAGE_SAMPLES, dtype=np.int16)
+    imag = np.arange(100, 100 + n * POSTAGE_SAMPLES, dtype=np.int16)
+    words = (real.astype(np.uint16).astype(np.uint32)
+             | (imag.astype(np.uint16).astype(np.uint32) << 16))
+    stamps = unpack_postage(words)
+    assert stamps.shape == (n, POSTAGE_SAMPLES) and stamps.dtype == np.complex64
+    np.testing.assert_array_equal(stamps.real.ravel(), real.astype(np.float32))
+    np.testing.assert_array_equal(stamps.imag.ravel(), imag.astype(np.float32))
+    # n_stamps clip and raw-bytes input
+    assert unpack_postage(words.tobytes(), n_stamps=2).shape == (2, POSTAGE_SAMPLES)
+    # trailing partial stamp is dropped
+    assert unpack_postage(words[:-1]).shape == (n - 1, POSTAGE_SAMPLES)
+
+
+def test_us_to_holdoff():
+    assert HOLDOFF_CYCLE_US == 2
+    assert us_to_holdoff(20) == 10
+    assert us_to_holdoff(0) == 0
+    assert us_to_holdoff(5) == 3      # rounds up: never shorter than asked
+    assert us_to_holdoff(10_000) == 255  # clipped to the 8-bit field
 
 
 def test_layout_matches_gateware():
