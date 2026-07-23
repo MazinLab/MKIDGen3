@@ -161,12 +161,12 @@ class CaptureHierarchy(DefaultHierarchy):
     1: 'rawiq': connected to the output of bin to res, can be used to look at the OPFB bins before the DDC
     2: 'ddciq': connected to the output of the DDC before the lowpass
     3: 'filtphase': connected to the output of matched filters
-    4: 'debugiq': placeholder for a filter_iq IP connected to 4th switch port
+    4: 'iqsweep': iq_sweep_acc hardware sweep accumulator result stream (overlays that have it)
     5. 'debugpphase' placeholder for a filter_phase IP connected to 5th switch port
     """
     IQ_MAP = {'rawiq': 0, 'ddciq': 1, 'debugiq': 2}  #tap name MUST include 'iq' and shall not include 'phase'
     PHASE_MAP = {'filtphase': 0, 'debugphase': 1} #tap name MUST include 'phase' and shall not include 'iq'
-    SOURCE_MAP = dict(adc=0, rawiq=1, ddciq=2, filtphase=3, debugiq=4, debugphase=5)
+    SOURCE_MAP = dict(adc=0, rawiq=1, ddciq=2, filtphase=3, iqsweep=4, debugphase=5)
     USE_CACHEABLE_BUFFERS = True
 
     def __init__(self, description):
@@ -402,6 +402,44 @@ class CaptureHierarchy(DefaultHierarchy):
         buffer.invalidate()
 
         return buffer
+
+    SWEEP_SUMS_BYTES = 2048 * 32
+    SWEEP_FRAME_RATE = 512e6 / 256  # full 2048 channel frames per second on ddciq
+
+    def capture_sweep_sums(self, n_frames, discard_frames=0, timeout=None):
+        """One hardware accumulated sweep point from the iq_sweep_acc block.
+
+        Returns a (2048, 4) int64 ndarray of [sumI, sumQ, sumII, sumQQ] per
+        channel, accumulated over n_frames full frames of the ddciq stream
+        (2 MS/s per channel) after skipping discard_frames settling frames.
+        Use mkidgen3.drivers.sweepacc.sums_to_mean_rms to get mean/rms.
+
+        The DMA is armed before the accumulator is started because the
+        result path has no backpressure.
+        """
+        acc = getattr(self, 'iq_sweep_acc_0', None)
+        if acc is None:
+            raise RuntimeError('This overlay has no iq_sweep_acc block')
+
+        if timeout is None:
+            timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
+
+        buffer = allocate((2048, 4), dtype='i8', target=self.ddr4_0,
+                          cacheable=self.USE_CACHEABLE_BUFFERS)
+        try:
+            self._capture('iqsweep', self.SWEEP_SUMS_BYTES, buffer.device_address)
+            acc.start_point(n_frames, discard_frames)
+            deadline = time.time() + timeout
+            while not self.axis2mm.complete:
+                if time.time() > deadline:
+                    self.axis2mm.abort()
+                    raise IOError(f'Sweep sum capture did not complete in {timeout:.2f} s '
+                                  f'(accumulator done={acc.done})')
+                time.sleep(0.0005)
+            buffer.invalidate()
+            return np.array(buffer)
+        finally:
+            buffer.freebuffer()
 
     def capture_adc(self, n, duration=False, complex=False, wait=True):
         """
