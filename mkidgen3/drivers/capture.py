@@ -458,6 +458,72 @@ class CaptureHierarchy(DefaultHierarchy):
         finally:
             buffer.freebuffer()
 
+    def probe_sweep_burst(self, n_frames=4096, discard_frames=64, extra_channels=8,
+                          timeout=None):
+        """Capture MORE than one sweep burst and return the raw oversized array.
+
+        Diagnostic for the two-channel offset. Bench work on 2026-07-24 showed
+        the DMA reports tlast_syncd on every capture while the result is still
+        offset by exactly two channels, which rules out the DMA picking the
+        wrong start beat and leaves two candidates:
+
+          INSERTED  something upstream prepends one 512-bit beat (two channel
+                    records) to the burst -- e.g. the capture switch's output
+                    register holding a stale beat at the route change, plus
+                    capture_upsizer entering the burst on the wrong half of
+                    its 256->512 pairing. The packet is then 1025 beats with
+                    TLAST correctly on the last one, the DMA takes the first
+                    1024, and channels 2046/2047 fall off the end. A DMA
+                    framed on a packet boundary cannot fix a packet that is
+                    one beat too long, which is why tlast_syncd stays True.
+
+          DROPPED   iq_sweep_acc emits fewer than 2048 valid channel records,
+                    so the last two never exist at all.
+
+        The two are distinguishable in one capture: ask for extra beats and
+        look at what follows. Under INSERTED the burst is one beat long and
+        channels 2046/2047 appear at the very end, so the returned array holds
+        [junk, junk, ch0, ch1, ... ch2047] and everything is recoverable by
+        dropping the leading beat. Under DROPPED the tail stays absent.
+
+        Returns (2048 + extra_channels, 4) int64. The extra rows are whatever
+        the DMA saw next; poison them first so "not written" is visible.
+        """
+        acc = getattr(self, 'iq_sweep_acc_0', None)
+        if acc is None:
+            raise RuntimeError('This overlay has no iq_sweep_acc block')
+        extra_channels = int(extra_channels)
+        if extra_channels < 0 or extra_channels % 2:
+            raise ValueError('extra_channels must be a nonnegative even number '
+                             '(a 512-bit beat carries two channel records)')
+
+        rows = 2048 + extra_channels
+        if timeout is None:
+            timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
+
+        buffer = allocate((rows, 4), dtype='i8', target=self.ddr4_0,
+                          cacheable=self.USE_CACHEABLE_BUFFERS)
+        try:
+            buffer[:] = -1
+            buffer.flush()
+            self._capture('iqsweep', rows * 32, buffer.device_address)
+            acc.start_point(n_frames, discard_frames)
+            deadline = time.time() + timeout
+            while not self.axis2mm.complete:
+                if time.time() > deadline:
+                    self.axis2mm.abort()
+                    self.axis2mm.clear_error()
+                    raise IOError(
+                        f'Sweep burst probe did not complete in {timeout:.2f} s. '
+                        f'Asking for more than one burst can legitimately hang if '
+                        f'nothing follows it -- that itself argues the burst is '
+                        f'exactly {2048 * 32} bytes and nothing is being inserted.')
+                time.sleep(0.0005)
+            buffer.invalidate()
+            return np.array(buffer)
+        finally:
+            buffer.freebuffer()
+
     def capture_adc(self, n, duration=False, complex=False, wait=True):
         """
         samples are captured in multiples of 8 will be clipped as necessary
