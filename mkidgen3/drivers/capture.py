@@ -432,10 +432,27 @@ class CaptureHierarchy(DefaultHierarchy):
             deadline = time.time() + timeout
             while not self.axis2mm.complete:
                 if time.time() > deadline:
+                    st = acc.status
+                    syncd = self.axis2mm.tlast_syncd
                     self.axis2mm.abort()
-                    raise IOError(f'Sweep sum capture did not complete in {timeout:.2f} s '
-                                  f'(accumulator done={acc.done})')
+                    raise IOError(
+                        f'Sweep sum capture did not complete in {timeout:.2f} s '
+                        f'(accumulator start={st["start"]} done={st["done"]} '
+                        f'idle={st["idle"]}, dma tlast_syncd={syncd}). '
+                        f'idle=True with done=False means the accumulator never ran; '
+                        f'tlast_syncd=False means the DMA is discarding beats while it '
+                        f'hunts for a packet boundary.')
                 time.sleep(0.0005)
+            # The burst carries one channel per beat, so a transfer framed off a
+            # TLAST boundary returns every channel's sums under the wrong index.
+            # That is indistinguishable from real data downstream -- refuse it here.
+            if not self.axis2mm.tlast_syncd:
+                raise IOError(
+                    'Sweep sum capture completed but the DMA was not framed on a TLAST '
+                    'boundary, so the channel mapping of this burst is offset and the '
+                    'data must not be used. This usually means the capture path was '
+                    'still holding beats from a previously selected switch source when '
+                    'the accumulator burst arrived.')
             buffer.invalidate()
             return np.array(buffer)
         finally:
@@ -642,6 +659,21 @@ class _AXIS2MM:
     @property
     def complete(self):
         return True if ((self.read(0) >> 29) & 1) else False
+
+    @property
+    def tlast_syncd(self):
+        """True if the DMA is framed on incoming packet (TLAST) boundaries.
+
+        axis2mm is built with OPT_TLAST_SYNC=1: when it loses alignment it
+        holds TREADY high and discards beats until the first one after a
+        TLAST. A transfer that completes while this reads False was framed
+        against the wrong beat, so its data is *shifted*, not merely noisy.
+        For a continuous stream that is harmless -- you just captured a
+        window starting one beat late. For a structured burst where beat
+        index encodes identity (iq_sweep_acc emits one channel per beat)
+        it is silent corruption, so callers of those captures must check it.
+        """
+        return not self.cmd_ctrl_reg['r_tlast_syncd_n']
 
     def abort(self):
         #         self.write(0, (self.read(0)^0xff00)|0x2600)

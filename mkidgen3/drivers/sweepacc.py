@@ -43,6 +43,7 @@ class IQSweepAccumulator(DefaultIP):
     AP_START = 0x1
     AP_DONE = 0x2
     AP_IDLE = 0x4
+    AP_READY = 0x8
 
     MAX_FRAMES = 2 ** 20       # matches gen3d's MAX_SWEEP_AVERAGE
 
@@ -67,7 +68,37 @@ class IQSweepAccumulator(DefaultIP):
         self.write(self.ADDR_CTRL, self.AP_START)
 
     @property
+    def status(self):
+        """Decode the ap_ctrl_hs control register in a single read.
+
+        ap_done is clear on read, so prefer this whenever more than one bit
+        matters: each individual property below costs its own read, and any
+        of them can consume the done latch.
+        """
+        r = self.read(self.ADDR_CTRL)
+        return {'start': bool(r & self.AP_START),
+                'done': bool(r & self.AP_DONE),
+                'idle': bool(r & self.AP_IDLE),
+                'ready': bool(r & self.AP_READY)}
+
+    @property
     def done(self):
-        """True once the accumulation/dump has finished (ap_done is clear on
-        read, so idle counts too)."""
-        return bool(self.read(self.ADDR_CTRL) & (self.AP_DONE | self.AP_IDLE))
+        """True only if ap_done is latched.
+
+        Deliberately does not fold in ap_idle. A core that was never started
+        is idle, and reporting that as done sends anyone debugging a stalled
+        capture looking in the wrong place -- use `status` to tell the two
+        apart, since idle alone cannot distinguish "never ran" from
+        "finished, and the done latch was already read".
+        """
+        return bool(self.read(self.ADDR_CTRL) & self.AP_DONE)
+
+    @property
+    def idle(self):
+        """True if no accumulation is in progress (never started, or done)."""
+        return bool(self.read(self.ADDR_CTRL) & self.AP_IDLE)
+
+    @property
+    def busy(self):
+        """True while an accumulation/dump is in progress."""
+        return not bool(self.read(self.ADDR_CTRL) & self.AP_IDLE)
