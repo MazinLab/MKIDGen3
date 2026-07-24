@@ -119,34 +119,44 @@ class FFTGainControl:
     def read_overflow(self):
         """Four sticky peak readings (0-3), location 0 first.
 
-        The ordering follows BxBFFT User Guide v3.2 s5.5 -- "The first
-        scaling position has bits [1:0], the second has bits [3:2], etc."
-        -- and the fft hier wires overflow_detect_o[7:0] straight through
-        the CDC to gpio2_io_i, so no reordering happens in gateware.
+        The hardware word is REVERSED relative to BxBFFT User Guide v3.2
+        s5.5, which says the first scaling position occupies bits [1:0].
+        It does not: location 0 arrives in the HIGH pair, so this unpacks
+        and then reverses. Two independent bench results agree, 2026-07-24:
 
-        DISPUTED: the 2026-07-24 bench session concluded these come back
-        reversed, on the grounds that position 0 moved when only downstream
-        shifts changed, which nothing upstream can explain. That dataset
-        cannot actually settle it -- every schedule it tested held location
-        0 at shift 3, so the one variable that would identify the mapping
-        was never varied. Run :meth:`probe_detector_order` to settle it
-        before trusting either interpretation, and fix it in exactly one
-        place (here or the gateware), never both.
+          * Across the original schedule scan, the raw index 0 varied while
+            only locations 1 and 2 changed. Nothing upstream of location 0
+            moved, so under the documented order that reading could not
+            have changed at all.
+          * Pinning location 0 at shift 3 and sweeping locations 1-2, raw
+            indices 2 and 3 held constant while 0 and 1 swept their full
+            range -- the exact opposite of what the documented order
+            requires, and index 2 sat at reading 1 with room to move.
+
+        FIX THIS IN ONE PLACE ONLY. It is corrected here, so the gateware
+        must keep wiring overflow_detect_o[7:0] straight through to
+        gpio2_io_i. Reversing there too would cancel this out.
         """
-        return self.unpack(self._gpio.channel2.read() & _SHIFT_MASK)
+        return self.unpack(self._gpio.channel2.read() & _SHIFT_MASK)[::-1]
 
     def probe_detector_order(self, dwell=0.01):
-        """Identify which reading index responds to location 0's shift.
+        """Check that :meth:`read_overflow` really is location ordered.
 
-        Varies ONLY location 0 and reports which index moves. Location 0's
-        shift is upstream of every detector except its own, so under the
-        documented ordering index 0 must be the one that stays put while
-        1..3 move together; under the disputed reversed ordering index 3
-        stays put instead.
+        Varies ONLY location 0. Its shift is upstream of every detector
+        except its own, so in a correctly ordered result index 0 holds
+        still while 1..3 move together. If index 3 is the one holding
+        still, the returned word is reversed relative to what this driver
+        assumes and the reversal in read_overflow is wrong.
+
+        A reading railed at 0 or 3 cannot move either, so "did not move"
+        is only evidence when the candidate is strictly between 0 and 3.
+        Ignoring that made this probe report the wrong answer at 11.4% and
+        18.2% ADC fill, where index 0 sits floored at 0 in both states
+        (bench, 2026-07-24). Drive the FFT into midscale before trusting
+        it, and prefer a fill where the fixed index reads 1 or 2.
 
         Returns (readings_at_shift0_low, readings_at_shift0_high, verdict).
-        Needs a live, steady input -- run it with the comb on and the drive
-        unchanged for the duration.
+        Needs a live, steady input -- comb on, drive unchanged throughout.
         """
         rest = self._shifts[1:] if self._shifts is not None else (0, 0, 0)
         self.set_shifts((0,) + tuple(rest))
@@ -154,13 +164,24 @@ class FFTGainControl:
         self.set_shifts((3,) + tuple(rest))
         high = self.measure(dwell)
         moved = tuple(i for i in range(N_LOCATIONS) if low[i] != high[i])
-        if moved and 0 not in moved:
-            verdict = "documented order confirmed (index 0 fixed, downstream moved)"
-        elif moved and 3 not in moved:
-            verdict = "REVERSED: index 3 is location 0 -- reverse the unpack"
-        elif not moved:
-            verdict = ("inconclusive: nothing moved. Detectors may be "
-                       "saturated or the input is not driving the FFT")
+
+        def informative(i):
+            """A candidate 'fixed' index only counts if it had room to move."""
+            return 0 < low[i] < 3 and 0 < high[i] < 3
+
+        if not moved:
+            return low, high, ("inconclusive: nothing moved. Detectors may be "
+                               "saturated or the input is not driving the FFT")
+        if 0 not in moved and informative(0):
+            verdict = "ORDER OK: index 0 held (with room to move), downstream moved"
+        elif 3 not in moved and informative(3):
+            verdict = ("REVERSED: index 3 held (with room to move) -- "
+                       "read_overflow's reversal is wrong, drop it")
+        elif 0 not in moved or 3 not in moved:
+            stuck = 0 if 0 not in moved else 3
+            verdict = (f"inconclusive: index {stuck} held but is railed at "
+                       f"{low[stuck]}, so it could not have moved regardless. "
+                       f"Re-run at an ADC fill that puts it mid-range")
         else:
             verdict = (f"inconclusive: indices {moved} moved, which fits "
                        f"neither ordering")

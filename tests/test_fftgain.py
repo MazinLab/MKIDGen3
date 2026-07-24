@@ -4,6 +4,10 @@ A fake GPIO models the BxBFFT detector semantics from user guide v3.2:
 detector i reads the pre-shift peak at scaling position i, so runtime
 shift j only lowers readings at positions > j; readings are sticky
 maxima until the detector reset bit is pulsed.
+
+The one place the guide is WRONG is the readback bit order: hardware
+packs location 0 in the high pair, not bits [1:0] (bench, 2026-07-24).
+FakeGpio._pack reproduces the hardware, and read_overflow reverses it.
 """
 import pytest
 
@@ -64,8 +68,15 @@ class FakeGpio:
 
     @staticmethod
     def _pack(readings):
+        """Pack as the HARDWARE does: location 0 in the HIGH pair.
+
+        Measured 2026-07-24, opposite to user guide v3.2 s5.5 -- see
+        FFTGainControl.read_overflow, which reverses to compensate. This
+        model must stay reversed or the tests would validate the driver
+        against hardware that does not exist.
+        """
         word = 0
-        for i, r in enumerate(readings):
+        for i, r in enumerate(reversed(readings)):
             word |= (r & 3) << (2 * i)
         return word
 
@@ -179,8 +190,9 @@ class _ProbeGPIO:
     `reversed_hw` picks which end of the returned word location 0 lands on.
     """
 
-    def __init__(self, reversed_hw):
+    def __init__(self, reversed_hw, floor=False):
         self._reversed = reversed_hw
+        self._floor = floor
         self._word = 0
         outer = self
 
@@ -196,7 +208,12 @@ class _ProbeGPIO:
                 s0 = outer._word & 3
                 # location 0 shift attenuates everything downstream of it;
                 # its own detector is upstream and never moves.
-                per_loc = [3, max(0, 3 - s0), max(0, 3 - s0), max(0, 3 - s0)]
+                # index 0 fixed but MID-RANGE, so "it did not move" is
+                # informative rather than merely railed
+                per_loc = [2, max(0, 3 - s0), max(0, 3 - s0), max(0, 3 - s0)]
+                if outer._floor:
+                    # weak drive: everything sits on the floor and cannot move
+                    per_loc = [0, 0, max(0, 2 - s0), max(0, 2 - s0)]
                 if outer._reversed:
                     per_loc = per_loc[::-1]
                 return sum(v << (2 * i) for i, v in enumerate(per_loc))
@@ -205,15 +222,29 @@ class _ProbeGPIO:
         self.channel2 = _Ch(2)
 
 
-def test_probe_detects_documented_order():
-    g = FFTGainControl(_ProbeGPIO(reversed_hw=False))
-    low, high, verdict = g.probe_detector_order(dwell=0)
-    assert low[0] == high[0]          # location 0's own detector is fixed
-    assert "documented order confirmed" in verdict
-
-
-def test_probe_detects_reversed_order():
+def test_probe_confirms_order_when_reversal_matches_hardware():
+    # hardware packs location 0 in the HIGH pair; read_overflow reverses, so
+    # the driver sees location order and index 0 must be the one holding still
     g = FFTGainControl(_ProbeGPIO(reversed_hw=True))
+    low, high, verdict = g.probe_detector_order(dwell=0)
+    assert low[0] == high[0]
+    assert "ORDER OK" in verdict
+
+
+def test_probe_flags_reversal_when_hardware_is_documented_order():
+    g = FFTGainControl(_ProbeGPIO(reversed_hw=False))
     low, high, verdict = g.probe_detector_order(dwell=0)
     assert low[3] == high[3]
     assert "REVERSED" in verdict
+
+
+def test_probe_refuses_a_railed_index_as_evidence():
+    """A reading floored at 0 cannot move, so it is not evidence of anything.
+
+    This is the 11.4% ADC fill case that made the probe answer backwards.
+    """
+
+    g = FFTGainControl(_ProbeGPIO(reversed_hw=False, floor=True))
+    low, high, verdict = g.probe_detector_order(dwell=0)
+    assert "inconclusive" in verdict
+    assert "railed" in verdict
