@@ -117,8 +117,54 @@ class FFTGainControl:
         self._gpio.channel1.write(0, _RESET_BIT)
 
     def read_overflow(self):
-        """Four sticky peak readings (0-3), location 0 first."""
+        """Four sticky peak readings (0-3), location 0 first.
+
+        The ordering follows BxBFFT User Guide v3.2 s5.5 -- "The first
+        scaling position has bits [1:0], the second has bits [3:2], etc."
+        -- and the fft hier wires overflow_detect_o[7:0] straight through
+        the CDC to gpio2_io_i, so no reordering happens in gateware.
+
+        DISPUTED: the 2026-07-24 bench session concluded these come back
+        reversed, on the grounds that position 0 moved when only downstream
+        shifts changed, which nothing upstream can explain. That dataset
+        cannot actually settle it -- every schedule it tested held location
+        0 at shift 3, so the one variable that would identify the mapping
+        was never varied. Run :meth:`probe_detector_order` to settle it
+        before trusting either interpretation, and fix it in exactly one
+        place (here or the gateware), never both.
+        """
         return self.unpack(self._gpio.channel2.read() & _SHIFT_MASK)
+
+    def probe_detector_order(self, dwell=0.01):
+        """Identify which reading index responds to location 0's shift.
+
+        Varies ONLY location 0 and reports which index moves. Location 0's
+        shift is upstream of every detector except its own, so under the
+        documented ordering index 0 must be the one that stays put while
+        1..3 move together; under the disputed reversed ordering index 3
+        stays put instead.
+
+        Returns (readings_at_shift0_low, readings_at_shift0_high, verdict).
+        Needs a live, steady input -- run it with the comb on and the drive
+        unchanged for the duration.
+        """
+        rest = self._shifts[1:] if self._shifts is not None else (0, 0, 0)
+        self.set_shifts((0,) + tuple(rest))
+        low = self.measure(dwell)
+        self.set_shifts((3,) + tuple(rest))
+        high = self.measure(dwell)
+        moved = tuple(i for i in range(N_LOCATIONS) if low[i] != high[i])
+        if moved and 0 not in moved:
+            verdict = "documented order confirmed (index 0 fixed, downstream moved)"
+        elif moved and 3 not in moved:
+            verdict = "REVERSED: index 3 is location 0 -- reverse the unpack"
+        elif not moved:
+            verdict = ("inconclusive: nothing moved. Detectors may be "
+                       "saturated or the input is not driving the FFT")
+        else:
+            verdict = (f"inconclusive: indices {moved} moved, which fits "
+                       f"neither ordering")
+        return low, high, verdict
 
     def measure(self, dwell=0.01):
         """Reset detectors, dwell (an FFT frame is 500 ns; the 10 ms

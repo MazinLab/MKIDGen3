@@ -166,3 +166,54 @@ def test_present_detects_mode12_gpio():
         ip_dict = {}
 
     assert not FFTGainControl.present(NoGpio())
+
+
+# --- detector order probe -----------------------------------------------------
+# The 2026-07-24 bench session claimed read_overflow comes back reversed, but
+# its dataset held location 0 at shift 3 in every schedule, so it could not
+# identify the mapping. probe_detector_order varies exactly that.
+
+class _ProbeGPIO:
+    """Fake GPIO whose ch2 readings respond to ch1's location-0 shift.
+
+    `reversed_hw` picks which end of the returned word location 0 lands on.
+    """
+
+    def __init__(self, reversed_hw):
+        self._reversed = reversed_hw
+        self._word = 0
+        outer = self
+
+        class _Ch:
+            def __init__(self, n):
+                self.n = n
+
+            def write(self, val, mask):
+                if self.n == 1:
+                    outer._word = (outer._word & ~mask) | (val & mask)
+
+            def read(self):
+                s0 = outer._word & 3
+                # location 0 shift attenuates everything downstream of it;
+                # its own detector is upstream and never moves.
+                per_loc = [3, max(0, 3 - s0), max(0, 3 - s0), max(0, 3 - s0)]
+                if outer._reversed:
+                    per_loc = per_loc[::-1]
+                return sum(v << (2 * i) for i, v in enumerate(per_loc))
+
+        self.channel1 = _Ch(1)
+        self.channel2 = _Ch(2)
+
+
+def test_probe_detects_documented_order():
+    g = FFTGainControl(_ProbeGPIO(reversed_hw=False))
+    low, high, verdict = g.probe_detector_order(dwell=0)
+    assert low[0] == high[0]          # location 0's own detector is fixed
+    assert "documented order confirmed" in verdict
+
+
+def test_probe_detects_reversed_order():
+    g = FFTGainControl(_ProbeGPIO(reversed_hw=True))
+    low, high, verdict = g.probe_detector_order(dwell=0)
+    assert low[3] == high[3]
+    assert "REVERSED" in verdict
