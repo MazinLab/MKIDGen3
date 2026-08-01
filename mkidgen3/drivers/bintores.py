@@ -5,7 +5,7 @@ from mkidgen3.opfb import opfb_bin_number
 
 class BinToResIP(DefaultIP):
     resmap_addr = 0x1000
-    bindto = ['MazinLab:mkidgen3:bin_to_res:0.6', 'mazinlab:mkidgen3:bin_to_res:1.33']
+    bindto = ['MazinLab:mkidgen3:bin_to_res:0.6', 'mazinlab:mkidgen3:bin_to_res:1.33', 'mazinlab:mkidgen3:bin_to_res:1.34']
 
     def __init__(self, description):
         """
