@@ -8,10 +8,12 @@ import pytest
 
 from mkidgen3.drivers.triggerv2 import (PHOTON_V2_DTYPE, PHOTON_V2_PACKED_DTYPE,
                                         unpack_photons_v2, pack_photons_v2,
-                                        photon_times_ns, CYCLE_NS,
+                                        photon_times_ns, TriggerSubsystemV2,
                                         SENTINEL_U64, valid_photon_prefix,
                                         unpack_postage, POSTAGE_SAMPLES,
-                                        HOLDOFF_CYCLE_US, us_to_holdoff)
+                                        us_to_holdoff)
+from mkidgen3.recordfmt import (DEFAULT_RECORD_VERSION, RECORD_VERSION_OFFSET,
+                                cycle_ns)
 
 
 def _random_photons(n, rng):
@@ -73,9 +75,11 @@ def test_photon_times():
     p = np.zeros(2, dtype=PHOTON_V2_DTYPE)
     p['cycle'] = (1000, 1010)
     hdr = dict(time_ns=5_000_000_000, cycle=1000)
-    t = photon_times_ns(p, hdr)
-    assert t[0] == 5_000_000_000
-    assert t[1] == 5_000_000_000 + 10 * CYCLE_NS
+    for version, tick in ((2, 1000), (3, 2000)):
+        t = photon_times_ns(p, hdr, version)
+        assert t[0] == 5_000_000_000
+        assert t[1] == 5_000_000_000 + 10 * tick
+        assert cycle_ns(version) == tick
 
 
 def test_sentinel_cannot_collide_with_real_records():
@@ -118,12 +122,62 @@ def test_unpack_postage():
     assert unpack_postage(words[:-1]).shape == (n - 1, POSTAGE_SAMPLES)
 
 
-def test_us_to_holdoff():
-    assert HOLDOFF_CYCLE_US == 2
-    assert us_to_holdoff(20) == 10
-    assert us_to_holdoff(0) == 0
-    assert us_to_holdoff(5) == 3      # rounds up: never shorter than asked
-    assert us_to_holdoff(10_000) == 255  # clipped to the 8-bit field
+def test_us_to_holdoff_is_version_keyed():
+    # v3: the holdoff field counts 2 us visits. v2: 1 us visits -- the old
+    # module constant claimed 2 us for both and was wrong for v2.
+    assert us_to_holdoff(20, 3) == 10
+    assert us_to_holdoff(20, 2) == 20
+    assert us_to_holdoff(0, 3) == 0
+    assert us_to_holdoff(5, 3) == 3        # rounds up: never shorter than asked
+    assert us_to_holdoff(5, 2) == 5
+    assert us_to_holdoff(10_000, 3) == 255  # clipped to the 8-bit field
+    assert us_to_holdoff(10_000, 2) == 255
+
+
+class _FakeTrigger(TriggerSubsystemV2):
+    """Register model; deliberately skips DefaultIP.__init__."""
+
+    def __init__(self, record_version_word=0x0000A203):
+        self._init_state()
+        self._word = record_version_word
+        self.reads = []
+
+    def read(self, offset):
+        self.reads.append(offset)
+        assert offset == RECORD_VERSION_OFFSET
+        return self._word
+
+    def write(self, offset, value):  # pragma: no cover - not used here
+        raise AssertionError('unexpected write')
+
+
+def test_record_version_defaults_to_v2_until_probed():
+    t = _FakeTrigger()
+    assert t.record_version == DEFAULT_RECORD_VERSION
+    assert t.record_version_info is None
+    assert t.reads == []          # never probed blind
+
+
+def test_probe_record_version_reads_0x40_and_caches():
+    t = _FakeTrigger()
+    assert t.probe_record_version() == dict(version=3, lanes=2, beat_bits=10)
+    assert t.reads == [0x40]
+    assert t.record_version == 3
+    assert t.record_version_info == dict(version=3, lanes=2, beat_bits=10)
+
+
+def test_probe_record_version_refuses_an_unknown_version():
+    t = _FakeTrigger(record_version_word=0x0000A207)
+    with pytest.raises(RuntimeError, match='record version'):
+        t.probe_record_version()
+
+
+def test_set_record_version_without_touching_the_bus():
+    t = _FakeTrigger()
+    t.set_record_version(3)
+    assert t.record_version == 3 and t.reads == []
+    with pytest.raises(ValueError, match='record version'):
+        t.set_record_version(1)
 
 
 def test_layout_matches_gateware():

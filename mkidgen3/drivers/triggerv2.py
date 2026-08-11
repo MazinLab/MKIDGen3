@@ -45,8 +45,9 @@ Operational notes (first light, 2026-07-22):
   time-rotated (bounded-latency) chunking needs gateware flush support.
 * ``capture_postage`` drives the per-lane postage engines; stamps are raw
   unlabeled IQ snippets (the RTL's stamp metadata never reaches memory).
-* Trigger holdoff counts 2 us visit cycles (``us_to_holdoff`` converts);
-  gen2-era code that assumed 1 us units now gets double the holdoff.
+* Trigger holdoff counts visit cycles, and a visit is 1 us on a v2 build and
+  2 us on a v3 (stage-1/2) build. ``us_to_holdoff(us, version)`` converts and
+  takes the version explicitly -- there is no safe default.
 """
 import logging
 import math
@@ -62,10 +63,18 @@ except Exception:  # pragma: no cover - allows import (and unpacker tests) off-b
     allocate = None
     _PYNQ = False
 
+from mkidgen3.recordfmt import (DEFAULT_RECORD_VERSION, RECORD_VERSION_OFFSET,
+                                SUPPORTED_RECORD_VERSIONS, check_version,
+                                cycle_ns, decode_record_version,
+                                holdoff_cycle_us, trigger_lane)
+
 _logger = logging.getLogger(__name__)
 
-CYCLE_NS = 2000  # one trigger visit cycle per channel = 2 us
-HOLDOFF_CYCLE_US = 2  # the 8-bit trigger holdoff field counts visit cycles
+# Time constants are keyed on the record version, not fixed: a v2 build
+# visits every channel every 1 us, a v3 (stage-1/2) build every 2 us. The
+# constants that used to live here (CYCLE_NS = 2000, HOLDOFF_CYCLE_US = 2)
+# were right for v3 and wrong for v2 by a factor of two; see
+# mkidgen3.recordfmt.
 
 # Capture buffers are prefilled with this before being queued: real v2
 # records always have zero pad bits [127:113], so an all-ones hi word can
@@ -135,9 +144,14 @@ def pack_photons_v2(photons, out=None):
     return ret
 
 
-def photon_times_ns(photons, header):
-    """Absolute time in ns for each unpacked photon, given a chunk header dict."""
-    return header['time_ns'] + (photons['cycle'].astype(np.int64) - int(header['cycle'])) * CYCLE_NS
+def photon_times_ns(photons, header, version):
+    """Absolute time in ns for each unpacked photon, given a chunk header.
+
+    ``version`` is the record version (2 or 3): one ``cycle`` count is 1 us
+    on v2 and 2 us on v3.
+    """
+    return header['time_ns'] + (photons['cycle'].astype(np.int64)
+                                - int(header['cycle'])) * cycle_ns(version)
 
 
 def valid_photon_prefix(packed):
@@ -173,14 +187,14 @@ def unpack_postage(raw, n_stamps=None):
     return (real + 1j * imag).astype(np.complex64).reshape(n, POSTAGE_SAMPLES)
 
 
-def us_to_holdoff(us):
-    """Convert a trigger holdoff in microseconds to visit cycles (2 us units).
+def us_to_holdoff(us, version):
+    """Convert a trigger holdoff in microseconds to visit cycles.
 
-    Rounds up (the holdoff is never shorter than requested) and clips to the
-    8-bit field (max 255 cycles = 510 us). Note the gen2/HLS-era convention
-    was 1 us units: a GUI holdoff of 10 now means 20 us unless converted.
+    One cycle is 1 us on a v2 build and 2 us on a v3 build, so the version
+    is required. Rounds up (the holdoff is never shorter than requested) and
+    clips to the 8-bit field.
     """
-    return int(min(255, max(0, math.ceil(us / HOLDOFF_CYCLE_US))))
+    return int(min(255, max(0, math.ceil(us / holdoff_cycle_us(version)))))
 
 
 class CaptureTimeout(TimeoutError):
@@ -215,6 +229,9 @@ class _Reg:
     BASELINE_HOLDOFF = 13    # n[15:0], us units
     BASELINE_READ = 14       # bin[10:0]
     BASELINE_VALUE = 15      # baseline[15:0], RO, <=2us stale
+    RECORD_VERSION = 16      # byte offset 0x40: version[7:0], lanes[11:8],
+                             # beat_bits[15:12]. Appended after every other
+                             # trigger CSR, so no earlier offset moved.
     TRIG_DMA = 4096
     POSTAGE_DMA = 4352
     # HuskyDMA bank layout (relative to bank base)
@@ -335,6 +352,10 @@ class TriggerSubsystemV2(DefaultIP):
 
     def __init__(self, description):
         super().__init__(description=description)
+        self._init_state()
+
+    def _init_state(self):
+        """Driver-side state, separated from DefaultIP construction."""
         self.trigger_dma = _HuskyDMA(self, _Reg.TRIG_DMA)
         self.postage_dma = _HuskyDMA(self, _Reg.POSTAGE_DMA)
         # Buffers whose DMA addresses are still queued in the gateware after
@@ -350,6 +371,49 @@ class TriggerSubsystemV2(DefaultIP):
         self._hold_shadow = np.zeros(self.N_CHANNELS, np.int32)
         self._en_shadow = np.zeros(self.N_CHANNELS, bool)
         self._shadow_valid = np.zeros(self.N_CHANNELS, bool)
+        # Record layout in force. Stays at the v2 default until somebody who
+        # knows the overlay carries the stage-1/2 trigger probes the CSR:
+        # on older builds offset 0x40 is not a RecordVersion register.
+        self._record_version_info = None
+
+    # ---------- record version ----------
+    @property
+    def record_version(self):
+        """Photon record version in force (2 unless probed or set)."""
+        if self._record_version_info is None:
+            return DEFAULT_RECORD_VERSION
+        return self._record_version_info['version']
+
+    @property
+    def record_version_info(self):
+        """{version, lanes, beat_bits} once known, else None."""
+        return self._record_version_info
+
+    def probe_record_version(self):
+        """Read the RecordVersion CSR (byte offset 0x40) and cache it.
+
+        Only call this on an overlay already known to carry the stage-1/2
+        trigger -- established from the hwh (the IQ transform peripheral is
+        present), never by probing the bus blind.
+        """
+        word = self.read(RECORD_VERSION_OFFSET)
+        info = decode_record_version(word)
+        if info['version'] not in SUPPORTED_RECORD_VERSIONS:
+            raise RuntimeError(
+                f'RecordVersion CSR reads {word:#010x} -> record version '
+                f'{info["version"]}, lanes {info["lanes"]}, beat_bits '
+                f'{info["beat_bits"]}; this driver implements '
+                f'{SUPPORTED_RECORD_VERSIONS}')
+        self._record_version_info = info
+        return info
+
+    def set_record_version(self, version):
+        """Declare the record version without touching the bus."""
+        v = check_version(version)
+        lanes = {2: 4, 3: 2}[v]
+        beat_bits = {2: 9, 3: 10}[v]
+        self._record_version_info = dict(version=v, lanes=lanes,
+                                         beat_bits=beat_bits)
 
     # ---------- chunk header ----------
     def read_chunk_header(self):
@@ -377,9 +441,8 @@ class TriggerSubsystemV2(DefaultIP):
     # ---------- trigger configuration ----------
     def configure_channel(self, bin, threshold, holdoff, postage=False, enabled=True):
         """Program one channel. threshold is a raw signed 16-bit phase,
-        holdoff in visit cycles (2 us units, 0-255; use us_to_holdoff() to
-        convert from microseconds - gen2-era code that assumed 1 us units
-        now gets twice the holdoff it asked for)."""
+        holdoff in visit cycles (0-255). A visit is 1 us on a v2 build and
+        2 us on a v3 build; use us_to_holdoff(us, version) to convert."""
         b = int(bin) & 0x7ff
         self._thr_shadow[b] = int(threshold)
         self._hold_shadow[b] = int(holdoff)
