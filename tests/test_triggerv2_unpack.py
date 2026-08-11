@@ -13,7 +13,8 @@ from mkidgen3.drivers.triggerv2 import (PHOTON_V2_DTYPE, PHOTON_V2_PACKED_DTYPE,
                                         unpack_postage, POSTAGE_SAMPLES,
                                         us_to_holdoff)
 from mkidgen3.recordfmt import (DEFAULT_RECORD_VERSION, RECORD_VERSION_OFFSET,
-                                cycle_ns)
+                                SUPPORTED_RECORD_VERSIONS, cycle_ns,
+                                record_info)
 
 
 def _random_photons(n, rng):
@@ -178,6 +179,21 @@ def test_set_record_version_without_touching_the_bus():
     assert t.record_version == 3 and t.reads == []
     with pytest.raises(ValueError, match='record version'):
         t.set_record_version(1)
+
+
+def test_set_record_version_uses_the_canonical_geometry():
+    # The complete dict, both versions: a declared version must carry the
+    # same lanes/beat_bits as recordfmt's tables, not a private copy that
+    # can drift out of step with trigger_lane().
+    expected = {2: dict(version=2, lanes=4, beat_bits=9),
+                3: dict(version=3, lanes=2, beat_bits=10)}
+    for v in SUPPORTED_RECORD_VERSIONS:
+        t = _FakeTrigger()
+        t.set_record_version(v)
+        assert t.record_version_info == expected[v]
+        assert t.record_version_info == record_info(v)
+        assert t.record_version == v
+        assert t.reads == []
 
 
 def test_layout_matches_gateware():

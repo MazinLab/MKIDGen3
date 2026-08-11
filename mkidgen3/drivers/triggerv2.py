@@ -64,9 +64,9 @@ except Exception:  # pragma: no cover - allows import (and unpacker tests) off-b
     _PYNQ = False
 
 from mkidgen3.recordfmt import (DEFAULT_RECORD_VERSION, RECORD_VERSION_OFFSET,
-                                SUPPORTED_RECORD_VERSIONS, check_version,
-                                cycle_ns, decode_record_version,
-                                holdoff_cycle_us, trigger_lane)
+                                SUPPORTED_RECORD_VERSIONS, cycle_ns,
+                                decode_record_version, holdoff_cycle_us,
+                                record_info, trigger_lane)
 
 _logger = logging.getLogger(__name__)
 
@@ -408,12 +408,14 @@ class TriggerSubsystemV2(DefaultIP):
         return info
 
     def set_record_version(self, version):
-        """Declare the record version without touching the bus."""
-        v = check_version(version)
-        lanes = {2: 4, 3: 2}[v]
-        beat_bits = {2: 9, 3: 10}[v]
-        self._record_version_info = dict(version=v, lanes=lanes,
-                                         beat_bits=beat_bits)
+        """Declare the record version without touching the bus.
+
+        The geometry comes from mkidgen3.recordfmt and is never restated
+        here: a second copy of {lanes, beat_bits} could drift out of step
+        with trigger_lane() and nothing would notice. Raises ValueError on an
+        unsupported version.
+        """
+        self._record_version_info = record_info(version)
 
     # ---------- chunk header ----------
     def read_chunk_header(self):

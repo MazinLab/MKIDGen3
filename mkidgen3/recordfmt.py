@@ -63,3 +63,21 @@ def holdoff_cycle_us(version):
 def trigger_lane(bin, version):
     """Lane a channel's records and postage engine live on."""
     return int(bin) % TRIGGER_LANES_BY_VERSION[check_version(version)]
+
+
+def record_info(version):
+    """The canonical {version, lanes, beat_bits} for a supported version.
+
+    Derived from the tables above rather than restated, so a driver that
+    declares a version instead of reading the CSR cannot end up holding a
+    ``lanes`` that disagrees with :func:`trigger_lane`. A frame is
+    ``2**beat_bits`` beats, which is what ties beat_bits to
+    FRAME_BEATS_BY_VERSION.
+
+    Compare with :func:`decode_record_version`, which reports what the
+    gateware says it is; the two agreeing is the check that this driver
+    matches the bitstream.
+    """
+    v = check_version(version)
+    return dict(version=v, lanes=TRIGGER_LANES_BY_VERSION[v],
+                beat_bits=FRAME_BEATS_BY_VERSION[v].bit_length() - 1)

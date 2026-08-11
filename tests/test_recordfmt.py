@@ -8,7 +8,8 @@ from mkidgen3.recordfmt import (RECORD_VERSION_OFFSET, DEFAULT_RECORD_VERSION,
                                 SUPPORTED_RECORD_VERSIONS,
                                 STAGE2_RECORD_VERSION, decode_record_version,
                                 check_version, cycle_ns, holdoff_cycle_us,
-                                trigger_lane, CYCLE_NS_BY_VERSION,
+                                trigger_lane, record_info,
+                                CYCLE_NS_BY_VERSION,
                                 HOLDOFF_CYCLE_US_BY_VERSION,
                                 TRIGGER_LANES_BY_VERSION,
                                 FRAME_BEATS_BY_VERSION)
@@ -53,3 +54,20 @@ def test_lane_and_frame_geometry():
     assert [trigger_lane(b, 2) for b in range(6)] == [0, 1, 2, 3, 0, 1]
     assert trigger_lane(2047, 3) == 1
     assert trigger_lane(2047, 2) == 3
+
+
+def test_record_info_is_derived_from_the_canonical_tables():
+    # The whole point: nobody restates {lanes, beat_bits}, so a declared
+    # version can never disagree with trigger_lane() or the frame geometry.
+    assert record_info(3) == dict(version=3, lanes=2, beat_bits=10)
+    assert record_info(2) == dict(version=2, lanes=4, beat_bits=9)
+    assert record_info(3) == STAGE2_RECORD_VERSION  # matches the CSR word
+    for v in SUPPORTED_RECORD_VERSIONS:
+        info = record_info(v)
+        assert info['version'] == v
+        assert info['lanes'] == TRIGGER_LANES_BY_VERSION[v]
+        assert info['lanes'] == trigger_lane(TRIGGER_LANES_BY_VERSION[v] - 1,
+                                             v) + 1
+        assert 1 << info['beat_bits'] == FRAME_BEATS_BY_VERSION[v]
+    with pytest.raises(ValueError, match='record version'):
+        record_info(1)
