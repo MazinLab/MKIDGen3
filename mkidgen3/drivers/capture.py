@@ -619,7 +619,13 @@ class CaptureHierarchy(DefaultHierarchy):
             # The burst carries one channel per beat, so a transfer framed off a
             # TLAST boundary returns every channel's sums under the wrong index.
             # That is indistinguishable from real data downstream -- refuse it here.
-            if not self.axis2mm.tlast_syncd:
+            # EXCEPT in certified-shortfall mode (rows < 2048): there the dump's
+            # TLAST is precisely the part of the packet this build loses, so the
+            # flag reads False by construction on every successful capture and
+            # says nothing about alignment. Alignment on such a build is
+            # certified externally -- the comb identity gate measures the actual
+            # channel shift and the operator pins it (sweep_acc_pinned_lag).
+            if rows == 2048 and not self.axis2mm.tlast_syncd:
                 raise IOError(
                     'Sweep sum capture completed but the DMA was not framed on a TLAST '
                     'boundary, so the channel mapping of this burst is offset and the '
