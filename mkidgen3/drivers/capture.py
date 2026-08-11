@@ -7,8 +7,8 @@ from logging import getLogger
 from typing import Iterable
 
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
-    HP0_WINDOWS, hp0_reachable, flush_transfer, arm_fault, axis2mm_quiesced, \
-    check_description_for  # config, overlay details
+    HP0_WINDOWS, hp0_reachable, flush_transfer, arm_fault, \
+    CaptureBufferRelease, check_description_for  # config, overlay details
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel, ADC_INPUT_WARN
 from ..util import ps_ram_sane, format_bytes
 from ..interrupts import ThreadedPLInterruptManager
@@ -183,6 +183,10 @@ class CaptureHierarchy(DefaultHierarchy):
         super().__init__(description)
         self.filter_iq = {}
         self.filter_phase = {}
+        # A buffer whose DMA cannot be proven quiescent must outlive every
+        # local reference. PynqBuffer.__del__ frees CMA, so merely skipping an
+        # explicit free is not a leak and is not safe.
+        self._stuck_buffers = []
 
         switchloc = getattr(self, 'Switchboard', None) or getattr(self, 'switchboard', None) or self
         self.switch = getattr(switchloc, 'axis_switch_0', None) or getattr(switchloc, 'axis_switch', None)
@@ -289,47 +293,17 @@ class CaptureHierarchy(DefaultHierarchy):
             raise RuntimeError(why)
 
     def _settle_axis2mm(self, timeout=0.5):
-        """Abort the current transfer and wait until axis2mm stops writing.
+        """Abort, poll until quiescent, then clear the error latch."""
+        return CaptureBufferRelease._settle_axis2mm(self, timeout)
 
-        abort() and clear_error() are single register writes that return long
-        before the core is idle, so an abort is not on its own permission to
-        release the buffer. Quiescence is the driver's own readiness minus
-        r_err -- r_busy and aborting both clear -- because an abort sets r_err
-        and clearing it is what happens once the core is quiet, not before.
+    def _retain_stuck_buffer(self, capture_buffer):
+        """Keep a DMA-unsafe buffer alive until this process exits."""
+        return CaptureBufferRelease._retain_stuck_buffer(self, capture_buffer)
 
-        Returns True if it went quiet inside the deadline.
-        """
-        self.axis2mm.abort()
-        deadline = time.time() + timeout
-        while True:
-            if axis2mm_quiesced(self.axis2mm.cmd_ctrl_reg):
-                self.axis2mm.clear_error()
-                return True
-            if time.time() > deadline:
-                return False
-            time.sleep(0.0005)
-
-    def _release(self, buffer, writing, what, abort_timeout=0.5):
-        """Give a capture buffer back, unless the DMA might still be writing.
-
-        `writing` says a transfer was armed and has not been seen to finish;
-        the core is then aborted and waited out before anything is freed. If
-        it will not go quiet the buffer is deliberately leaked -- that costs
-        memory until the process restarts, where freeing it hands pages a live
-        DMA still holds the address of to the next allocation, and corrupts it
-        at some arbitrary later moment with nothing pointing back to here.
-
-        Returns True if the buffer was freed.
-        """
-        if writing and not self._settle_axis2mm(abort_timeout):
-            getLogger(__name__).error(
-                f'axis2mm is still not quiet {abort_timeout:.2f} s after aborting the '
-                f'{what} (status {self.axis2mm.cmd_ctrl_reg}); leaking the '
-                f'{buffer.nbytes} B buffer at {buffer.device_address:#x} rather than '
-                f'returning memory a live DMA can still write to. Restart to reclaim it.')
-            return False
-        buffer.freebuffer()
-        return True
+    def _release(self, capture_buffer, writing, what, abort_timeout=0.5):
+        """Release safely without masking an exception already in flight."""
+        return CaptureBufferRelease._release(
+            self, capture_buffer, writing, what, abort_timeout)
 
     def flush(self, n, timeout=1.0, abort_timeout=0.5):
         """Capture n*64 bytes to flush a fifo.
@@ -342,13 +316,12 @@ class CaptureHierarchy(DefaultHierarchy):
         """
         words, nbytes = flush_transfer(n)
         buffer = self._allocate(words, 'u64')
-        writing = False
+        writing = [False]
         try:
             self._check_arm(buffer.device_address, nbytes, buffer.nbytes)
             self.axis2mm.addr = buffer.device_address
             self.axis2mm.len = nbytes
-            self.axis2mm.start(continuous=False, increment=True)
-            writing = True
+            self.axis2mm.start(continuous=False, increment=True, armed=writing)
             deadline = time.time() + timeout
             while not self.axis2mm.complete:
                 if time.time() > deadline:
@@ -358,9 +331,9 @@ class CaptureHierarchy(DefaultHierarchy):
                     break
                 time.sleep(0.0005)
             else:
-                writing = False   # completed on its own: nothing is writing
+                writing[0] = False   # completed on its own: nothing is writing
         finally:
-            self._release(buffer, writing, f'{nbytes} B fifo flush', abort_timeout)
+            self._release(buffer, writing[0], f'{nbytes} B fifo flush', abort_timeout)
 
     def looping_capture(self, source: str, n: int, buffers: buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')
@@ -402,7 +375,7 @@ class CaptureHierarchy(DefaultHierarchy):
                 self.axis2mm.len = n
         self.abort()
 
-    def _capture(self, source, n, buffer_addr):
+    def _capture(self, source, n, buffer_addr, armed=None):
         if self.switch is not None:
             self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
         if n % 64:
@@ -420,7 +393,7 @@ class CaptureHierarchy(DefaultHierarchy):
         getLogger(__name__).debug(f'Starting capture of {format_bytes(n)} ({n // 64} beats) to address {hex(buffer_addr)} from '
                                   f'source {source}: \n Interrupt Status:' +
                                   str(ThreadedPLInterruptManager.get_status(self.axis2mm._interrupts['o_int']['fullpath'])))
-        self.axis2mm.start(continuous=False, increment=True)
+        self.axis2mm.start(continuous=False, increment=True, armed=armed)
 
     def is_ready(self):
         return self.axis2mm.ready
@@ -560,10 +533,10 @@ class CaptureHierarchy(DefaultHierarchy):
             timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
 
         buffer = self._allocate((2048, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
-        writing = False
+        writing = [False]
         try:
-            self._capture('iqsweep', self.SWEEP_SUMS_BYTES, buffer.device_address)
-            writing = True
+            self._capture('iqsweep', self.SWEEP_SUMS_BYTES,
+                          buffer.device_address, armed=writing)
             acc.start_point(n_frames, discard_frames)
             deadline = time.time() + timeout
             while not self.axis2mm.complete:
@@ -581,7 +554,7 @@ class CaptureHierarchy(DefaultHierarchy):
                         f'tlast_syncd=False means the DMA is discarding beats while it '
                         f'hunts for a packet boundary.')
                 time.sleep(0.0005)
-            writing = False   # completed on its own: nothing is writing
+            writing[0] = False   # completed on its own: nothing is writing
             # The burst carries one channel per beat, so a transfer framed off a
             # TLAST boundary returns every channel's sums under the wrong index.
             # That is indistinguishable from real data downstream -- refuse it here.
@@ -595,7 +568,7 @@ class CaptureHierarchy(DefaultHierarchy):
             buffer.invalidate()
             return np.array(buffer)
         finally:
-            self._release(buffer, writing, 'sweep sum capture')
+            self._release(buffer, writing[0], 'sweep sum capture')
 
     def probe_sweep_burst(self, n_frames=4096, discard_frames=64, extra_channels=8,
                           timeout=None):
@@ -641,12 +614,12 @@ class CaptureHierarchy(DefaultHierarchy):
             timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
 
         buffer = self._allocate((rows, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
-        writing = False
+        writing = [False]
         try:
             buffer[:] = -1
             buffer.flush()
-            self._capture('iqsweep', rows * 32, buffer.device_address)
-            writing = True
+            self._capture('iqsweep', rows * 32, buffer.device_address,
+                          armed=writing)
             acc.start_point(n_frames, discard_frames)
             deadline = time.time() + timeout
             while not self.axis2mm.complete:
@@ -657,11 +630,11 @@ class CaptureHierarchy(DefaultHierarchy):
                         f'nothing follows it -- that itself argues the burst is '
                         f'exactly {2048 * 32} bytes and nothing is being inserted.')
                 time.sleep(0.0005)
-            writing = False   # completed on its own: nothing is writing
+            writing[0] = False   # completed on its own: nothing is writing
             buffer.invalidate()
             return np.array(buffer)
         finally:
-            self._release(buffer, writing, 'sweep burst probe')
+            self._release(buffer, writing[0], 'sweep burst probe')
 
     def capture_adc(self, n, duration=False, complex=False, wait=True):
         """
@@ -903,13 +876,17 @@ class _AXIS2MM:
         else:
             return None
 
-    def start(self, continuous=False, increment=True):
+    def start(self, continuous=False, increment=True, armed=None):
         if not self.ready:
             raise IOError('Not ready, need to abort and/or clear errors')
         x = 0x80000000  # start and do not clear error
         x |= continuous << 28
         x |= (not increment) << 27
         self.write(0, x)
+        # Mark only after the start write succeeds, but before returning to
+        # _capture and its caller. This is the true arm boundary for cleanup.
+        if armed is not None:
+            armed[0] = True
 
 
 class AXIS2MMIP(DefaultIP, _AXIS2MM):

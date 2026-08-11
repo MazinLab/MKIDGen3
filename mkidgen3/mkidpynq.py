@@ -1,4 +1,7 @@
 import subprocess
+import time
+from logging import getLogger
+
 import numpy as np
 
 MAX_CAP_RAM_BYTES = 2**32
@@ -88,6 +91,80 @@ def axis2mm_quiesced(status):
     written to. Both r_busy and aborting must read back clear.
     """
     return not any(bool(status[k]) for k in AXIS2MM_QUIESCENT_BITS)
+
+
+class CaptureBufferRelease:
+    """PYNQ-free axis2mm settle/release logic for capture hierarchies.
+
+    The hardware-facing capture module cannot be imported off-board. Keeping
+    this small mixin here lets tests exercise the actual register ordering and
+    failure behavior used by ``CaptureHierarchy`` with a scripted register
+    file, without pretending an AST spelling check proves runtime behavior.
+    """
+
+    def _settle_axis2mm(self, timeout=0.5):
+        """Abort, wait for quiescence, then clear the latched error."""
+        self.axis2mm.abort()
+        deadline = time.time() + timeout
+        while True:
+            if axis2mm_quiesced(self.axis2mm.cmd_ctrl_reg):
+                self.axis2mm.clear_error()
+                return True
+            if time.time() > deadline:
+                return False
+            time.sleep(0.0005)
+
+    def _retain_stuck_buffer(self, capture_buffer):
+        """Keep exactly one process-lifetime reference to an unsafe buffer."""
+        if not any(candidate is capture_buffer
+                   for candidate in self._stuck_buffers):
+            self._stuck_buffers.append(capture_buffer)
+
+    def _release(self, capture_buffer, writing, what, abort_timeout=0.5):
+        """Release a safe buffer; retain it if cleanup cannot prove safety.
+
+        This method is called from ``finally`` blocks. Consequently every
+        ordinary cleanup failure is caught here so it cannot replace the
+        capture exception already in flight. If the DMA state is uncertain,
+        a real reference is retained until process exit; otherwise
+        ``PynqBuffer.__del__`` would silently free the CMA pages anyway.
+
+        Returns True only when ``freebuffer`` completed successfully.
+        """
+        logger = None
+        try:
+            logger = getLogger(self.__class__.__module__)
+            if writing and not self._settle_axis2mm(abort_timeout):
+                self._retain_stuck_buffer(capture_buffer)
+                logger.error(
+                    f'axis2mm is still not quiet {abort_timeout:.2f} s after aborting the '
+                    f'{what} (status {self.axis2mm.cmd_ctrl_reg}); leaking the '
+                    f'{capture_buffer.nbytes} B buffer at '
+                    f'{capture_buffer.device_address:#x} rather than returning memory a '
+                    f'live DMA can still write to. Restart to reclaim it.')
+                return False
+            capture_buffer.freebuffer()
+            return True
+        except Exception as cleanup_failure:
+            # Retain before returning even if abort/status/clear/freebuffer
+            # failed. Logging is best-effort too: cleanup must not replace the
+            # exception whose finally block brought us here.
+            try:
+                self._retain_stuck_buffer(capture_buffer)
+            except Exception:
+                pass
+            try:
+                if logger is None:
+                    logger = getLogger(self.__class__.__module__)
+                logger.error(
+                    f'Failed to release the {what} buffer; retaining it because '
+                    f'the DMA state is uncertain. Restart to reclaim it. Original '
+                    f'cleanup failure: {cleanup_failure!r}',
+                    exc_info=(type(cleanup_failure), cleanup_failure,
+                              cleanup_failure.__traceback__))
+            except Exception:
+                pass
+            return False
 
 
 N_IQ_GROUPS = 256
