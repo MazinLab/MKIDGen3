@@ -7,7 +7,7 @@ from logging import getLogger
 from typing import Iterable
 
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
-    check_description_for  # config, overlay details
+    HP0_WINDOWS, hp0_reachable, check_description_for  # config, overlay details
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel, ADC_INPUT_WARN
 from ..util import ps_ram_sane, format_bytes
 from ..interrupts import ThreadedPLInterruptManager
@@ -150,6 +150,15 @@ class FilterPhase(DefaultIP):
         self.write(self.ADDR_LASTGRP, last)
 
 
+class CaptureNotSupported(RuntimeError):
+    """This overlay does not carry the IP a capture needs.
+
+    NODDR builds drop the engineering capture taps (filter_iq_0/1,
+    filter_phase_0, the ADC capture slices) along with PL DDR4. Raised
+    instead of AttributeError so a daemon can map it to `unsupported`.
+    """
+
+
 class CaptureHierarchy(DefaultHierarchy):
     """
     Capture Hierarchy.
@@ -179,6 +188,14 @@ class CaptureHierarchy(DefaultHierarchy):
 
         if not hasattr(self, 'axis2mm'):
             self.axis2mm = self.axis2mm_0
+
+        # NODDR overlays have no PL DDR4: capture buffers become plain CMA in
+        # PS DDR, reached over HP0. The engineering capture taps and the ADC
+        # capture slices are absent from those builds too.
+        self._noddr = getattr(self, 'ddr4_0', None) is None
+        if self._noddr:
+            getLogger(__name__).info('No ddr4_0 in this overlay: capture '
+                                     'buffers will be PS-DDR CMA')
 
         self._fetch_filter_blocks()
 
@@ -232,9 +249,35 @@ class CaptureHierarchy(DefaultHierarchy):
         for k, v in ph:
             self.SOURCE_MAP[k] = v + pbase + 1
 
+    @property
+    def noddr(self):
+        """True if this overlay has no PL DDR4 (capture goes to PS DDR)."""
+        return self._noddr
+
+    def _allocate(self, shape, dtype, cacheable=False):
+        """Allocate a capture buffer axis2mm can actually write into.
+
+        With PL DDR4 present nothing changes. Without it the buffer is plain
+        CMA in PS DDR, and its physical address must land inside one of the
+        two HP0 windows -- an address in neither DECERRs silently, so refuse
+        before arming rather than return a buffer that never fills.
+        """
+        target = getattr(self, 'ddr4_0', None)
+        if target is not None:
+            return allocate(shape, dtype=dtype, target=target, cacheable=cacheable)
+        buf = allocate(shape, dtype=dtype, cacheable=cacheable)
+        addr = int(buf.device_address)
+        if not hp0_reachable(addr, buf.nbytes):
+            buf.freebuffer()
+            raise RuntimeError(
+                f'CMA buffer at {addr:#x} (+{buf.nbytes} B) is outside the HP0 '
+                f'windows {[(hex(a), hex(b)) for a, b in HP0_WINDOWS]}; arming '
+                'axis2mm with it would DECERR with no visible symptom')
+        return buf
+
     def flush(self, n):
         """Capture n*64 bytes to flush a fifo"""
-        buffer = allocate(n, dtype='u64', target=self.ddr4_0)
+        buffer = self._allocate(n, 'u64')
         self.axis2mm.addr = buffer.device_address
         self.axis2mm.len = 64 * n
         self.axis2mm.start(continuous=False, increment=True)
@@ -364,7 +407,10 @@ class CaptureHierarchy(DefaultHierarchy):
             raise ValueError('Must request at least 1 sample')
 
         if self.filter_iq.get(tap_location, None) is None:
-            raise ValueError(f'Unsupported IQ capture location: {tap_location}')
+            raise CaptureNotSupported(
+                f'no IQ capture tap {tap_location!r} in this overlay '
+                f'(NODDR builds carry no filter_iq); available: '
+                f'{sorted(str(k) for k, v in self.filter_iq.items() if v is not None)}')
 
         if groups is not None:
             self.filter_iq[tap_location].keep = groups
@@ -374,8 +420,8 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * n_groups * 32
 
         try:
-            buffer = allocate((n, n_groups * 8, 2), dtype='i2', target=self.ddr4_0,
-                              cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
+            buffer = self._allocate((n, n_groups * 8, 2), 'i2',
+                                    cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -424,8 +470,7 @@ class CaptureHierarchy(DefaultHierarchy):
         if timeout is None:
             timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
 
-        buffer = allocate((2048, 4), dtype='i8', target=self.ddr4_0,
-                          cacheable=self.USE_CACHEABLE_BUFFERS)
+        buffer = self._allocate((2048, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
         try:
             self._capture('iqsweep', self.SWEEP_SUMS_BYTES, buffer.device_address)
             acc.start_point(n_frames, discard_frames)
@@ -501,8 +546,7 @@ class CaptureHierarchy(DefaultHierarchy):
         if timeout is None:
             timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
 
-        buffer = allocate((rows, 4), dtype='i8', target=self.ddr4_0,
-                          cacheable=self.USE_CACHEABLE_BUFFERS)
+        buffer = self._allocate((rows, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
         try:
             buffer[:] = -1
             buffer.flush()
@@ -532,6 +576,12 @@ class CaptureHierarchy(DefaultHierarchy):
         required with memory sizes (i.e. will use 5x standard memory in PS DDR).
 
         """
+        if self._noddr:
+            raise CaptureNotSupported(
+                'no ADC capture in this overlay: the NODDR build drops the ADC '
+                'capture slices along with PL DDR4. Load a full bitstream to '
+                'capture raw ADC.')
+
         if complex and not wait:
             raise RuntimeError('Complex return not supported with immediate return.')
 
@@ -554,8 +604,8 @@ class CaptureHierarchy(DefaultHierarchy):
             raise RuntimeError('Not enough RAM to copy capture to complex')
 
         try:
-            buffer = allocate((n, 2), dtype='i2', target=self.ddr4_0,
-                              cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
+            buffer = self._allocate((n, 2), 'i2',
+                                    cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')
@@ -608,8 +658,10 @@ class CaptureHierarchy(DefaultHierarchy):
         wait is args to selt.wait
         """
         if self.filter_phase.get(tap_location, None) is None:
-            getLogger(__name__).error(f'Bitstream does not support phase capture at tap {tap_location}')
-            return None
+            raise CaptureNotSupported(
+                f'no phase capture tap {tap_location!r} in this overlay '
+                f'(NODDR builds carry no filter_phase); available: '
+                f'{sorted(str(k) for k, v in self.filter_phase.items() if v is not None)}')
 
         if duration:
             # n samples = t[ms] * 1e6[samples/sec]
@@ -626,8 +678,8 @@ class CaptureHierarchy(DefaultHierarchy):
         capture_bytes = n * 2 * n_groups * 16
 
         try:
-            buffer = allocate((n, n_groups * 16), dtype='i2', target=self.ddr4_0,
-                              cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
+            buffer = self._allocate((n, n_groups * 16), 'i2',
+                                    cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
             raise RuntimeError('Insufficient free space')

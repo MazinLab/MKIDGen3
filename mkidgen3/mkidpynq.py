@@ -3,6 +3,28 @@ import numpy as np
 
 MAX_CAP_RAM_BYTES = 2**32
 PL_DDR4_ADDR = 0x500000000
+
+# The two PS-DDR windows the PL sees through HP0 on NODDR builds, where
+# axis2mm's M_AXI joins the trigger's HP0 interconnect and capture results
+# land in PS DDR instead of PL DDR4. Half-open (start, end).
+HP0_WINDOWS = ((0x0000_0000, 0x8000_0000),
+               (0x0008_0000_0000, 0x0009_0000_0000))
+
+
+def hp0_reachable(addr, nbytes=1):
+    """True if [addr, addr+nbytes) lies inside one HP0 window.
+
+    An address in neither window DECERRs, and the daemon sees nothing at all
+    -- no error, no data -- so check before arming a DMA. A buffer may not
+    straddle the gap between the windows.
+    """
+    a = int(addr)
+    n = max(1, int(nbytes))
+    if a < 0:
+        return False
+    return any(lo <= a and a + n <= hi for lo, hi in HP0_WINDOWS)
+
+
 N_IQ_GROUPS = 256
 
 PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
