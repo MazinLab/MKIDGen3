@@ -517,6 +517,42 @@ class CaptureHierarchy(DefaultHierarchy):
     SWEEP_SUMS_BYTES = 2048 * 32
     SWEEP_FRAME_RATE = 512e6 / 256  # full 2048 channel frames per second on ddciq
 
+    def _sweep_timeout_ladder(self, acc, buffer):
+        """The gateware's discriminating reads for a zero-progress sweep hang.
+
+        Run mid-hang, before anything aborts the core. (1) Re-pulse the
+        accumulator WITHOUT touching the DMA and watch progress and the
+        axis2mm input fifo_len (bits [20:16] of +0x00): progress jumping
+        means the first dump drained into an idle DMA and was discarded
+        (OPT_TREADY_WHILE_IDLE) — an arm-ordering race, and 'restart the
+        accumulator, not the DMA' is the workaround. (2) Read the capture
+        switch control (+0x0) and M00 mux (+0x40): anything but 4 with
+        bit 31 clear means the route was never live and beats died at the
+        switch. All reads/writes go through the bound drivers.
+        """
+        ladder = {}
+        try:
+            base = buffer.device_address
+            acc.start_point(2, 0)
+            max_fifo = 0
+            progress = 0
+            for _ in range(40):
+                reg = self.axis2mm.read(0)
+                max_fifo = max(max_fifo, (reg >> 16) & 0x1f)
+                progress = self.axis2mm.addr - base
+                if progress:
+                    break
+                time.sleep(0.001)
+            ladder['repulse_progress'] = int(progress)
+            ladder['fifo_len_max'] = int(max_fifo)
+            switch_mmio = getattr(self.switch, 'mmio', None)
+            if switch_mmio is not None:
+                ladder['switch_ctrl'] = hex(switch_mmio.read(0x0))
+                ladder['switch_m00'] = hex(switch_mmio.read(0x40))
+        except Exception as error:
+            ladder['ladder_error'] = repr(error)
+        return ladder
+
     def capture_sweep_sums(self, n_frames, discard_frames=0, timeout=None):
         """One hardware accumulated sweep point from the iq_sweep_acc block.
 
@@ -551,6 +587,7 @@ class CaptureHierarchy(DefaultHierarchy):
                     syncd = self.axis2mm.tlast_syncd
                     ctrl = self.axis2mm.cmd_ctrl_reg
                     progressed = self.axis2mm.addr - buffer.device_address
+                    ladder = self._sweep_timeout_ladder(acc, buffer)
                     raise IOError(
                         f'Sweep sum capture did not complete in {timeout:.2f} s '
                         f'(accumulator start={st["start"]} done={st["done"]} '
@@ -559,11 +596,11 @@ class CaptureHierarchy(DefaultHierarchy):
                         f'progress={progressed} B of {self.SWEEP_SUMS_BYTES}). '
                         f'idle=True with done=False means the accumulator never ran; '
                         f'tlast_syncd=False means the DMA is discarding beats while it '
-                        f'hunts for a packet boundary. busy=True err=False with '
-                        f'progress frozen ~30-35 KiB is the NODDR rate-mismatch drop '
-                        f'(dump 16.4 GB/s vs HP0 4.1 GB/s, lossy sw0 boundary): the '
-                        f'burst tail including TLAST was dropped upstream and this '
-                        f'build cannot sweep; see the 2026-08-11 gateware analysis.')
+                        f'hunts for a packet boundary. Gateware ladder (2026-08-11): '
+                        f'{ladder}. repulse_progress jumping means the first dump '
+                        f'drained into an unarmed DMA (arm-ordering race); zero with '
+                        f'a correct switch M00 mux (=4, bit 31 clear) reopens the '
+                        f'switch-to-FIFO leg as a gateware question.')
                 time.sleep(0.0005)
             writing[0] = False   # completed on its own: nothing is writing
             # The burst carries one channel per beat, so a transfer framed off a
