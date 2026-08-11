@@ -89,9 +89,17 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         return coeffs[::-1]  # see coefficient reload tab for order in block design
 
     def _send_config(self, wait=False):
-        """Commit every pending reload slot on every bank."""
-        self.fifo.tx(fir_config_packet(self._record_version),
-                     destination=FIR_CONFIG_TDEST, wait=wait)
+        """Commit every pending reload slot on every bank.
+
+        Chunked because the v3 commit vector (1024 uint16 = 512 words)
+        exceeds the 512-deep TX FIFO's usable vacancy (depth - 4, PG080);
+        the config channel consumes vector entries in order across the
+        resulting TLAST boundaries. ``wait`` is retained for signature
+        compatibility: the chunked path already polls the FIFO for drain,
+        which is the stronger guarantee.
+        """
+        self.fifo.tx_chunked(fir_config_packet(self._record_version),
+                             destination=FIR_CONFIG_TDEST)
         self._pending = {}
 
     def load_coeff(self, res_id, coeffs, d2_coeffs=None, vet=True, force_commit=False,

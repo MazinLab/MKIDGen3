@@ -1,7 +1,11 @@
 import time
 from logging import getLogger
-from pynq import DefaultIP
 import numpy as np
+
+try:
+    from pynq import DefaultIP
+except ImportError:  # off-board: importable for unit tests, unusable
+    DefaultIP = object
 
 
 class AxisFIFO(DefaultIP):
@@ -44,6 +48,33 @@ class AxisFIFO(DefaultIP):
             _, event = ThreadedPLInterruptManager.get_monitor(self, id=repr(self)+'tx')
             event.wait()
             event.clear()
+
+    def tx_chunked(self, data, destination=0, last_bytes=4, chunk_words=256,
+                   timeout_s=2.0):
+        """Send one logical packet as multiple FIFO frames, polling for room.
+
+        For packets larger than the FIFO's usable vacancy (depth - 4 words,
+        PG080) a single ``tx`` can never succeed: the 512-deep TX FIFO tops
+        out at 508 words of vacancy, and the v3 FIR commit vector is 512
+        words. Each slice goes out as its own frame (its own TLR write, so
+        its own TLAST), which requires the consumer to treat back-to-back
+        frames on the TDEST as one vector. Vacancy is polled between frames
+        instead of using the transmit-complete interrupt so this does not
+        depend on the interrupt manager being live.
+        """
+        data = np.asarray(data)
+        for start in range(0, data.size, chunk_words):
+            piece = data[start:start + chunk_words]
+            deadline = time.time() + timeout_s
+            while self.tx_vacancy < piece.size:
+                if time.time() > deadline:
+                    raise TimeoutError(
+                        f'TX FIFO did not drain to {piece.size} words within '
+                        f'{timeout_s} s; is the stream consumer clocked?')
+                time.sleep(0.0005)
+            piece_last = last_bytes if start + chunk_words >= data.size else 4
+            self.tx(piece, destination=destination, last_bytes=piece_last,
+                    wait=False)
 
     def rx(self):
         """Pull all the data out of the FIFO"""
