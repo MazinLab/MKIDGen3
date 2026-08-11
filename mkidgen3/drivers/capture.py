@@ -309,6 +309,28 @@ class CaptureHierarchy(DefaultHierarchy):
                 return False
             time.sleep(0.0005)
 
+    def _release(self, buffer, writing, what, abort_timeout=0.5):
+        """Give a capture buffer back, unless the DMA might still be writing.
+
+        `writing` says a transfer was armed and has not been seen to finish;
+        the core is then aborted and waited out before anything is freed. If
+        it will not go quiet the buffer is deliberately leaked -- that costs
+        memory until the process restarts, where freeing it hands pages a live
+        DMA still holds the address of to the next allocation, and corrupts it
+        at some arbitrary later moment with nothing pointing back to here.
+
+        Returns True if the buffer was freed.
+        """
+        if writing and not self._settle_axis2mm(abort_timeout):
+            getLogger(__name__).error(
+                f'axis2mm is still not quiet {abort_timeout:.2f} s after aborting the '
+                f'{what} (status {self.axis2mm.cmd_ctrl_reg}); leaking the '
+                f'{buffer.nbytes} B buffer at {buffer.device_address:#x} rather than '
+                f'returning memory a live DMA can still write to. Restart to reclaim it.')
+            return False
+        buffer.freebuffer()
+        return True
+
     def flush(self, n, timeout=1.0, abort_timeout=0.5):
         """Capture n*64 bytes to flush a fifo.
 
@@ -338,17 +360,7 @@ class CaptureHierarchy(DefaultHierarchy):
             else:
                 writing = False   # completed on its own: nothing is writing
         finally:
-            if writing and not self._settle_axis2mm(abort_timeout):
-                # Leak it, on purpose. A leaked CMA buffer costs memory until
-                # the daemon restarts; one freed while axis2mm still holds its
-                # physical address corrupts whatever is allocated next.
-                getLogger(__name__).error(
-                    f'axis2mm is still not quiet {abort_timeout:.2f} s after abort '
-                    f'(status {self.axis2mm.cmd_ctrl_reg}); leaking the {buffer.nbytes} B '
-                    f'flush buffer at {buffer.device_address:#x} rather than returning '
-                    f'memory a live DMA can still write to. Restart to reclaim it.')
-            else:
-                buffer.freebuffer()
+            self._release(buffer, writing, f'{nbytes} B fifo flush', abort_timeout)
 
     def looping_capture(self, source: str, n: int, buffers: buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')
@@ -548,15 +560,19 @@ class CaptureHierarchy(DefaultHierarchy):
             timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
 
         buffer = self._allocate((2048, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
+        writing = False
         try:
             self._capture('iqsweep', self.SWEEP_SUMS_BYTES, buffer.device_address)
+            writing = True
             acc.start_point(n_frames, discard_frames)
             deadline = time.time() + timeout
             while not self.axis2mm.complete:
                 if time.time() > deadline:
+                    # Read the diagnostics before anything aborts the core:
+                    # _release does that on the way out, and an abort perturbs
+                    # exactly the bits this message reports.
                     st = acc.status
                     syncd = self.axis2mm.tlast_syncd
-                    self.axis2mm.abort()
                     raise IOError(
                         f'Sweep sum capture did not complete in {timeout:.2f} s '
                         f'(accumulator start={st["start"]} done={st["done"]} '
@@ -565,6 +581,7 @@ class CaptureHierarchy(DefaultHierarchy):
                         f'tlast_syncd=False means the DMA is discarding beats while it '
                         f'hunts for a packet boundary.')
                 time.sleep(0.0005)
+            writing = False   # completed on its own: nothing is writing
             # The burst carries one channel per beat, so a transfer framed off a
             # TLAST boundary returns every channel's sums under the wrong index.
             # That is indistinguishable from real data downstream -- refuse it here.
@@ -578,7 +595,7 @@ class CaptureHierarchy(DefaultHierarchy):
             buffer.invalidate()
             return np.array(buffer)
         finally:
-            buffer.freebuffer()
+            self._release(buffer, writing, 'sweep sum capture')
 
     def probe_sweep_burst(self, n_frames=4096, discard_frames=64, extra_channels=8,
                           timeout=None):
@@ -624,26 +641,27 @@ class CaptureHierarchy(DefaultHierarchy):
             timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
 
         buffer = self._allocate((rows, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
+        writing = False
         try:
             buffer[:] = -1
             buffer.flush()
             self._capture('iqsweep', rows * 32, buffer.device_address)
+            writing = True
             acc.start_point(n_frames, discard_frames)
             deadline = time.time() + timeout
             while not self.axis2mm.complete:
                 if time.time() > deadline:
-                    self.axis2mm.abort()
-                    self.axis2mm.clear_error()
                     raise IOError(
                         f'Sweep burst probe did not complete in {timeout:.2f} s. '
                         f'Asking for more than one burst can legitimately hang if '
                         f'nothing follows it -- that itself argues the burst is '
                         f'exactly {2048 * 32} bytes and nothing is being inserted.')
                 time.sleep(0.0005)
+            writing = False   # completed on its own: nothing is writing
             buffer.invalidate()
             return np.array(buffer)
         finally:
-            buffer.freebuffer()
+            self._release(buffer, writing, 'sweep burst probe')
 
     def capture_adc(self, n, duration=False, complex=False, wait=True):
         """
