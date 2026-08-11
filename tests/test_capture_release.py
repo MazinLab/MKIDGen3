@@ -10,10 +10,19 @@ from pathlib import Path
 
 import pytest
 
-from mkidgen3.mkidpynq import CaptureBufferRelease
+from mkidgen3.mkidpynq import (CaptureBufferRelease,
+                               release_stuck_buffers_after_reconfigure,
+                               retained_stuck_buffer_count)
 
 CAPTURE = Path(__file__).resolve().parents[1] / 'mkidgen3' / 'drivers' / 'capture.py'
 TREE = ast.parse(CAPTURE.read_text())
+
+
+@pytest.fixture(autouse=True)
+def _clear_process_stuck_buffers():
+    release_stuck_buffers_after_reconfigure()
+    yield
+    release_stuck_buffers_after_reconfigure()
 
 
 def _enclosing_function(node, tree=TREE):
@@ -78,7 +87,7 @@ def test_sweep_arm_state_is_marked_at_the_start_write_boundary():
                         and any(isinstance(t, ast.Subscript)
                                 and isinstance(t.value, ast.Name)
                                 and t.value.id == 'armed' for t in n.targets))
-    assert start_write.lineno < armed_assign.lineno
+    assert armed_assign.lineno < start_write.lineno
     assert isinstance(armed_assign.value, ast.Constant)
     assert armed_assign.value.value is True
 
@@ -183,6 +192,8 @@ class FakeAxis2MM:
     @property
     def cmd_ctrl_reg(self):
         self.operations.append(('read', 'cmd_ctrl'))
+        if self.failure_site == 'interrupt':
+            raise KeyboardInterrupt
         if self.failure_site == 'read':
             raise OSError('scripted MMIO status read failed')
         return self.registers['cmd_ctrl'].pop(0)
@@ -212,7 +223,6 @@ class FakeCapture:
 
     def __init__(self, axis2mm):
         self.axis2mm = axis2mm
-        self._stuck_buffers = []
 
     def _settle_axis2mm(self, timeout=0.5):
         return CaptureBufferRelease._settle_axis2mm(self, timeout)
@@ -247,7 +257,7 @@ def test_release_never_throws_on_any_cleanup_failure(failure_site, caplog):
 
     assert capture._release(capture_buffer, writing, 'test capture') is False
     assert capture_buffer.freed is False
-    assert capture._stuck_buffers == [capture_buffer]
+    assert retained_stuck_buffer_count() == 1
     assert 'scripted' in caplog.text
 
 
@@ -263,7 +273,7 @@ def test_release_failure_does_not_replace_the_inflight_capture_error():
         finally:
             capture._release(capture_buffer, True, 'test capture')
     assert str(caught.value) == expected
-    assert capture._stuck_buffers == [capture_buffer]
+    assert retained_stuck_buffer_count() == 1
 
 
 def test_stuck_dma_retains_the_buffer_instead_of_hollow_leaking(caplog):
@@ -274,5 +284,38 @@ def test_stuck_dma_retains_the_buffer_instead_of_hollow_leaking(caplog):
     assert capture._release(capture_buffer, True, 'test capture',
                             abort_timeout=-1) is False
     assert capture_buffer.freed is False
-    assert capture._stuck_buffers == [capture_buffer]
+    assert retained_stuck_buffer_count() == 1
     assert 'Restart to reclaim it' in caplog.text
+
+
+def test_stuck_buffer_outlives_its_capture_hierarchy():
+    import gc
+    import weakref
+
+    port = FakeAxis2MM([_status(r_busy=True), _status(r_busy=True)])
+    capture = FakeCapture(port)
+    capture_buffer = FakeBuffer()
+    buffer_ref = weakref.ref(capture_buffer)
+
+    assert not capture._release(capture_buffer, True, 'test capture',
+                                abort_timeout=-1)
+    del capture_buffer
+    del capture
+    gc.collect()
+    assert buffer_ref() is not None
+    assert retained_stuck_buffer_count() == 1
+
+    assert release_stuck_buffers_after_reconfigure() == 1
+    gc.collect()
+    assert buffer_ref() is None
+
+
+def test_keyboard_interrupt_mid_settle_is_retained_and_reraised():
+    port = FakeAxis2MM(failure_site='interrupt')
+    capture = FakeCapture(port)
+    capture_buffer = FakeBuffer()
+
+    with pytest.raises(KeyboardInterrupt):
+        capture._release(capture_buffer, True, 'test capture')
+    assert not capture_buffer.freed
+    assert retained_stuck_buffer_count() == 1

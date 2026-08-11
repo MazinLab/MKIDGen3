@@ -75,15 +75,43 @@ def test_accumulate_into_out():
         unpack_photons_v2(pack_photons_v2(p), out=out, n=20)
 
 
-def test_photon_times():
+def test_photon_times_v2_have_visit_resolution():
     p = np.zeros(2, dtype=PHOTON_V2_DTYPE)
     p['cycle'] = (1000, 1010)
     hdr = dict(time_ns=5_000_000_000, cycle=1000)
-    for version, tick in ((2, 1000), (3, 2000)):
-        t = photon_times_ns(p, hdr, version)
-        assert t[0] == 5_000_000_000
-        assert t[1] == 5_000_000_000 + 10 * tick
-        assert cycle_ns(version) == tick
+    t = photon_times_ns(p, hdr, 2)
+    assert t[0] == 5_000_000_000
+    assert t[1] == 5_000_000_000 + 10_000
+    assert cycle_ns(2) == 1000
+
+
+def test_photon_times_v3_include_signed_dt_extrema():
+    # This must use the v3 dtype: the old test passed a v2 array while asking
+    # for v3 timing, so it could not detect that dt was being ignored.
+    p = np.zeros(2, dtype=PHOTON_V3_DTYPE)
+    p['cycle'] = (1000, 1010)
+    p['dt'] = (-128, 127)
+    hdr = dict(time_ns=5_000_000_000, cycle=1000)
+
+    t = photon_times_ns(p, hdr, 3)
+    np.testing.assert_array_equal(
+        t, (5_000_000_000 - 128 * 7.8125,
+            5_000_000_000 + 10 * 2000 + 127 * 7.8125))
+    assert cycle_ns(3) == 2000
+
+
+def test_photon_times_v3_keep_dt_at_a_realistic_unix_epoch():
+    # float64 spacing is 256 ns at this epoch, so a float implementation
+    # collapses all three records to the same timestamp even though dt differs.
+    p = np.zeros(3, dtype=PHOTON_V3_DTYPE)
+    p['cycle'] = 42
+    p['dt'] = (-1, 0, 1)
+    hdr = dict(time_ns=1_775_000_000_000_000_000, cycle=42)
+
+    t = photon_times_ns(p, hdr, 3)
+    assert t[1] - t[0] == 7.8125
+    assert t[2] - t[1] == 7.8125
+    assert len(set(t)) == 3
 
 
 def test_sentinel_cannot_collide_with_real_records():
@@ -145,14 +173,15 @@ class _FakeTrigger(TriggerSubsystemV2):
         self._init_state()
         self._word = record_version_word
         self.reads = []
+        self.writes = []
 
     def read(self, offset):
         self.reads.append(offset)
         assert offset == RECORD_VERSION_OFFSET
         return self._word
 
-    def write(self, offset, value):  # pragma: no cover - not used here
-        raise AssertionError('unexpected write')
+    def write(self, offset, value):
+        self.writes.append((offset, value))
 
 
 def test_record_version_defaults_to_v2_until_probed():
@@ -197,6 +226,29 @@ def test_set_record_version_uses_the_canonical_geometry():
         assert t.record_version_info == record_info(v)
         assert t.record_version == v
         assert t.reads == []
+
+
+@pytest.mark.parametrize(('version', 'expected_visits'), ((2, 30), (3, 15)))
+def test_configure_baseline_converts_microseconds_to_version_visits(
+        version, expected_visits):
+    t = _FakeTrigger()
+    t.set_record_version(version)
+
+    t.configure_baseline(enable=True, shift=10, holdoff_us=30)
+
+    assert t.writes == [(13 * 4, expected_visits),
+                        (12 * 4, 1 | (10 << 1))]
+
+
+def test_configure_baseline_rounds_up_and_clips_visit_count():
+    t = _FakeTrigger()
+    t.set_record_version(3)
+    t.configure_baseline(holdoff_us=5)
+    assert t.writes[0] == (13 * 4, 3)
+
+    t.writes.clear()
+    t.configure_baseline(holdoff_us=1_000_000)
+    assert t.writes[0] == (13 * 4, 0xffff)
 
 
 def test_layout_matches_gateware():

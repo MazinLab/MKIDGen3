@@ -28,12 +28,19 @@ REQUIRED_MEMBERS = (
 
 @pytest.mark.slow
 def test_wheel_builds_and_carries_the_drivers(tmp_path):
+    pip = subprocess.run([sys.executable, '-m', 'pip', '--version'],
+                         capture_output=True, text=True)
+    if pip.returncode:
+        pytest.skip(f'pip is unavailable: {pip.stdout}{pip.stderr}')
+
+    wheel_dir = tmp_path / 'wheel'
+    wheel_dir.mkdir()
     proc = subprocess.run(
         [sys.executable, '-m', 'pip', 'wheel', '--no-deps',
-         '--no-build-isolation', '-w', str(tmp_path), str(REPO)],
+         '--no-build-isolation', '-w', str(wheel_dir), str(REPO)],
         capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    wheels = sorted(tmp_path.glob('*.whl'))
+    wheels = sorted(wheel_dir.glob('*.whl'))
     assert len(wheels) == 1, f'expected exactly one wheel, got {wheels}'
     name = wheels[0].name
     assert name.startswith('mkidgen3-'), (
@@ -43,3 +50,30 @@ def test_wheel_builds_and_carries_the_drivers(tmp_path):
         members = set(z.namelist())
     for m in REQUIRED_MEMBERS:
         assert m in members, f'{m} missing from {name}'
+
+    # Inspecting zip members is weaker than exercising Python's real import
+    # machinery. Install without a venv or dependencies, then run isolated
+    # from the checkout so an editable/source-tree import cannot mask a
+    # missing module in the wheel.
+    target = tmp_path / 'target'
+    install = subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', '--no-deps', '--target',
+         str(target), str(wheels[0])], capture_output=True, text=True)
+    assert install.returncode == 0, install.stdout + install.stderr
+    isolated_cwd = tmp_path / 'outside-checkout'
+    isolated_cwd.mkdir()
+    modules = ('mkidgen3.recordfmt', 'mkidgen3.mkidpynq',
+               'mkidgen3.drivers.iqtransform', 'mkidgen3.drivers.triggerv2')
+    script = (
+        'import importlib, pathlib, sys\n'
+        f'target = pathlib.Path({str(target)!r}).resolve()\n'
+        'sys.path.insert(0, str(target))\n'
+        f'modules = {modules!r}\n'
+        'for name in modules:\n'
+        '    module = importlib.import_module(name)\n'
+        '    assert pathlib.Path(module.__file__).resolve().is_relative_to(target), '
+        '(name, module.__file__)\n')
+    imported = subprocess.run(
+        [sys.executable, '-I', '-c', script], cwd=isolated_cwd,
+        capture_output=True, text=True)
+    assert imported.returncode == 0, imported.stdout + imported.stderr

@@ -183,11 +183,6 @@ class CaptureHierarchy(DefaultHierarchy):
         super().__init__(description)
         self.filter_iq = {}
         self.filter_phase = {}
-        # A buffer whose DMA cannot be proven quiescent must outlive every
-        # local reference. PynqBuffer.__del__ frees CMA, so merely skipping an
-        # explicit free is not a leak and is not safe.
-        self._stuck_buffers = []
-
         switchloc = getattr(self, 'Switchboard', None) or getattr(self, 'switchboard', None) or self
         self.switch = getattr(switchloc, 'axis_switch_0', None) or getattr(switchloc, 'axis_switch', None)
 
@@ -882,11 +877,12 @@ class _AXIS2MM:
         x = 0x80000000  # start and do not clear error
         x |= continuous << 28
         x |= (not increment) << 27
-        self.write(0, x)
-        # Mark only after the start write succeeds, but before returning to
-        # _capture and its caller. This is the true arm boundary for cleanup.
+        # Mark before the start-register write. A spurious mark when that
+        # write fails costs one abort/settle; marking after it leaves an
+        # interrupt window in which a live DMA buffer can be freed.
         if armed is not None:
             armed[0] = True
+        self.write(0, x)
 
 
 class AXIS2MMIP(DefaultIP, _AXIS2MM):

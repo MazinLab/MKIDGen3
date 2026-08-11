@@ -82,6 +82,30 @@ def arm_fault(addr, nbytes, buffer_nbytes=None, hp0=True):
 # r_err, and clearing it is what you do *after* the core has gone quiet.
 AXIS2MM_QUIESCENT_BITS = ('r_busy', 'aborting')
 
+# A hierarchy is replaced whenever an overlay is rebound, including the
+# ``download=False`` path. It therefore cannot own the last reference to a
+# buffer that a stuck axis2mm may still be writing. Keep those references at
+# module (process) lifetime and discard them only after a caller confirms that
+# the PL was really reconfigured, which resets every DMA master.
+_STUCK_CAPTURE_BUFFERS = []
+
+
+def release_stuck_buffers_after_reconfigure():
+    """Release buffers retained for a DMA made harmless by PL reconfiguration.
+
+    Call this only after a successful, real overlay download. Merely binding
+    a new hierarchy with ``download=False`` does not stop the old axis2mm.
+    Returns the number of retained references released, for logging/tests.
+    """
+    count = len(_STUCK_CAPTURE_BUFFERS)
+    _STUCK_CAPTURE_BUFFERS.clear()
+    return count
+
+
+def retained_stuck_buffer_count():
+    """Number of process-lifetime capture buffers awaiting reconfiguration."""
+    return len(_STUCK_CAPTURE_BUFFERS)
+
 
 def axis2mm_quiesced(status):
     """True if axis2mm has stopped writing, given a decoded cmd_ctrl_reg.
@@ -117,8 +141,8 @@ class CaptureBufferRelease:
     def _retain_stuck_buffer(self, capture_buffer):
         """Keep exactly one process-lifetime reference to an unsafe buffer."""
         if not any(candidate is capture_buffer
-                   for candidate in self._stuck_buffers):
-            self._stuck_buffers.append(capture_buffer)
+                   for candidate in _STUCK_CAPTURE_BUFFERS):
+            _STUCK_CAPTURE_BUFFERS.append(capture_buffer)
 
     def _release(self, capture_buffer, writing, what, abort_timeout=0.5):
         """Release a safe buffer; retain it if cleanup cannot prove safety.
@@ -165,6 +189,16 @@ class CaptureBufferRelease:
             except Exception:
                 pass
             return False
+        except BaseException:
+            # KeyboardInterrupt/SystemExit must retain the buffer but must not
+            # be converted into an ordinary cleanup failure. A caller may be
+            # interrupted between abort and confirmed quiescence, when freeing
+            # CMA is still unsafe.
+            try:
+                self._retain_stuck_buffer(capture_buffer)
+            except Exception:
+                pass
+            raise
 
 
 N_IQ_GROUPS = 256

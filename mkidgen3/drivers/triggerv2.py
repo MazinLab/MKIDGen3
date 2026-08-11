@@ -14,7 +14,7 @@ Photon event record v2 (one little-endian 128-bit word per photon)::
     phase   [15:0]    int16  peak phase
     baseline[31:16]   int16  channel baseline at trigger time (same units as
                              phase; corrected pulse height = phase - baseline)
-    cycle   [75:32]   uint44 ABSOLUTE visit count, 2 us units (~407 d rollover)
+    cycle   [75:32]   uint44 ABSOLUTE visit count, 1 us units (~204 d rollover)
     bin     [86:76]   uint11 resonator channel
     read    [88:87]   uint2  chunk read tag (drop detection only)
     x       [100:89]  uint12 beammap x (reserved, reads 0)
@@ -50,6 +50,7 @@ latches and advances the 2-bit read tag. Wall-clock time for every photon
 follows from one affine map per capture::
 
     t_ns(photon) = header_time_ns + (photon.cycle - header.cycle) * 2000
+                   + photon.dt * 7.8125
 
 The register map is generated from the amaranth CSR decoder
 (rtl/mkidaranth in gen3-vivado-top, branch benexperiment). Word offsets on
@@ -73,6 +74,7 @@ Operational notes (first light, 2026-07-22):
 import logging
 import math
 import time
+from fractions import Fraction
 
 import numpy as np
 
@@ -244,10 +246,37 @@ def photon_times_ns(photons, header, version):
     """Absolute time in ns for each unpacked photon, given a chunk header.
 
     ``version`` is the record version (2 or 3): one ``cycle`` count is 1 us
-    on v2 and 2 us on v3.
+    on v2 and 2 us on v3. V3 additionally applies the signed ``dt`` field at
+    1/256 visit = 7.8125 ns per count.
+
+    The result is an object array of exact :class:`fractions.Fraction`
+    nanoseconds. Absolute Unix epochs are already large enough that float64
+    spacing is hundreds of nanoseconds, so adding ``dt`` to a float timestamp
+    would silently erase the sub-visit correction this function exists to
+    preserve.
     """
-    return header['time_ns'] + (photons['cycle'].astype(np.int64)
-                                - int(header['cycle'])) * cycle_ns(version)
+    version = check_version(version)
+    if 'secs' in header and 'ns' in header:
+        # The chunk sampler publishes an exact 1/256 ns remainder. Work in
+        # those integer ticks so the large absolute epoch never enters a
+        # floating-point value.
+        header_ticks = ((int(header['secs']) * 1_000_000_000
+                         + int(header['ns'])) * 256
+                        + int(header.get('subns', 0)))
+    else:
+        # Bench/tests may supply only time_ns. Fraction keeps integer and
+        # decimal callers exact; round only if the value is not on the
+        # hardware's 1/256 ns grid.
+        header_ticks = round(Fraction(str(header['time_ns'])) * 256)
+    times = (header_ticks
+             + (photons['cycle'].astype(object) - int(header['cycle']))
+             * cycle_ns(version) * 256)
+    if version == 3:
+        # dt is signed int8 and measured in 1/256 of the visit, hence exactly
+        # cycle_ns(version) ticks on this 1/256 ns integer grid.
+        times = times + photons['dt'].astype(object) * cycle_ns(version)
+    return np.fromiter((Fraction(int(tick), 256) for tick in times),
+                       dtype=object, count=photons.shape[0])
 
 
 def valid_photon_prefix(packed):
@@ -322,7 +351,7 @@ class _Reg:
     INTERRUPT_STATUS = 10    # dropped, dropped_postage, fault, fault_postage, halfchunk, fullchunk
     INTERRUPT_ENABLE = 11
     BASELINE_CONTROL = 12    # enable[0], shift[4:1]
-    BASELINE_HOLDOFF = 13    # n[15:0], us units
+    BASELINE_HOLDOFF = 13    # n[15:0], visit-count units
     BASELINE_READ = 14       # bin[10:0]
     BASELINE_VALUE = 15      # baseline[15:0], RO, <=2us stale
     RECORD_VERSION = 16      # byte offset 0x40: version[7:0], lanes[11:8],
@@ -622,11 +651,16 @@ class TriggerSubsystemV2(DefaultIP):
     def configure_baseline(self, enable=True, shift=10, holdoff_us=0):
         """Enable the per-channel baseline tracker.
 
-        shift: IIR pole, alpha = 2**-shift at the 1 MHz visit rate
-        (shift=10 ~ 155 Hz single pole). holdoff_us: extra post-pulse gating
-        beyond the trigger holdoff, for qp recombination tails.
+        shift: IIR pole, alpha = 2**-shift at the version-dependent visit
+        rate (1 MHz on v2, 500 kHz on v3; shift=10 is about 155 Hz or 78 Hz,
+        respectively). holdoff_us: extra post-pulse gating beyond the trigger
+        holdoff, for qp recombination tails. The wire API remains microseconds;
+        the CSR stores visit counts.
         """
-        self.write(_Reg.BASELINE_HOLDOFF * 4, int(holdoff_us) & 0xffff)
+        holdoff_visits = math.ceil(float(holdoff_us)
+                                   / holdoff_cycle_us(self.record_version))
+        self.write(_Reg.BASELINE_HOLDOFF * 4,
+                   min(0xffff, max(0, holdoff_visits)))
         self.write(_Reg.BASELINE_CONTROL * 4,
                    (1 if enable else 0) | ((int(shift) & 0xf) << 1))
 
