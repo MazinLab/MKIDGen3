@@ -143,6 +143,26 @@ def test_vet_table_encodes_negatives_twos_complement():
     assert (vet_table(words) == words).all()
 
 
+def test_vet_table_rejects_uint64_codes_that_would_wrap():
+    """int64 cannot hold every uint64 code, and the wrap looks legal.
+
+    0xffffffffffffffff cast to int64 is -1: in range for every column, and
+    emitted as the fabric word 0xffffffff. A huge positive coefficient would
+    silently become a small negative one, so the value has to be checked
+    before the cast, not after.
+    """
+    rows = a_valid_table()
+    rows[:, 1] = 2000        # an unsigned array cannot carry the signed columns
+    rows[:, 4] = 2000
+    rows[:, 5] = 30
+    good = rows.astype(np.uint64)
+    assert (vet_table(good) == vet_table(rows)).all()
+    bad = good.copy()
+    bad[11, 0] = np.uint64(0xffffffffffffffff)
+    with pytest.raises(ValueError, match='channel 11'):
+        vet_table(bad)
+
+
 def test_write_table_is_one_index_write_then_16384_data_writes():
     t = FakeTransform()
     rows = a_valid_table()

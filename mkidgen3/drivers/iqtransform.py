@@ -114,11 +114,25 @@ def vet_table(rows):
                          f'got {a.shape}')
     if a.dtype.kind not in 'iu':
         raise ValueError(f'table must be an integer array, got {a.dtype}')
-    signed = a.view(np.int32).astype(np.int64) if a.dtype == np.uint32 \
-        else a.astype(np.int64)
 
     def _first_bad(mask):
         return int(np.argmax(mask.any(axis=1)))
+
+    if a.dtype == np.uint32:
+        signed = a.view(np.int32).astype(np.int64)
+    else:
+        # int64 cannot hold every uint64 code, and the cast wraps silently:
+        # 0xffff_ffff_ffff_ffff would become -1, pass every range check below
+        # and be emitted as a legal constant. Range-check before the cast.
+        if a.dtype.kind == 'u' and a.dtype.itemsize > 4:
+            huge = a > np.uint64(np.iinfo(np.int64).max)
+            if huge.any():
+                r = _first_bad(huge)
+                c = int(np.argmax(huge[r]))
+                raise ValueError(f'channel {r} column {COLUMN_NAMES[c]}='
+                                 f'{a[r, c]} does not fit in a signed 64-bit '
+                                 f'integer, so it cannot be a fabric constant')
+        signed = a.astype(np.int64)
 
     # The fabric contract is a strict magnitude bound, |v| < limit, not a
     # two's-complement range: the most negative code is not available.
