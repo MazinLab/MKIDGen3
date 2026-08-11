@@ -7,7 +7,7 @@ from logging import getLogger
 from typing import Iterable
 
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
-    HP0_WINDOWS, hp0_reachable, flush_transfer, arm_fault, \
+    HP0_WINDOWS, hp0_reachable, flush_transfer, arm_fault, axis2mm_quiesced, \
     check_description_for  # config, overlay details
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel, ADC_INPUT_WARN
 from ..util import ps_ram_sane, format_bytes
@@ -288,35 +288,67 @@ class CaptureHierarchy(DefaultHierarchy):
         if why is not None:
             raise RuntimeError(why)
 
-    def flush(self, n, timeout=1.0):
+    def _settle_axis2mm(self, timeout=0.5):
+        """Abort the current transfer and wait until axis2mm stops writing.
+
+        abort() and clear_error() are single register writes that return long
+        before the core is idle, so an abort is not on its own permission to
+        release the buffer. Quiescence is the driver's own readiness minus
+        r_err -- r_busy and aborting both clear -- because an abort sets r_err
+        and clearing it is what happens once the core is quiet, not before.
+
+        Returns True if it went quiet inside the deadline.
+        """
+        self.axis2mm.abort()
+        deadline = time.time() + timeout
+        while True:
+            if axis2mm_quiesced(self.axis2mm.cmd_ctrl_reg):
+                self.axis2mm.clear_error()
+                return True
+            if time.time() > deadline:
+                return False
+            time.sleep(0.0005)
+
+    def flush(self, n, timeout=1.0, abort_timeout=0.5):
         """Capture n*64 bytes to flush a fifo.
 
         The buffer is u64 words while axis2mm is programmed in bytes, so a
-        flush of n beats needs 8*n words, not n. The transfer is then waited
-        out -- or aborted -- before the buffer is released: axis2mm holds a
-        bare physical address, so freeing CMA under a running DMA leaves it
+        flush of n beats needs 8*n words, not n. The buffer is released only
+        once the core is known to have stopped writing to it: axis2mm holds a
+        bare physical address, so freeing CMA under a live DMA leaves it
         writing into whatever is allocated next.
         """
         words, nbytes = flush_transfer(n)
         buffer = self._allocate(words, 'u64')
+        writing = False
         try:
             self._check_arm(buffer.device_address, nbytes, buffer.nbytes)
             self.axis2mm.addr = buffer.device_address
             self.axis2mm.len = nbytes
             self.axis2mm.start(continuous=False, increment=True)
+            writing = True
             deadline = time.time() + timeout
             while not self.axis2mm.complete:
                 if time.time() > deadline:
-                    self.axis2mm.abort()
-                    self.axis2mm.clear_error()
                     getLogger(__name__).warning(
-                        f'Flush of {nbytes} B did not complete in {timeout:.2f} s '
-                        f'(the fifo may hold less than that); aborted so the '
-                        f'buffer can be freed while nothing is writing to it')
+                        f'Flush of {nbytes} B did not complete in {timeout:.2f} s; '
+                        f'the fifo may hold less than that. Aborting.')
                     break
                 time.sleep(0.0005)
+            else:
+                writing = False   # completed on its own: nothing is writing
         finally:
-            buffer.freebuffer()
+            if writing and not self._settle_axis2mm(abort_timeout):
+                # Leak it, on purpose. A leaked CMA buffer costs memory until
+                # the daemon restarts; one freed while axis2mm still holds its
+                # physical address corrupts whatever is allocated next.
+                getLogger(__name__).error(
+                    f'axis2mm is still not quiet {abort_timeout:.2f} s after abort '
+                    f'(status {self.axis2mm.cmd_ctrl_reg}); leaking the {buffer.nbytes} B '
+                    f'flush buffer at {buffer.device_address:#x} rather than returning '
+                    f'memory a live DMA can still write to. Restart to reclaim it.')
+            else:
+                buffer.freebuffer()
 
     def looping_capture(self, source: str, n: int, buffers: buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')

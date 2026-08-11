@@ -8,7 +8,8 @@ that uses it needs pynq and is board-verified by tools/sweepacc_bringup.py.
 import pytest
 
 from mkidgen3.mkidpynq import (HP0_WINDOWS, CAPTURE_BEAT_BYTES, hp0_reachable,
-                               flush_transfer, arm_fault)
+                               flush_transfer, arm_fault, axis2mm_quiesced,
+                               AXIS2MM_QUIESCENT_BITS)
 
 
 def test_windows():
@@ -89,3 +90,38 @@ def test_arm_fault_rejects_partial_beats_and_empty_transfers():
     assert arm_fault(0x1000, 0, 4096) is not None
     assert arm_fault(0x1000, -64, 4096) is not None
     assert arm_fault(0x1000, 100, 4096) is not None    # not a whole beat
+
+
+# --- when it is safe to give the memory back --------------------------------
+#
+# abort() is one register write and returns immediately; the core keeps
+# writing for a while afterwards. Freeing CMA on the strength of the write
+# alone hands live DMA target pages to the next allocation.
+
+
+def _status(**kw):
+    """A decoded cmd_ctrl_reg with everything clear except what is named."""
+    stat = dict(r_busy=False, r_err=False, r_complete=False, r_continuous=False,
+                r_increment_n=False, r_tlast_syncd_n=False, decode_error=False,
+                slave_error=False, overflow_error=False, aborting=False,
+                fifo_len=0, abort=0)
+    stat.update(kw)
+    return stat
+
+
+def test_quiescent_bits_are_the_two_that_mean_still_writing():
+    assert AXIS2MM_QUIESCENT_BITS == ('r_busy', 'aborting')
+
+
+def test_quiesced_only_when_both_bits_clear():
+    assert axis2mm_quiesced(_status())
+    assert not axis2mm_quiesced(_status(r_busy=True))
+    assert not axis2mm_quiesced(_status(aborting=True))
+    assert not axis2mm_quiesced(_status(r_busy=True, aborting=True))
+
+
+def test_a_pending_error_does_not_block_quiescence():
+    # abort sets r_err; clear_error is what happens after the core goes quiet,
+    # so requiring r_err clear here would deadlock the settle loop forever.
+    assert axis2mm_quiesced(_status(r_err=True, decode_error=True))
+    assert not axis2mm_quiesced(_status(r_err=True, aborting=True))

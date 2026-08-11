@@ -74,6 +74,22 @@ def arm_fault(addr, nbytes, buffer_nbytes=None, hp0=True):
     return None
 
 
+# The status bits that say axis2mm has stopped touching memory. Deliberately
+# not the driver's full `ready`, which also demands r_err clear: an abort sets
+# r_err, and clearing it is what you do *after* the core has gone quiet.
+AXIS2MM_QUIESCENT_BITS = ('r_busy', 'aborting')
+
+
+def axis2mm_quiesced(status):
+    """True if axis2mm has stopped writing, given a decoded cmd_ctrl_reg.
+
+    abort() is a bare register write that returns long before the core is
+    idle, so a buffer freed on the strength of that write alone can still be
+    written to. Both r_busy and aborting must read back clear.
+    """
+    return not any(bool(status[k]) for k in AXIS2MM_QUIESCENT_BITS)
+
+
 N_IQ_GROUPS = 256
 
 PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
