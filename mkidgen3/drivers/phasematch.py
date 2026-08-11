@@ -3,15 +3,34 @@ import pynq
 from logging import getLogger
 from mkidgen3.mkidpynq import check_description_for
 from mkidgen3.fixedpoint import fp_factory
-from mkidgen3.util import pack16_to_32
-import time
+from mkidgen3.recordfmt import (DEFAULT_RECORD_VERSION, FIR_CONFIG_TDEST,
+                                FIR_LANES_BY_VERSION,
+                                FIR_QUADRATURES_BY_VERSION, FIR_SETS_BY_VERSION,
+                                FIR_TAPS, check_version, fir_config_packet,
+                                fir_reload_packet, fir_tdest,
+                                unity_coefficient_sets)
 
 
 class PhasematchDriver(pynq.DefaultHierarchy):
-    N_TEMPLATE_TAPS = 30
+    """Matched filter reload over the AXI FIFO at 0x800E_0000.
+
+    The bank layout depends on the record version the overlay implements
+    (see mkidgen3.recordfmt):
+
+    * v2 -- one quadrature on four lanes, lane = r % 4, 512 sets per bank,
+      reload TDEST = lane, config packet arange(512) on TDEST 4.
+    * v3 (stage 1/2) -- two quadratures on two lanes each, lane = r % 2,
+      1024 sets per bank, TH2 reload TDEST = lane, D2 reload TDEST =
+      2 + lane, config packet arange(1024) on TDEST 4. Both quadratures of a
+      channel go out together and are committed by the same config packet,
+      so the two planes can never carry templates from different loads.
+
+    The driver defaults to v2. Whoever knows which bitstream is loaded (the
+    daemon, from the hwh) sets ``record_version`` before loading taps.
+    """
+
+    N_TEMPLATE_TAPS = FIR_TAPS
     N_RES = 2048
-    N_RES_P_LANE = 512
-    N_LANES = 4
     N_SLOTS = 2
     N_FIFO_SIZE = 512
     COEFF_FORMAT = (1, 15)
@@ -19,13 +38,38 @@ class PhasematchDriver(pynq.DefaultHierarchy):
     def __init__(self, description):
         super().__init__(description)
         self.fifo = self.reload.axi_fifo_mm_s_0
-        self._pending = np.zeros(self.N_LANES, dtype=int)
+        self._record_version = DEFAULT_RECORD_VERSION
+        self._pending = {}          # reload TDEST -> pending reload slots
 
     @staticmethod
     def checkhierarchy(description):
         if 'reload' not in description.get('hierarchies', {}):
             return False
         return bool(len(check_description_for(description['hierarchies']['reload'], 'xilinx.com:ip:axi_fifo_mm_s')))
+
+    @property
+    def record_version(self):
+        """Record version whose bank geometry this driver is using."""
+        return self._record_version
+
+    @record_version.setter
+    def record_version(self, version):
+        v = check_version(version)
+        if v != self._record_version:
+            self._record_version = v
+            self._pending = {}      # slot accounting is per-bank, per-geometry
+
+    @property
+    def n_lanes(self):
+        return FIR_LANES_BY_VERSION[self._record_version]
+
+    @property
+    def n_sets(self):
+        return FIR_SETS_BY_VERSION[self._record_version]
+
+    @property
+    def quadratures(self):
+        return FIR_QUADRATURES_BY_VERSION[self._record_version]
 
     @staticmethod
     def vet_coeffs(coeffs):
@@ -44,65 +88,92 @@ class PhasematchDriver(pynq.DefaultHierarchy):
         """convert taps to order needed by a reload packet"""
         return coeffs[::-1]  # see coefficient reload tab for order in block design
 
-    def load_coeff(self, res_id, coeffs, vet=True, force_commit=False, raw=False, wait=False, defer_commit=False):
+    def _send_config(self, wait=False):
+        """Commit every pending reload slot on every bank."""
+        self.fifo.tx(fir_config_packet(self._record_version),
+                     destination=FIR_CONFIG_TDEST, wait=wait)
+        self._pending = {}
+
+    def load_coeff(self, res_id, coeffs, d2_coeffs=None, vet=True, force_commit=False,
+                   raw=False, wait=False, defer_commit=False):
         """
-        A reload packet consists of the coefficients and the coefficient set number
+        A reload packet consists of the coefficient set number and the coefficients.
 
         If raw coeffs will be converted to np.uint16 via numpy casting/type coercion rules.
 
-        See block diagram for layout. Resonators assigned to lanes 0-3 in consecutive sets of 512.
+        d2_coeffs is the second (D2) quadrature and requires a v3 overlay. On v3 it
+        defaults to zeros -- a muted quadrature is a valid single-quadrature
+        configuration, whereas leaving the shipped placeholder in place (tap 29 = -1,
+        i.e. -90 dB through the >>15 output stage) would add a faint copy of the
+        signal to every channel.
 
-        FIRs have two reload slots and are in "on vector" update mode.
+        FIRs have two reload slots and are in "on vector" update mode; a config packet
+        is sent before a bank would need a third.
 
-        set defer_commit to skip sending a config packet even if the packet sent filled up the number of usable slots
+        set defer_commit to skip sending a config packet even if the packet sent filled
+        up the number of usable slots
 
         See pg149 pg 18
         """
+        version = self._record_version
         if vet:
             self.vet_res_id(res_id)
             self.vet_coeffs(coeffs)
+            if d2_coeffs is not None:
+                self.vet_coeffs(d2_coeffs)
+        if d2_coeffs is not None and 'd2' not in self.quadratures:
+            raise ValueError('this overlay has no D2 quadrature (record '
+                             f'version {version})')
 
         if raw:
             fp_format = lambda x: x
         else:
             fp_format = fp_factory(*self.COEFF_FORMAT, True, include_index=True)
 
-        lane = res_id % self.N_LANES
-        reload_packet = np.zeros(self.N_TEMPLATE_TAPS + 1, dtype=np.uint16)
-        reload_packet[0] = res_id // self.N_LANES
-        reload_packet[1:] = [fp_format(c) for c in self.reorder_coeffs(coeffs)]
+        payloads = [('th2', coeffs)]
+        if 'd2' in self.quadratures:
+            payloads.append(('d2', np.zeros(self.N_TEMPLATE_TAPS, dtype=np.int16)
+                             if d2_coeffs is None else d2_coeffs))
+        packets = [(fir_tdest(res_id, version, q),
+                    fir_reload_packet(res_id, [fp_format(c) for c in taps], version))
+                   for q, taps in payloads]
 
-        cfg_packet = pack16_to_32(np.arange(self.N_RES_P_LANE, dtype=np.uint16))
+        if any(self._pending.get(t, 0) >= self.N_SLOTS for t, _ in packets):
+            getLogger(__name__).debug('Reload slots are full, sending config packet first')
+            self._send_config(wait)
 
-        if self._pending[lane] >= self.N_SLOTS:
-            getLogger(__name__).debug(f'Reload slots for lane {lane} are full, sending config packet first')
-            self.fifo.tx(cfg_packet, destination=4, wait=wait)  # Send a config packet to trigger reload
-            self._pending[:] = 0
+        for tdest, packet in packets:
+            self.fifo.tx(packet, destination=tdest, last_bytes=2, wait=wait)
+            self._pending[tdest] = self._pending.get(tdest, 0) + 1
 
-        self.fifo.tx(pack16_to_32(reload_packet), destination=lane, last_bytes=2, wait=wait)  # reload channels are 0,2,4,6
-        self._pending[lane] += 1
-
-        if force_commit or (self._pending[lane] >= self.N_SLOTS and not defer_commit):
+        if force_commit or (not defer_commit
+                            and any(self._pending[t] >= self.N_SLOTS for t, _ in packets)):
             if not force_commit:
                 getLogger(__name__).debug('Sending config packet')
-            self.fifo.tx(cfg_packet, destination=4, wait=wait)  # Send a config packet to trigger reload
-            self._pending[:] = 0
+            self._send_config(wait)
 
-    def load_coeff_sets(self, coeff_sets, raw=False):
+    def load_coeff_sets(self, coeff_sets, d2_coeff_sets=None, raw=False):
         """
         Program coefficients for all the resonator channels
         Args:
             coeff_sets: (N_RES, N_TAP) array of coefficients, will be vetted
-            raw: (optional) whether to load the coefficients as is or convert to fixed point, see load_coeff
+            d2_coeff_sets: (N_RES, N_TAP) second quadrature, v3 overlays only.
+                None writes zeros to the D2 banks.
+            raw: (optional) whether to load the coefficients as is or convert to fixed
+                point, see load_coeff
 
         Returns: None
         """
         self.vet_coeffs(coeff_sets)
+        if d2_coeff_sets is not None:
+            self.vet_coeffs(d2_coeff_sets)
         for res in range(self.N_RES):
-            self.load_coeff(res, coeff_sets[res], vet=False, defer_commit=True, force_commit=res == self.N_RES-1,
+            self.load_coeff(res, coeff_sets[res],
+                            d2_coeffs=None if d2_coeff_sets is None else d2_coeff_sets[res],
+                            vet=False, defer_commit=True, force_commit=res == self.N_RES - 1,
                             wait=False, raw=raw)
 
-    def configure(self, coefficients=None):
+    def configure(self, coefficients=None, d2_coefficients=None):
         if coefficients is None:
             return
         getLogger(__name__).info(f'Configuring phasematch with {coefficients}')
@@ -111,9 +182,19 @@ class PhasematchDriver(pynq.DefaultHierarchy):
                 n = min(max(1, int(coefficients.strip('unity'))), 2048)
             except:
                 n = 2048
-            coefficients = np.zeros((2048, self.N_TEMPLATE_TAPS), dtype=np.int16)
-            coefficients[:n, 0] = 2 ** 15 - 1
+            # v2: 2**15 - 1 (historical). v3: -32768, the only representable
+            # unity magnitude in signed 16 bits, which inverts the stream.
+            coefficients = unity_coefficient_sets(n, self._record_version,
+                                                  n_res=self.N_RES)
         if coefficients.shape != (2048, self.N_TEMPLATE_TAPS) or coefficients.dtype != 'int16':
             raise ValueError(f'coefficients must be a ({self.N_RES},{self.N_TEMPLATE_TAPS}) int16 array')
+        if d2_coefficients is not None:
+            if 'd2' not in self.quadratures:
+                raise ValueError('this overlay has no D2 quadrature (record '
+                                 f'version {self._record_version})')
+            if d2_coefficients.shape != (2048, self.N_TEMPLATE_TAPS) \
+                    or d2_coefficients.dtype != 'int16':
+                raise ValueError(f'd2_coefficients must be a ({self.N_RES},'
+                                 f'{self.N_TEMPLATE_TAPS}) int16 array')
 
-        self.load_coeff_sets(coefficients, raw=True)
+        self.load_coeff_sets(coefficients, d2_coeff_sets=d2_coefficients, raw=True)

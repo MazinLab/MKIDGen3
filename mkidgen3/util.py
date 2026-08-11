@@ -234,12 +234,11 @@ def _which_one_bit_set(x, nbits):
     return None
 
 
-def pack16_to_32(data):
-    it = iter(data)
-    vals = [x | (y << 16) for x, y in zip(it, it)]
-    if data.size % 2:
-        vals.append(data[-1])
-    return np.array(vals, dtype=np.uint32)
+# Packing uint16 pairs into uint32 words lives in mkidgen3.recordfmt (which
+# needs it for FIR reload packets and imports nothing but numpy). The old
+# implementation here shifted uint16 scalars by 16, which numpy >= 2 weak
+# promotion evaluates to 0 -- correct only under the board's numpy 1.26.
+from mkidgen3.recordfmt import pack16_to_32  # noqa: F401
 
 
 def ensure_array_or_scalar(x):
