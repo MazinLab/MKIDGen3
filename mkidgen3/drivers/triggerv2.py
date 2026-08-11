@@ -433,8 +433,19 @@ class _HuskyDMA:
         locks out the other HP0 masters (postage, sweeps) for up to a full
         burst time, and a mid-burst input cut wedges all three permanently.
         128 (one full burst of events) makes bursts atomic.
+
+        Two-read protocol (amaranth-soc multi-word register): the 48-bit
+        InputFIFO register snapshots on the read of word 0, and a read of
+        word 1 alone returns a stale shadow — 0 forever if word 0 was never
+        read. Word 0 is {count[31:16], depth[15:0]}, word 1 the threshold.
         """
+        self._rd_multi(_Reg.DMA_INPUT_FIFO, 1)  # snapshot
         return self._rd_multi(_Reg.DMA_INPUT_FIFO + 1, 1) & 0xffff
+
+    @property
+    def input_fifo_count(self):
+        """Events waiting in the input FIFO (word 0 bits [31:16])."""
+        return (self._rd_multi(_Reg.DMA_INPUT_FIFO, 1) >> 16) & 0xffff
 
     @tx_threshold.setter
     def tx_threshold(self, value):
