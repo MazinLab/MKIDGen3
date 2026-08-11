@@ -49,7 +49,7 @@ read, plus sticky dropped/fault/empty flags, AND (side effect) clears those
 latches and advances the 2-bit read tag. Wall-clock time for every photon
 follows from one affine map per capture::
 
-    t_ns(photon) = header_time_ns + (photon.cycle - header.cycle) * 2000
+    t_ns(photon) = header_time_ns + (photon.cycle - header.cycle) * cycle_ns(version)
                    + photon.dt * 7.8125
 
 The register map is generated from the amaranth CSR decoder
