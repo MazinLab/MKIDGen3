@@ -326,6 +326,54 @@ def test_v3_accumulate_into_out():
         unpack_photons_v3(pack_photons_v3(p), out=out, n=20)
 
 
+def test_v3_saturated_record_is_still_distinct_from_the_sentinel():
+    # The gate the sentinel rests on, stated as one record rather than
+    # sampled: every legal v3 field set to all ones at once. hi tops out at
+    # bit 57 because [127:122] is pad, so it can never be all ones.
+    p = np.zeros(1, dtype=PHOTON_V3_DTYPE)
+    p['phase'] = -1
+    p['baseline'] = -1
+    p['cycle'] = (1 << 44) - 1
+    p['id'] = 0x7ff
+    p['read'] = 3
+    p['x'] = 0xfff
+    p['y'] = 0xfff
+    p['dt'] = -1
+    p['pileup'] = True
+    packed = pack_photons_v3(p)
+    assert packed['hi'][0] == np.uint64(0x03ff_ffff_ffff_ffff)
+    assert packed['hi'][0] != SENTINEL_U64
+    # lo DOES saturate to all ones here, which is exactly why the prefix scan
+    # keys on hi alone: a legal record can look like drained space in lo.
+    assert packed['lo'][0] == SENTINEL_U64
+    buf = np.empty(4, dtype=PHOTON_PACKED_DTYPE)
+    buf['lo'] = SENTINEL_U64
+    buf['hi'] = SENTINEL_U64
+    buf[0] = packed[0]
+    assert valid_photon_prefix(buf) == 1
+    up = unpack_photons_v3(packed)[0]
+    assert up['cycle'] == (1 << 44) - 1
+    assert up['dt'] == -1
+    assert bool(up['pileup']) is True
+
+
+def test_capture_postage_groups_bins_by_the_version_lane_rule(monkeypatch):
+    # Drives the real capture_postage grouping. The per-lane cap raises
+    # before any bus access, so patching the pynq flag is enough to reach it.
+    monkeypatch.setattr('mkidgen3.drivers.triggerv2._PYNQ', True)
+    t = _FakeTrigger()
+    t.set_record_version(3)
+    # Five even bins are five LANE-0 bins on v3 (lane = bin % 2) and overflow
+    # the 4-per-lane cap. Under the old `bin & 3` they spread over lanes 0
+    # and 2, slip the cap, and get programmed into the wrong engines.
+    with pytest.raises(ValueError, match=r'per lane \(lane = bin % 2\)'):
+        t.capture_postage([0, 2, 4, 6, 8])
+    t.set_record_version(2)
+    with pytest.raises(ValueError, match=r'per lane \(lane = bin % 4\)'):
+        t.capture_postage([0, 4, 8, 12, 16])
+    assert t.reads == []          # grouping never touches the bus
+
+
 def test_postage_lane_grouping_is_version_keyed():
     from mkidgen3.recordfmt import trigger_lane
     t = _FakeTrigger()
