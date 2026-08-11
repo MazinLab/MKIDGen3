@@ -553,17 +553,29 @@ class CaptureHierarchy(DefaultHierarchy):
             ladder['ladder_error'] = repr(error)
         return ladder
 
-    def capture_sweep_sums(self, n_frames, discard_frames=0, timeout=None):
+    def capture_sweep_sums(self, n_frames, discard_frames=0, timeout=None,
+                           rows=2048):
         """One hardware accumulated sweep point from the iq_sweep_acc block.
 
-        Returns a (2048, 4) int64 ndarray of [sumI, sumQ, sumII, sumQQ] per
+        Returns a (rows, 4) int64 ndarray of [sumI, sumQ, sumII, sumQQ] per
         channel, accumulated over n_frames full frames of the ddciq stream
         (2 MS/s per channel) after skipping discard_frames settling frames.
         Use mkidgen3.drivers.sweepacc.sums_to_mean_rms to get mean/rms.
 
         The DMA is armed before the accumulator is started because the
         result path has no backpressure.
+
+        ``rows`` is the number of channel rows to ARM FOR, certified per
+        bitstream: the s2t6 paced build deterministically delivers 61440 of
+        65536 bytes — the final 4 KiB AXI burst including TLAST never
+        arrives (all attempts, 2026-08-11) — so arming 1920 rows completes
+        cleanly and the last 128 channels are unsweepable on that build.
+        The DMA writes strictly in order, so the rows that land are always
+        channels [0, rows).
         """
+        rows = int(rows)
+        if not 1 <= rows <= 2048:
+            raise ValueError(f'rows must be in [1, 2048], got {rows}')
         acc = getattr(self, 'iq_sweep_acc_0', None)
         if acc is None:
             raise RuntimeError('This overlay has no iq_sweep_acc block')
@@ -571,10 +583,11 @@ class CaptureHierarchy(DefaultHierarchy):
         if timeout is None:
             timeout = 1.0 + 4 * (int(n_frames) + int(discard_frames) + 2) / self.SWEEP_FRAME_RATE
 
-        buffer = self._allocate((2048, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
+        nbytes = rows * 32
+        buffer = self._allocate((rows, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
         writing = [False]
         try:
-            self._capture('iqsweep', self.SWEEP_SUMS_BYTES,
+            self._capture('iqsweep', nbytes,
                           buffer.device_address, armed=writing)
             acc.start_point(n_frames, discard_frames)
             deadline = time.time() + timeout
@@ -593,7 +606,7 @@ class CaptureHierarchy(DefaultHierarchy):
                         f'(accumulator start={st["start"]} done={st["done"]} '
                         f'idle={st["idle"]}, dma tlast_syncd={syncd} '
                         f'busy={ctrl["r_busy"]} err={ctrl["r_err"]} '
-                        f'progress={progressed} B of {self.SWEEP_SUMS_BYTES}). '
+                        f'progress={progressed} B of {nbytes}). '
                         f'idle=True with done=False means the accumulator never ran; '
                         f'tlast_syncd=False means the DMA is discarding beats while it '
                         f'hunts for a packet boundary. Gateware ladder (2026-08-11): '
