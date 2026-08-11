@@ -1,4 +1,4 @@
-"""Off-hardware tests for the v2 photon record unpacker.
+"""Off-hardware tests for the v2 and v3 photon record unpackers.
 
 Runs anywhere numpy is available (no pynq, no board). The layout constants
 must match trigger_event in gen3-vivado-top rtl/mkidaranth (benexperiment).
@@ -7,7 +7,10 @@ import numpy as np
 import pytest
 
 from mkidgen3.drivers.triggerv2 import (PHOTON_V2_DTYPE, PHOTON_V2_PACKED_DTYPE,
+                                        PHOTON_V3_DTYPE, PHOTON_PACKED_DTYPE,
                                         unpack_photons_v2, pack_photons_v2,
+                                        unpack_photons_v3, pack_photons_v3,
+                                        photon_dtype, unpack_photons, pack_photons,
                                         photon_times_ns, TriggerSubsystemV2,
                                         SENTINEL_U64, valid_photon_prefix,
                                         unpack_postage, POSTAGE_SAMPLES,
@@ -228,3 +231,108 @@ def test_layout_matches_gateware():
     assert offsets['read'] == (87, 2)
     assert offsets['x'] == (89, 12)
     assert offsets['y'] == (101, 12)
+
+
+def _random_photons_v3(n, rng):
+    p = np.zeros(n, dtype=PHOTON_V3_DTYPE)
+    p['phase'] = rng.integers(-0x8000, 0x8000, n)
+    p['baseline'] = rng.integers(-0x8000, 0x8000, n)
+    p['cycle'] = rng.integers(0, 1 << 44, n)
+    p['id'] = rng.integers(0, 2048, n)
+    p['read'] = rng.integers(0, 4, n)
+    p['x'] = rng.integers(0, 1 << 12, n)
+    p['y'] = rng.integers(0, 1 << 12, n)
+    p['dt'] = rng.integers(-128, 128, n)
+    p['pileup'] = rng.integers(0, 2, n).astype(bool)
+    return p
+
+
+def test_v3_dtype_fields():
+    assert PHOTON_V3_DTYPE.names == ('cycle', 'phase', 'baseline', 'id',
+                                     'read', 'x', 'y', 'dt', 'pileup')
+    assert PHOTON_V3_DTYPE['dt'] == np.int8
+    assert PHOTON_V3_DTYPE['pileup'] == np.bool_
+    assert photon_dtype(2) is PHOTON_V2_DTYPE
+    assert photon_dtype(3) is PHOTON_V3_DTYPE
+
+
+def test_v3_roundtrip():
+    rng = np.random.default_rng(1234)
+    p = _random_photons_v3(10000, rng)
+    up = unpack_photons_v3(pack_photons_v3(p))
+    for f in PHOTON_V3_DTYPE.names:
+        np.testing.assert_array_equal(up[f], p[f], err_msg=f)
+
+
+def test_v3_known_word():
+    # phase=-100, baseline=-3, cycle=0x123_4567_89AB, bin=1234, read=2,
+    # x=y=0, dt=-5, pileup=1
+    lo = ((-100) & 0xffff) | (((-3) & 0xffff) << 16) \
+        | ((0x4567_89AB & 0xffffffff) << 32)
+    hi = 0x123 | (1234 << 12) | (2 << 23) | (((-5) & 0xff) << 49) | (1 << 57)
+    w = np.array([(lo, hi)], dtype=PHOTON_PACKED_DTYPE)
+    p = unpack_photons_v3(w)[0]
+    assert p['phase'] == -100
+    assert p['baseline'] == -3
+    assert p['cycle'] == 0x123_4567_89AB
+    assert p['id'] == 1234
+    assert p['read'] == 2
+    assert p['x'] == 0 and p['y'] == 0
+    assert p['dt'] == -5
+    assert bool(p['pileup']) is True
+
+
+def test_v3_dt_is_signed_and_pileup_is_the_next_bit_up():
+    p = np.zeros(3, dtype=PHOTON_V3_DTYPE)
+    p['dt'] = (-128, 0, 127)
+    p['pileup'] = (False, True, False)
+    up = unpack_photons_v3(pack_photons_v3(p))
+    np.testing.assert_array_equal(up['dt'], (-128, 0, 127))
+    np.testing.assert_array_equal(up['pileup'], (False, True, False))
+
+
+def test_v3_pad_bits_stay_zero_so_the_sentinel_cannot_collide():
+    rng = np.random.default_rng(99)
+    packed = pack_photons_v3(_random_photons_v3(50000, rng))
+    assert ((packed['hi'] >> np.uint64(58)) == 0).all()
+    assert (packed['hi'] != SENTINEL_U64).all()
+    # and the prefix scan still finds the boundary in a v3 buffer
+    buf = np.empty(20, dtype=PHOTON_PACKED_DTYPE)
+    buf['lo'] = SENTINEL_U64
+    buf['hi'] = SENTINEL_U64
+    buf[:6] = pack_photons_v3(_random_photons_v3(6, rng))
+    assert valid_photon_prefix(buf) == 6
+
+
+def test_version_dispatch():
+    rng = np.random.default_rng(11)
+    p2 = _random_photons(5, rng)
+    p3 = _random_photons_v3(5, rng)
+    np.testing.assert_array_equal(
+        unpack_photons(pack_photons(p2, 2), 2)['id'], p2['id'])
+    np.testing.assert_array_equal(
+        unpack_photons(pack_photons(p3, 3), 3)['dt'], p3['dt'])
+    with pytest.raises(ValueError, match='record version'):
+        unpack_photons(pack_photons(p3, 3), 4)
+
+
+def test_v3_accumulate_into_out():
+    rng = np.random.default_rng(3)
+    p = _random_photons_v3(10, rng)
+    out = np.zeros(25, dtype=PHOTON_V3_DTYPE)
+    unpack_photons_v3(pack_photons_v3(p), out=out, n=5)
+    np.testing.assert_array_equal(out['dt'][5:15], p['dt'])
+    with pytest.raises(IndexError):
+        unpack_photons_v3(pack_photons_v3(p), out=out, n=20)
+
+
+def test_postage_lane_grouping_is_version_keyed():
+    from mkidgen3.recordfmt import trigger_lane
+    t = _FakeTrigger()
+    assert t.record_version == 2
+    assert [trigger_lane(b, t.record_version) for b in (0, 1, 2, 3, 4)] \
+        == [0, 1, 2, 3, 0]
+    t.set_record_version(3)
+    assert [trigger_lane(b, t.record_version) for b in (0, 1, 2, 3, 4)] \
+        == [0, 1, 0, 1, 0]
+    assert t.photon_dtype is PHOTON_V3_DTYPE

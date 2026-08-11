@@ -21,6 +21,27 @@ Photon event record v2 (one little-endian 128-bit word per photon)::
     y       [112:101] uint12 beammap y (reserved, reads 0)
     pad     [127:113] zero
 
+Photon event record v3 (stage-1/2 gateware; 128-bit word, little-endian)::
+
+    phase   [15:0]    int16  parabola-corrected peak of the COMBINED
+                             (TH2 + D2) matched-filtered stream
+    baseline[31:16]   int16
+    cycle   [75:32]   uint44 ABSOLUTE visit count, 2 us units
+    bin     [86:76]   uint11 channel, bin = beat*2 + lane, lane = r % 2
+    read    [88:87]   uint2
+    x       [100:89]  uint12 reserved, reads 0
+    y       [112:101] uint12 reserved, reads 0
+    dt      [120:113] int8   sub-visit peak offset, LSB 1/256 visit = 7.8125 ns
+    pileup  [121]     uint1  an unresolved sub-threshold crossing occurred in
+                             the dead time immediately before this record.
+                             Sets on roughly every second record BY DESIGN --
+                             a pulse tail falling below threshold while the
+                             channel is HOLDING is exactly the condition. Not
+                             a fault until characterised on real pulses.
+    pad     [127:122] zero
+
+Photon time on v3 = cycle * 2 us + dt * 7.8125 ns.
+
 Chunks: the trigger DMA writes fixed-size chunks of packed events to buffers
 whose physical addresses software pushes into an address FIFO. Reading the
 chunk header CSR returns the PPS timestamp and absolute cycle sampled at the
@@ -64,9 +85,9 @@ except Exception:  # pragma: no cover - allows import (and unpacker tests) off-b
     _PYNQ = False
 
 from mkidgen3.recordfmt import (DEFAULT_RECORD_VERSION, RECORD_VERSION_OFFSET,
-                                SUPPORTED_RECORD_VERSIONS, cycle_ns,
-                                decode_record_version, holdoff_cycle_us,
-                                record_info, trigger_lane)
+                                SUPPORTED_RECORD_VERSIONS, check_version,
+                                cycle_ns, decode_record_version,
+                                holdoff_cycle_us, record_info, trigger_lane)
 
 _logger = logging.getLogger(__name__)
 
@@ -76,9 +97,10 @@ _logger = logging.getLogger(__name__)
 # were right for v3 and wrong for v2 by a factor of two; see
 # mkidgen3.recordfmt.
 
-# Capture buffers are prefilled with this before being queued: real v2
-# records always have zero pad bits [127:113], so an all-ones hi word can
-# never be written by the gateware and marks not-yet-DMA'd space.
+# Capture buffers are prefilled with this before being queued. Real records
+# have zero pad bits -- [127:113] on v2, [127:122] on v3 -- so an all-ones hi
+# word is one the gateware can never write, in either format, and marks
+# not-yet-DMA'd space.
 SENTINEL_U64 = np.uint64(0xffff_ffff_ffff_ffff)
 
 # Postage stamps: raw IQ snippets, one 32-bit word per sample (real[15:0],
@@ -93,8 +115,12 @@ POSTAGE_STAMP_BYTES = POSTAGE_SAMPLES * 4
 POSTAGE_MAX_PER_LANE = 4
 
 PHOTON_V2_PACKED_DTYPE = np.dtype([('lo', '<u8'), ('hi', '<u8')])
+PHOTON_PACKED_DTYPE = PHOTON_V2_PACKED_DTYPE   # the packing is version-free
 PHOTON_V2_DTYPE = np.dtype([('cycle', '<u8'), ('phase', '<i2'), ('baseline', '<i2'),
                             ('id', '<u2'), ('read', 'u1'), ('x', '<u2'), ('y', '<u2')])
+PHOTON_V3_DTYPE = np.dtype([('cycle', '<u8'), ('phase', '<i2'), ('baseline', '<i2'),
+                            ('id', '<u2'), ('read', 'u1'), ('x', '<u2'), ('y', '<u2'),
+                            ('dt', 'i1'), ('pileup', '?')])
 
 
 def unpack_photons_v2(packed, out=None, n=0):
@@ -142,6 +168,76 @@ def pack_photons_v2(photons, out=None):
         | ((p['x'].astype(np.uint64) & 0xfff) << 25) \
         | ((p['y'].astype(np.uint64) & 0xfff) << 37)
     return ret
+
+
+def unpack_photons_v3(packed, out=None, n=0):
+    """Unpack v3 128-bit photon records.
+
+    Same inputs as unpack_photons_v2. v3 adds ``dt`` (signed 8, bits
+    [120:113], LSB 1/256 visit = 7.8125 ns) and ``pileup`` (bit [121]); the
+    other fields sit exactly where v2 puts them.
+    """
+    x = np.asarray(packed)
+    if x.dtype != PHOTON_PACKED_DTYPE:
+        x = np.frombuffer(x.tobytes(), dtype=PHOTON_PACKED_DTYPE)
+    lo, hi = x['lo'], x['hi']
+
+    if out is None:
+        n = 0
+        ret = np.zeros(x.shape[0], dtype=PHOTON_V3_DTYPE)
+    else:
+        if x.shape[0] + n > out.shape[0]:
+            raise IndexError('Output array is too small')
+        ret = out
+    sl = slice(n, n + x.shape[0])
+    ret['phase'][sl] = (lo & 0xffff).astype(np.uint16).view(np.int16)
+    ret['baseline'][sl] = ((lo >> 16) & 0xffff).astype(np.uint16).view(np.int16)
+    ret['cycle'][sl] = (lo >> 32) | ((hi & 0xfff) << 32)
+    ret['id'][sl] = (hi >> 12) & 0x7ff
+    ret['read'][sl] = (hi >> 23) & 0x3
+    ret['x'][sl] = (hi >> 25) & 0xfff
+    ret['y'][sl] = (hi >> 37) & 0xfff
+    ret['dt'][sl] = ((hi >> 49) & 0xff).astype(np.uint8).view(np.int8)
+    ret['pileup'][sl] = ((hi >> 57) & 1).astype(bool)
+    return ret
+
+
+def pack_photons_v3(photons, out=None):
+    """Inverse of unpack_photons_v3 (testing / simulation)."""
+    p = photons
+    ret = np.zeros(p.shape[0], dtype=PHOTON_PACKED_DTYPE) if out is None else out
+    cycle = p['cycle'].astype(np.uint64)
+    ret['lo'] = (p['phase'].astype(np.int64).view(np.uint64) & 0xffff) \
+        | ((p['baseline'].astype(np.int64).view(np.uint64) & 0xffff) << 16) \
+        | ((cycle & 0xffffffff) << 32)
+    ret['hi'] = ((cycle >> 32) & 0xfff) \
+        | ((p['id'].astype(np.uint64) & 0x7ff) << 12) \
+        | ((p['read'].astype(np.uint64) & 0x3) << 23) \
+        | ((p['x'].astype(np.uint64) & 0xfff) << 25) \
+        | ((p['y'].astype(np.uint64) & 0xfff) << 37) \
+        | ((p['dt'].astype(np.int64).view(np.uint64) & 0xff) << 49) \
+        | ((p['pileup'].astype(np.uint64) & 1) << 57)
+    return ret
+
+
+_PHOTON_DTYPES = {2: PHOTON_V2_DTYPE, 3: PHOTON_V3_DTYPE}
+_UNPACKERS = {2: unpack_photons_v2, 3: unpack_photons_v3}
+_PACKERS = {2: pack_photons_v2, 3: pack_photons_v3}
+
+
+def photon_dtype(version):
+    """Unpacked record dtype for a record version."""
+    return _PHOTON_DTYPES[check_version(version)]
+
+
+def unpack_photons(packed, version, out=None, n=0):
+    """Unpack photon records in whichever format this overlay emits."""
+    return _UNPACKERS[check_version(version)](packed, out=out, n=n)
+
+
+def pack_photons(photons, version, out=None):
+    """Inverse of unpack_photons (testing / simulation)."""
+    return _PACKERS[check_version(version)](photons, out=out)
 
 
 def photon_times_ns(photons, header, version):
@@ -417,6 +513,15 @@ class TriggerSubsystemV2(DefaultIP):
         """
         self._record_version_info = record_info(version)
 
+    @property
+    def photon_dtype(self):
+        """Unpacked record dtype for the format this overlay emits."""
+        return photon_dtype(self.record_version)
+
+    def unpack(self, packed, out=None, n=0):
+        """Unpack captured records in this overlay's format."""
+        return unpack_photons(packed, self.record_version, out=out, n=n)
+
     # ---------- chunk header ----------
     def read_chunk_header(self):
         """Read (and CLEAR - this advances the read tag and clears the sticky
@@ -541,9 +646,9 @@ class TriggerSubsystemV2(DefaultIP):
                         with_headers=False, partial='raise'):
         """Synchronous double-buffered capture of n_chunks chunks.
 
-        Returns a PHOTON_V2_DTYPE array (and the list of chunk-header dicts
-        if with_headers). The trigger valve must be OPEN and channels
-        configured. events_per_chunk must be a multiple of 128 (one DMA
+        Returns a photon array of self.photon_dtype (v2 or v3), and the list
+        of chunk-header dicts if with_headers. The trigger valve must be OPEN
+        and channels configured. events_per_chunk must be a multiple of 128 (one DMA
         burst); a chunk only completes when the gateware has written that
         many events into it.
 
@@ -613,7 +718,7 @@ class TriggerSubsystemV2(DefaultIP):
                         _logger.warning('trigger DMA fault flagged in chunk %d', i)
                     if hdr['dropped']:
                         _logger.warning('events dropped in chunk %d', i)
-                    out.append(unpack_photons_v2(np.array(cur))[skip:])
+                    out.append(self.unpack(np.array(cur))[skip:])
                     free.append(cur)
             except TimeoutError as e:
                 # Recover events that already landed in the head buffer; the
@@ -625,12 +730,12 @@ class TriggerSubsystemV2(DefaultIP):
                     cur.invalidate()
                     k = valid_photon_prefix(np.array(cur))
                     if k > skip:
-                        out.append(unpack_photons_v2(np.array(cur)[:k])[skip:])
+                        out.append(self.unpack(np.array(cur)[:k])[skip:])
                         n_partial = k - skip
                         queued[0] = (cur, k)
                     headers.append(self.read_chunk_header())
                 photons = (np.concatenate(out) if out
-                           else np.zeros(0, dtype=PHOTON_V2_DTYPE))
+                           else np.zeros(0, dtype=self.photon_dtype))
                 _logger.warning(
                     'capture timed out after %d/%d chunks; recovered %d events '
                     'from the partial chunk; %d buffer(s) parked for the next '
@@ -640,7 +745,7 @@ class TriggerSubsystemV2(DefaultIP):
                     return (photons, headers) if with_headers else photons
                 raise CaptureTimeout(str(e), photons=photons,
                                      headers=headers) from None
-            photons = np.concatenate(out) if out else np.zeros(0, dtype=PHOTON_V2_DTYPE)
+            photons = np.concatenate(out) if out else np.zeros(0, dtype=self.photon_dtype)
             return (photons, headers) if with_headers else photons
         finally:
             # Park buffers whose addresses the gateware still holds; free the
@@ -685,7 +790,8 @@ class TriggerSubsystemV2(DefaultIP):
         array of shape (n_captured, 128).
 
         bins: a channel number or a sequence of them, at most 4 per lane
-        (lane = bin & 3). GATEWARE LIMITATION: stamps carry no channel or
+        (lane = bin % 4 on a v2 overlay, bin % 2 on a v3 one). GATEWARE
+        LIMITATION: stamps carry no channel or
         cycle metadata in memory (the RTL generates it but never routes it
         to the DMA), so with more than one bin enabled stamps cannot be
         attributed to channels - use one bin at a time unless attribution
@@ -714,10 +820,11 @@ class TriggerSubsystemV2(DefaultIP):
         for b in bins:
             if not 0 <= b < self.N_CHANNELS:
                 raise ValueError(f'bin {b} out of range')
-            lanes.setdefault(b & 3, []).append(b)
+            lanes.setdefault(trigger_lane(b, self.record_version), []).append(b)
         if any(len(v) > POSTAGE_MAX_PER_LANE for v in lanes.values()):
             raise ValueError(f'at most {POSTAGE_MAX_PER_LANE} postage bins '
-                             'per lane (lane = bin & 3)')
+                             f'per lane (lane = bin % '
+                             f'{4 if self.record_version == 2 else 2})')
         if len(bins) > 1:
             _logger.warning('multiple postage bins enabled: stamps carry no '
                             'channel metadata and cannot be attributed')
