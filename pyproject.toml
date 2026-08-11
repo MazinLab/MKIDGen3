@@ -69,3 +69,9 @@ client = [
 plotting = [
   "matplotlib>=3.5.1"
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "slow: takes seconds (builds a wheel, shells out)",
+]
