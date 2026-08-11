@@ -549,13 +549,21 @@ class CaptureHierarchy(DefaultHierarchy):
                     # exactly the bits this message reports.
                     st = acc.status
                     syncd = self.axis2mm.tlast_syncd
+                    ctrl = self.axis2mm.cmd_ctrl_reg
+                    progressed = self.axis2mm.addr - buffer.device_address
                     raise IOError(
                         f'Sweep sum capture did not complete in {timeout:.2f} s '
                         f'(accumulator start={st["start"]} done={st["done"]} '
-                        f'idle={st["idle"]}, dma tlast_syncd={syncd}). '
+                        f'idle={st["idle"]}, dma tlast_syncd={syncd} '
+                        f'busy={ctrl["r_busy"]} err={ctrl["r_err"]} '
+                        f'progress={progressed} B of {self.SWEEP_SUMS_BYTES}). '
                         f'idle=True with done=False means the accumulator never ran; '
                         f'tlast_syncd=False means the DMA is discarding beats while it '
-                        f'hunts for a packet boundary.')
+                        f'hunts for a packet boundary. busy=True err=False with '
+                        f'progress frozen ~30-35 KiB is the NODDR rate-mismatch drop '
+                        f'(dump 16.4 GB/s vs HP0 4.1 GB/s, lossy sw0 boundary): the '
+                        f'burst tail including TLAST was dropped upstream and this '
+                        f'build cannot sweep; see the 2026-08-11 gateware analysis.')
                 time.sleep(0.0005)
             writing[0] = False   # completed on its own: nothing is writing
             # The burst carries one channel per beat, so a transfer framed off a
