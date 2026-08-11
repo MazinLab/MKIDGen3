@@ -15,8 +15,11 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Modules that must be inside the wheel. Task 6 adds the stage-2 modules.
+# Modules that must be inside the wheel. triggerv2 hard-imports recordfmt, so
+# a wheel missing it breaks the board at import, not at first use.
 REQUIRED_MEMBERS = (
+    'mkidgen3/recordfmt.py',
+    'mkidgen3/drivers/iqtransform.py',
     'mkidgen3/drivers/triggerv2.py',
     'mkidgen3/drivers/phasematch.py',
     'mkidgen3/drivers/capture.py',
