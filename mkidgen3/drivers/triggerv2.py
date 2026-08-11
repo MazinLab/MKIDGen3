@@ -408,13 +408,39 @@ class _HuskyDMA:
         return ((v >> 56) & 0xff) < ((v >> 48) & 0xff)
 
     def completed(self):
-        """True when no queued buffer remains and the engine is idle at a wait state."""
+        """True when no queued buffer remains and the engine is idle at a wait state.
+
+        `data_wait_mid` (bit 17) counts as a wait state: an engine parked
+        mid-chunk waiting for input is drained-and-idle from the driver's
+        point of view, and excluding it made a parked engine read
+        completed=False forever and spuriously trip the buffer-size drain
+        guard (gateware analysis 2026-08-11).
+        """
         if self.fifo_count != 0:
             return False
         dbg = self._rd_multi(_Reg.DMA_DEBUG, 2)
         address_wait = (dbg >> 14) & 1
         data_wait = (dbg >> 13) & 1
-        return bool(address_wait or data_wait)
+        data_wait_mid = (dbg >> 17) & 1
+        return bool(address_wait or data_wait or data_wait_mid)
+
+    @property
+    def tx_threshold(self):
+        """Input-FIFO occupancy needed before a burst starts (low 16 bits).
+
+        Powers on at 0: a burst then starts on the first event and trickles
+        beat-by-beat, holding the single-issuance SASD crossbar — which
+        locks out the other HP0 masters (postage, sweeps) for up to a full
+        burst time, and a mid-burst input cut wedges all three permanently.
+        128 (one full burst of events) makes bursts atomic.
+        """
+        return self._rd_multi(_Reg.DMA_INPUT_FIFO + 1, 1) & 0xffff
+
+    @tx_threshold.setter
+    def tx_threshold(self, value):
+        word = self._rd_multi(_Reg.DMA_INPUT_FIFO + 1, 1)
+        word = (word & ~0xffff) | (int(value) & 0xffff)
+        self._p.write((self._b + _Reg.DMA_INPUT_FIFO + 1) * 4, word)
 
     @property
     def burst_count(self):
