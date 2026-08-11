@@ -372,7 +372,15 @@ class CaptureHierarchy(DefaultHierarchy):
 
     def _capture(self, source, n, buffer_addr, armed=None):
         if self.switch is not None:
-            self.switch.set_driver(slave=self.SOURCE_MAP[source], commit=True)
+            slave = self.SOURCE_MAP[source]
+            # Re-committing an unchanged route resets the switch mid-stream,
+            # and the retained-beat investigation (2026-08-11) suspects that
+            # reset of inserting the spurious head beat that shifts every
+            # sweep burst by one beat (the calibrated lag-2). Commit only on
+            # a real route change; a change still gets the reset it needs.
+            if getattr(self, '_committed_route', None) != slave:
+                self.switch.set_driver(slave=slave, commit=True)
+                self._committed_route = slave
         if n % 64:
             raise ValueError('Can only capture in multiples of 64 bytes')
         if not self.axis2mm.ready:
