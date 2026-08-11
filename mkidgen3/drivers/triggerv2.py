@@ -438,9 +438,13 @@ class _HuskyDMA:
 
     @tx_threshold.setter
     def tx_threshold(self, value):
-        word = self._rd_multi(_Reg.DMA_INPUT_FIFO + 1, 1)
-        word = (word & ~0xffff) | (int(value) & 0xffff)
-        self._p.write((self._b + _Reg.DMA_INPUT_FIFO + 1) * 4, word)
+        # Absolute write, never read-modify-write: reads of this word do not
+        # return the threshold (readback gives 0 right after a write), so an
+        # RMW folds whatever the read DID return into the high bits — the
+        # third register on this build to punish RMW against unverified read
+        # semantics (VALVE_CONTROL and the tap-gate GPIO were the others).
+        self._p.write((self._b + _Reg.DMA_INPUT_FIFO + 1) * 4,
+                      int(value) & 0xffff)
 
     @property
     def burst_count(self):
