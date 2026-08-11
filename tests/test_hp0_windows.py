@@ -5,7 +5,10 @@ outside the two HP0 windows DECERRs with no symptom the daemon can see. The
 check is pure arithmetic and lives in mkidgen3.mkidpynq; the allocation path
 that uses it needs pynq and is board-verified by tools/sweepacc_bringup.py.
 """
-from mkidgen3.mkidpynq import HP0_WINDOWS, hp0_reachable
+import pytest
+
+from mkidgen3.mkidpynq import (HP0_WINDOWS, CAPTURE_BEAT_BYTES, hp0_reachable,
+                               flush_transfer, arm_fault)
 
 
 def test_windows():
@@ -34,3 +37,55 @@ def test_the_old_pl_ddr4_window_is_unreachable():
 def test_a_buffer_may_not_straddle_the_gap():
     assert not hp0_reachable(0x7FFF_FF00, 0x1_0000)
     assert not hp0_reachable(-1, 1)
+
+
+# --- what axis2mm is actually programmed with -------------------------------
+#
+# The length register is in bytes and the buffer is a typed array. flush() got
+# that wrong for as long as it has existed: it allocated n u64 words and armed
+# the DMA for 64*n bytes, so seven eighths of the transfer ran off the end of
+# the buffer -- and once the buffer is CMA in PS DDR, off the end can be off
+# the window, which is the DECERR this module exists to prevent.
+
+
+def test_flush_transfer_covers_the_whole_programmed_length():
+    words, nbytes = flush_transfer(1)
+    assert nbytes == CAPTURE_BEAT_BYTES
+    assert words * 8 == nbytes          # u64 words, eight per beat
+    words, nbytes = flush_transfer(37)
+    assert nbytes == 37 * 64
+    assert words == 37 * 8
+
+
+def test_flush_transfer_rejects_a_nonpositive_beat_count():
+    with pytest.raises(ValueError):
+        flush_transfer(0)
+    with pytest.raises(ValueError):
+        flush_transfer(-1)
+
+
+def test_arm_fault_passes_a_sound_transfer():
+    assert arm_fault(0x1000, 4096, 4096) is None
+    assert arm_fault(0x1000, 4096, 1 << 20) is None
+    # PL DDR4 is outside both HP0 windows and does not go through HP0.
+    assert arm_fault(0x5_0000_0000, 4096, 4096, hp0=False) is None
+
+
+def test_arm_fault_catches_a_transfer_larger_than_its_buffer():
+    why = arm_fault(0x1000, 64 * 37, 8 * 37)   # the historical flush bug
+    assert why is not None and 'overruns' in why
+    # and it catches it even where the address itself is reachable
+    assert arm_fault(0x1000, 128, 64, hp0=True) is not None
+
+
+def test_arm_fault_catches_an_unreachable_interval():
+    why = arm_fault(0x5_0000_0000, 4096, 4096)
+    assert why is not None and 'DECERR' in why
+    # a buffer that starts inside the low window but runs out of it
+    assert arm_fault(0x7FFF_FF00, 4096, 4096) is not None
+
+
+def test_arm_fault_rejects_partial_beats_and_empty_transfers():
+    assert arm_fault(0x1000, 0, 4096) is not None
+    assert arm_fault(0x1000, -64, 4096) is not None
+    assert arm_fault(0x1000, 100, 4096) is not None    # not a whole beat

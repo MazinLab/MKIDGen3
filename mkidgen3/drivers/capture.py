@@ -7,7 +7,8 @@ from logging import getLogger
 from typing import Iterable
 
 from ..mkidpynq import N_IQ_GROUPS, MAX_CAP_RAM_BYTES, PL_DDR4_ADDR, \
-    HP0_WINDOWS, hp0_reachable, check_description_for  # config, overlay details
+    HP0_WINDOWS, hp0_reachable, flush_transfer, arm_fault, \
+    check_description_for  # config, overlay details
 from ..system_parameters import N_CHANNELS, N_IQ_GROUPS, N_PHASE_GROUPS, channel_to_iqgroup, channel_to_phasegroup, iqgroup_to_channel, phasegroup_to_channel, ADC_INPUT_WARN
 from ..util import ps_ram_sane, format_bytes
 from ..interrupts import ThreadedPLInterruptManager
@@ -275,13 +276,47 @@ class CaptureHierarchy(DefaultHierarchy):
                 'axis2mm with it would DECERR with no visible symptom')
         return buf
 
-    def flush(self, n):
-        """Capture n*64 bytes to flush a fifo"""
-        buffer = self._allocate(n, 'u64')
-        self.axis2mm.addr = buffer.device_address
-        self.axis2mm.len = 64 * n
-        self.axis2mm.start(continuous=False, increment=True)
-        del buffer
+    def _check_arm(self, addr, nbytes, buffer_nbytes=None):
+        """Refuse to arm axis2mm for an interval it cannot serve.
+
+        Checked against what the length register will actually hold, not what
+        the caller asked for. Only NODDR overlays reach memory through HP0;
+        with PL DDR4 present the buffer lives in the PL's own window, which is
+        outside both HP0 windows by construction.
+        """
+        why = arm_fault(addr, nbytes, buffer_nbytes, hp0=self._noddr)
+        if why is not None:
+            raise RuntimeError(why)
+
+    def flush(self, n, timeout=1.0):
+        """Capture n*64 bytes to flush a fifo.
+
+        The buffer is u64 words while axis2mm is programmed in bytes, so a
+        flush of n beats needs 8*n words, not n. The transfer is then waited
+        out -- or aborted -- before the buffer is released: axis2mm holds a
+        bare physical address, so freeing CMA under a running DMA leaves it
+        writing into whatever is allocated next.
+        """
+        words, nbytes = flush_transfer(n)
+        buffer = self._allocate(words, 'u64')
+        try:
+            self._check_arm(buffer.device_address, nbytes, buffer.nbytes)
+            self.axis2mm.addr = buffer.device_address
+            self.axis2mm.len = nbytes
+            self.axis2mm.start(continuous=False, increment=True)
+            deadline = time.time() + timeout
+            while not self.axis2mm.complete:
+                if time.time() > deadline:
+                    self.axis2mm.abort()
+                    self.axis2mm.clear_error()
+                    getLogger(__name__).warning(
+                        f'Flush of {nbytes} B did not complete in {timeout:.2f} s '
+                        f'(the fifo may hold less than that); aborted so the '
+                        f'buffer can be freed while nothing is writing to it')
+                    break
+                time.sleep(0.0005)
+        finally:
+            buffer.freebuffer()
 
     def looping_capture(self, source: str, n: int, buffers: buffer.PynqBuffer, callback):
         getLogger(__name__).warning('Looping capture untested, exercise case')
@@ -295,7 +330,16 @@ class CaptureHierarchy(DefaultHierarchy):
                           " then try a small throwaway capture (data order may not be aligned in the first capture "
                           "after a reset).")
 
+        # Every buffer in the rotation gets armed sooner or later, so check
+        # them all before the first one starts rather than discovering the bad
+        # one mid-loop with the DMA already running.
+        for j, b in enumerate(buffers):
+            why = arm_fault(b.device_address, n, b.nbytes, hp0=self._noddr)
+            if why is not None:
+                raise RuntimeError(f'looping_capture buffer {j}: {why}')
+
         i = 0
+        self._check_arm(buffers[0].device_address, n, buffers[0].nbytes)
         self.axis2mm.addr = buffers[0].device_address
         self.axis2mm.len = n
         self.axis2mm.start(continuous=True, increment=True)
@@ -308,7 +352,8 @@ class CaptureHierarchy(DefaultHierarchy):
                 break
             else:
                 callback(buffers[i])
-                i = i + 1 if i < len(buffers) else 0
+                i = (i + 1) % len(buffers)
+                self._check_arm(buffers[i].device_address, n, buffers[i].nbytes)
                 self.axis2mm.addr = buffers[i].device_address
                 self.axis2mm.len = n
         self.abort()

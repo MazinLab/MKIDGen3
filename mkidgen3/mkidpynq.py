@@ -25,6 +25,55 @@ def hp0_reachable(addr, nbytes=1):
     return any(lo <= a and a + n <= hi for lo, hi in HP0_WINDOWS)
 
 
+# axis2mm moves whole 64-byte beats; its length register is in bytes while
+# capture buffers are typed arrays, and mixing the two units is how a buffer
+# ends up a fraction of the size the DMA was told to write.
+CAPTURE_BEAT_BYTES = 64
+
+
+def flush_transfer(n):
+    """(u64 words to allocate, bytes axis2mm will write) to flush n beats.
+
+    A flush of n beats is n*64 bytes, which is eight u64 words per beat --
+    allocating n words covers an eighth of what the DMA is programmed with,
+    and the other seven eighths land past the end of the buffer.
+    """
+    n = int(n)
+    if n <= 0:
+        raise ValueError(f'flush needs at least one beat, got {n}')
+    nbytes = CAPTURE_BEAT_BYTES * n
+    return nbytes // 8, nbytes
+
+
+def arm_fault(addr, nbytes, buffer_nbytes=None, hp0=True):
+    """Why axis2mm must not be armed for [addr, addr+nbytes), or None if it may.
+
+    Checks the interval the DMA is actually programmed with rather than the
+    one that was asked for: it must be whole beats, it must fit inside the
+    buffer backing it, and on an HP0 path it must fit inside a single window.
+    Returns a reason string so the caller can raise, and stays pure so it is
+    testable off-board.
+
+    Pass hp0=False for PL DDR4 targets, which do not reach memory through HP0
+    and whose addresses lie outside both windows by construction.
+    """
+    addr = int(addr)
+    nbytes = int(nbytes)
+    if nbytes <= 0:
+        return f'refusing to arm axis2mm for a {nbytes} byte transfer'
+    if nbytes % CAPTURE_BEAT_BYTES:
+        return (f'transfer of {nbytes} B is not a whole number of '
+                f'{CAPTURE_BEAT_BYTES} B beats')
+    if buffer_nbytes is not None and nbytes > int(buffer_nbytes):
+        return (f'transfer of {nbytes} B at {addr:#x} overruns the '
+                f'{int(buffer_nbytes)} B buffer behind it')
+    if hp0 and not hp0_reachable(addr, nbytes):
+        return (f'{nbytes} B at {addr:#x} is outside the HP0 windows '
+                f'{[(hex(a), hex(b)) for a, b in HP0_WINDOWS]}; arming axis2mm '
+                'with it would DECERR with no visible symptom')
+    return None
+
+
 N_IQ_GROUPS = 256
 
 PHOTON_DTYPE = np.dtype([('time', np.uint64), ('phase', np.int16), ('id', np.uint16)])
