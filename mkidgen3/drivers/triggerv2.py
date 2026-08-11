@@ -648,11 +648,20 @@ class TriggerSubsystemV2(DefaultIP):
         return dict(trigger=v & 3, cuber=(v >> 2) & 3, stamper=(v >> 4) & 3)
 
     def set_valves(self, trigger=None, cuber=None, stamper=None):
-        cur = self.read(_Reg.VALVE_CONTROL * 4)
+        """Move valves via a software shadow, never a hardware read-back.
+
+        VALVE_CONTROL's read semantics are unverified; a read-modify-write
+        against a register that reads garbage (or aliases VALVE_STATUS)
+        writes that garbage into the reserved bits [31:6] and can leave a
+        field in a position nobody asked for. The shadow starts at the
+        power-on value (all fields OPEN = 0), so the first write is exact.
+        """
+        cur = getattr(self, '_valve_shadow', 0)
         for shift, val in ((0, trigger), (2, cuber), (4, stamper)):
             if val is not None:
                 cur = (cur & ~(3 << shift)) | ((val & 3) << shift)
-        self.write(_Reg.VALVE_CONTROL * 4, cur)
+        self._valve_shadow = cur & 0x3f
+        self.write(_Reg.VALVE_CONTROL * 4, self._valve_shadow)
 
     # ---------- interrupts ----------
     @property
