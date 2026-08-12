@@ -554,7 +554,7 @@ class CaptureHierarchy(DefaultHierarchy):
         return ladder
 
     def capture_sweep_sums(self, n_frames, discard_frames=0, timeout=None,
-                           rows=2048):
+                           rows=2048, double_tap=True):
         """One hardware accumulated sweep point from the iq_sweep_acc block.
 
         Returns a (rows, 4) int64 ndarray of [sumI, sumQ, sumII, sumQQ] per
@@ -572,6 +572,16 @@ class CaptureHierarchy(DefaultHierarchy):
         cleanly and the last 128 channels are unsweepable on that build.
         The DMA writes strictly in order, so the rows that land are always
         channels [0, rows).
+
+        ``double_tap`` keys the stp-trap workarounds (the pre-arm trap prime
+        and the in-loop throwaway dump) to bitstream identity, per the
+        gateware ruling of 2026-08-11: True on the trapped paced builds
+        (s2t4/s2t6 and older), False from s2t6fix onward, where the certified
+        sequence is plain arm/dump and any extra dump wastes a capture window
+        and can leave a spurious tlast_syncd warning. With it False a
+        one-burst-short stall is NOT compensated — it times out and is
+        reported as a new finding, because on a fixed-upsizer build there is
+        no trapped pair for a stall to be.
         """
         rows = int(rows)
         if not 1 <= rows <= 2048:
@@ -596,11 +606,12 @@ class CaptureHierarchy(DefaultHierarchy):
             # give per-capture rotation parity noise. A small unarmed dump
             # here is eaten by the idle DMA and leaves its pair trapped, so
             # EVERY capture takes the pair path: constant rotation 2,
-            # absorbed by sweep_acc_pinned_lag. On s2t6fix the pipeline
-            # drains freely, the prime is discarded whole, and rotation is
-            # 0 — the same pin flow certifies both.
-            acc.start_point(2, 0)
-            time.sleep(0.001)
+            # absorbed by sweep_acc_pinned_lag. Keyed to bitstream identity
+            # (double_tap), not left always-on: on the fixed builds the
+            # gateware forbids throwaway dumps entirely.
+            if double_tap:
+                acc.start_point(2, 0)
+                time.sleep(0.001)
             self._capture('iqsweep', nbytes,
                           buffer.device_address, armed=writing)
             acc.start_point(n_frames, discard_frames)
@@ -615,6 +626,7 @@ class CaptureHierarchy(DefaultHierarchy):
             # builds with the upsizer fix (s2t6fix onward) never take it.
             tapped = False
             stall_seen = None
+            stalled_one_short = False
             while not self.axis2mm.complete:
                 if not tapped:
                     # Gate on the stall alone — NOT on ap_done, which is
@@ -628,8 +640,10 @@ class CaptureHierarchy(DefaultHierarchy):
                         if stall_seen is None:
                             stall_seen = now
                         elif now - stall_seen > 0.005:
-                            acc.start_point(2, 0)
-                            tapped = True
+                            stalled_one_short = True
+                            if double_tap:
+                                acc.start_point(2, 0)
+                                tapped = True
                     else:
                         stall_seen = None
                 if time.time() > deadline:
@@ -641,6 +655,15 @@ class CaptureHierarchy(DefaultHierarchy):
                     ctrl = self.axis2mm.cmd_ctrl_reg
                     progressed = self.axis2mm.addr - buffer.device_address
                     ladder = self._sweep_timeout_ladder(acc, buffer)
+                    if stalled_one_short and not double_tap:
+                        raise IOError(
+                            f'Sweep sum capture stalled exactly one burst '
+                            f'short ({progressed} of {nbytes} B) on a build '
+                            f'declared free of the upsizer trap '
+                            f'(double_tap=False). This is a NEW finding — '
+                            f'report it to gateware; do not re-enable '
+                            f'double_tap to mask it. Gateware ladder: '
+                            f'{ladder}.')
                     raise IOError(
                         f'Sweep sum capture did not complete in {timeout:.2f} s '
                         f'(accumulator start={st["start"]} done={st["done"]} '
