@@ -651,7 +651,13 @@ class CaptureHierarchy(DefaultHierarchy):
             # says nothing about alignment. Alignment on such a build is
             # certified externally -- the comb identity gate measures the actual
             # channel shift and the operator pins it (sweep_acc_pinned_lag).
-            if rows == 2048 and not self.axis2mm.tlast_syncd:
+            # A tapped capture legitimately reads tlast_syncd False: the
+            # tap's own dump is streaming into the now-idle DMA at check
+            # time, and its trapped closing pair becomes a stable
+            # ~2-channel head offset on subsequent captures — which is
+            # what the comb identity gate measures and sweep_acc_pinned_lag
+            # absorbs. The flag is only meaningful for untapped captures.
+            if rows == 2048 and not tapped and not self.axis2mm.tlast_syncd:
                 raise IOError(
                     'Sweep sum capture completed but the DMA was not framed on a TLAST '
                     'boundary, so the channel mapping of this burst is offset and the '
