@@ -603,8 +603,13 @@ class CaptureHierarchy(DefaultHierarchy):
             stall_seen = None
             while not self.axis2mm.complete:
                 if not tapped:
+                    # Gate on the stall alone — NOT on ap_done, which is
+                    # clear-on-read in ap_ctrl_hs: polling it here consumed
+                    # the bit one iteration before the check could pass, so
+                    # the tap never fired on 2026-08-11 and the mitigation
+                    # went untested inside the armed window.
                     progressed = self.axis2mm.addr - buffer.device_address
-                    if progressed == nbytes - 4096 and acc.status.get('done'):
+                    if progressed == nbytes - 4096:
                         now = time.time()
                         if stall_seen is None:
                             stall_seen = now
