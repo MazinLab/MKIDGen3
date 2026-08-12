@@ -181,19 +181,36 @@ class PhasematchDriver(pynq.DefaultHierarchy):
                             vet=False, defer_commit=True, force_commit=res == self.N_RES - 1,
                             wait=False, raw=raw)
 
+    @staticmethod
+    def _unity_request(coefficients):
+        """The channel count of a ``'unityN'`` request, or None if not one."""
+        if not (isinstance(coefficients, str)
+                and coefficients.startswith('unity')):
+            return None
+        try:
+            return min(max(1, int(coefficients.strip('unity'))), 2048)
+        except ValueError:
+            return 2048
+
     def configure(self, coefficients=None, d2_coefficients=None):
         if coefficients is None:
             return
         getLogger(__name__).info(f'Configuring phasematch with {coefficients}')
-        if isinstance(coefficients, str) and coefficients.startswith('unity'):
-            try:
-                n = min(max(1, int(coefficients.strip('unity'))), 2048)
-            except:
-                n = 2048
+        # Both quadratures accept a 'unityN' string -- the daemon's raw-phase
+        # path sends the same string for TH2 and D2 on dual-quad builds, and
+        # only converting the first one handed d2_coefficients (a str) to the
+        # .shape check below ('str' object has no attribute 'shape',
+        # 2026-08-12 first Load Cal on s2t4dnp).
+        n = self._unity_request(coefficients)
+        if n is not None:
             # v2: 2**15 - 1 (historical). v3: -32768, the only representable
             # unity magnitude in signed 16 bits, which inverts the stream.
             coefficients = unity_coefficient_sets(n, self._record_version,
                                                   n_res=self.N_RES)
+        n = self._unity_request(d2_coefficients)
+        if n is not None:
+            d2_coefficients = unity_coefficient_sets(n, self._record_version,
+                                                     n_res=self.N_RES)
         if coefficients.shape != (2048, self.N_TEMPLATE_TAPS) or coefficients.dtype != 'int16':
             raise ValueError(f'coefficients must be a ({self.N_RES},{self.N_TEMPLATE_TAPS}) int16 array')
         if d2_coefficients is not None:
