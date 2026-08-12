@@ -591,7 +591,28 @@ class CaptureHierarchy(DefaultHierarchy):
                           buffer.device_address, armed=writing)
             acc.start_point(n_frames, discard_frames)
             deadline = time.time() + timeout
+            # Double-tap (gateware briefing 2026-08-11): on the paced s2t4/
+            # s2t6 builds the upsizer traps each packet's closing beat pair
+            # plus TLAST, freezing the capture one final burst short (61440
+            # of 65536). With the DMA still armed, a throwaway second dump
+            # pushes the trapped tail through: the capture completes to the
+            # full length, correctly ordered, TLAST intact. Self-keying —
+            # it fires only when the stall is exactly one burst short, so
+            # builds with the upsizer fix (s2t6fix onward) never take it.
+            tapped = False
+            stall_seen = None
             while not self.axis2mm.complete:
+                if not tapped:
+                    progressed = self.axis2mm.addr - buffer.device_address
+                    if progressed == nbytes - 4096 and acc.status.get('done'):
+                        now = time.time()
+                        if stall_seen is None:
+                            stall_seen = now
+                        elif now - stall_seen > 0.005:
+                            acc.start_point(2, 0)
+                            tapped = True
+                    else:
+                        stall_seen = None
                 if time.time() > deadline:
                     # Read the diagnostics before anything aborts the core:
                     # _release does that on the way out, and an abort perturbs
