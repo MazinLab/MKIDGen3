@@ -587,6 +587,20 @@ class CaptureHierarchy(DefaultHierarchy):
         buffer = self._allocate((rows, 4), 'i8', cacheable=self.USE_CACHEABLE_BUFFERS)
         writing = [False]
         try:
+            # Prime the stp trap BEFORE arming (gateware 2026-08-12): on the
+            # paced s2t4/s2t6 builds a capture completes by one of two paths
+            # — tap-completed (rotation 0) or trapped-pair-completed
+            # (rotation 2, tlast_syncd True; the 2026-07-24 retained-beat
+            # signature, one mechanism all along) — and which one depends on
+            # whether a closing pair was trapped at arm time. Mixed paths
+            # give per-capture rotation parity noise. A small unarmed dump
+            # here is eaten by the idle DMA and leaves its pair trapped, so
+            # EVERY capture takes the pair path: constant rotation 2,
+            # absorbed by sweep_acc_pinned_lag. On s2t6fix the pipeline
+            # drains freely, the prime is discarded whole, and rotation is
+            # 0 — the same pin flow certifies both.
+            acc.start_point(2, 0)
+            time.sleep(0.001)
             self._capture('iqsweep', nbytes,
                           buffer.device_address, armed=writing)
             acc.start_point(n_frames, discard_frames)
