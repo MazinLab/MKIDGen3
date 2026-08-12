@@ -14,6 +14,113 @@ from ..util import ps_ram_sane, format_bytes
 from ..interrupts import ThreadedPLInterruptManager
 
 
+class _PLDDRBuffer(np.ndarray):
+    """A capture buffer carved from the PL DDR4 window by ``_PLDDRPool``.
+
+    Exists because zocl on this image ignores the bank index (bead dqyi,
+    2026-08-12): pynq's ``allocate(target=ddr4_0)`` lands in PS CMA, which a
+    DDR build's capture master cannot reach. Quacks like PynqBuffer where the
+    capture paths care: ``device_address``, ``nbytes``, ``invalidate`` and
+    ``flush`` (no-ops -- the /dev/mem mapping is non-cacheable, so CPU and
+    MIG are always coherent), ``freebuffer``. Only the object the pool
+    returned frees its span; views share data but never the reservation.
+    """
+
+    def __array_finalize__(self, obj):
+        if obj is not None:
+            self.device_address = getattr(obj, 'device_address', None)
+            self._pool = getattr(obj, '_pool', None)
+            self._offset = getattr(obj, '_offset', None)
+            self._is_pool_base = False
+
+    def invalidate(self):
+        pass
+
+    def flush(self):
+        pass
+
+    def freebuffer(self):
+        if getattr(self, '_is_pool_base', False):
+            self._is_pool_base = False
+            self._pool.free(self._offset)
+
+    def __del__(self):
+        try:
+            self.freebuffer()
+        except Exception:
+            pass
+
+
+class _PLDDRPool:
+    """First-fit span allocator over the PL DDR4 window via /dev/mem.
+
+    zocl (5.15.19-xilinx-v2022.1) hands back PS-CMA BOs whatever bank index
+    it is asked for, so target= allocation cannot be trusted to produce
+    PL-DDR addresses. This pool hands out spans of the window directly:
+    ``device_address = base + offset``, data access through ``pynq.MMIO``
+    over the window -- how pynq 2.x did PL DRAM. The mapping is lazy, and
+    the normal capture flow never CPU-touches a span before the DMA that
+    fills it completes, so a dead MIG fails visibly at the DMA instead of
+    hanging a PS access.
+
+    Every span is freed individually; when all are freed the pool is empty
+    and allocation restarts from the base, so long sessions cannot creep
+    toward exhaustion. Genuine exhaustion raises rather than wrapping onto
+    live spans.
+    """
+
+    ALIGN = 4096
+
+    def __init__(self, base, size):
+        self._base = int(base)
+        self._size = int(size)
+        self._mmio = None
+        self._spans = {}   # offset -> reserved bytes
+
+    def _bytes(self):
+        if self._mmio is None:
+            from pynq import MMIO
+            self._mmio = MMIO(self._base, self._size)
+        return self._mmio.array.view(np.uint8)
+
+    def allocate(self, shape, dtype):
+        dtype = np.dtype(dtype)
+        if not isinstance(shape, (tuple, list)):
+            shape = (shape,)
+        shape = tuple(int(s) for s in shape)
+        nbytes = int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
+        if nbytes <= 0:
+            raise ValueError(f'refusing a {nbytes} B allocation')
+        offset = self._reserve(nbytes)
+        view = self._bytes()[offset:offset + nbytes].view(dtype).reshape(shape)
+        buf = view.view(_PLDDRBuffer)
+        buf.device_address = self._base + offset
+        buf._pool = self
+        buf._offset = offset
+        buf._is_pool_base = True
+        return buf
+
+    def _reserve(self, nbytes):
+        want = -(-int(nbytes) // self.ALIGN) * self.ALIGN
+        cursor = 0
+        for offset in sorted(self._spans):
+            if offset - cursor >= want:
+                break
+            cursor = offset + self._spans[offset]
+        if cursor + want > self._size:
+            live = sum(self._spans.values())
+            raise RuntimeError(
+                f'PL DDR4 window exhausted: {want} B requested with {live} B '
+                f'live in {len(self._spans)} spans of the {self._size} B '
+                'window. Leaked capture buffers, not a bigger window, are '
+                'the likely cause.')
+        self._spans[cursor] = want
+        return cursor
+
+    def free(self, offset):
+        self._spans.pop(offset, None)
+
+
 class FilterIQ(DefaultIP):
     """
     """
@@ -197,6 +304,11 @@ class CaptureHierarchy(DefaultHierarchy):
             getLogger(__name__).info('No ddr4_0 in this overlay: capture '
                                      'buffers will be PS-DDR CMA')
 
+        # The self-managed PL DDR4 window pool, built on first use if zocl
+        # ignores the bank index and target= allocation lands in PS CMA.
+        self._pl_ddr_pool = None
+        self._zocl_bank_warned = False
+
         self._fetch_filter_blocks()
 
     @staticmethod
@@ -254,17 +366,48 @@ class CaptureHierarchy(DefaultHierarchy):
         """True if this overlay has no PL DDR4 (capture goes to PS DDR)."""
         return self._noddr
 
+    def _pl_window(self):
+        """(base, size) of the PL DDR4 window the capture master decodes."""
+        target = getattr(self, 'ddr4_0', None)
+        base = getattr(target, 'base_address', None)
+        size = getattr(target, 'size', None)
+        return (int(base) if base else PL_DDR4_ADDR,
+                int(size) if size else MAX_CAP_RAM_BYTES)
+
     def _allocate(self, shape, dtype, cacheable=False):
         """Allocate a capture buffer axis2mm can actually write into.
 
-        With PL DDR4 present nothing changes. Without it the buffer is plain
-        CMA in PS DDR, and its physical address must land inside one of the
-        two HP0 windows -- an address in neither DECERRs silently, so refuse
-        before arming rather than return a buffer that never fills.
+        With PL DDR4 present the buffer must land inside the DDR4 window --
+        it is the only thing the capture master decodes (bead dqyi: writes
+        anywhere else DECERR, and a cleared error plus a completion flag
+        then looks exactly like a successful capture full of zeros). pynq is
+        asked first; if zocl honors the bank index the result verifies and
+        is used, and if the BO comes back with a PS-CMA address the
+        self-managed window pool takes over. Without PL DDR4 the buffer is
+        plain CMA in PS DDR and must land inside one of the two HP0
+        windows. Either way an unverifiable destination raises rather than
+        arming a DMA that fails with no visible symptom.
         """
         target = getattr(self, 'ddr4_0', None)
         if target is not None:
-            return allocate(shape, dtype=dtype, target=target, cacheable=cacheable)
+            base, size = self._pl_window()
+            buf = allocate(shape, dtype=dtype, target=target,
+                           cacheable=cacheable)
+            addr = int(buf.device_address)
+            if base <= addr and addr + buf.nbytes <= base + size:
+                return buf
+            buf.freebuffer()
+            if not self._zocl_bank_warned:
+                self._zocl_bank_warned = True
+                getLogger(__name__).warning(
+                    f'zocl ignored the PL DDR4 bank: target='
+                    f'{type(target).__name__} idx={getattr(target, "idx", None)} '
+                    f'asked for [{base:#x}, {base + size:#x}) and the BO landed '
+                    f'at {addr:#x} (PS CMA). Using the self-managed window '
+                    'pool for every capture buffer this session.')
+            if self._pl_ddr_pool is None:
+                self._pl_ddr_pool = _PLDDRPool(base, size)
+            return self._pl_ddr_pool.allocate(shape, dtype)
         buf = allocate(shape, dtype=dtype, cacheable=cacheable)
         addr = int(buf.device_address)
         if not hp0_reachable(addr, buf.nbytes):
@@ -280,10 +423,17 @@ class CaptureHierarchy(DefaultHierarchy):
 
         Checked against what the length register will actually hold, not what
         the caller asked for. Only NODDR overlays reach memory through HP0;
-        with PL DDR4 present the buffer lives in the PL's own window, which is
-        outside both HP0 windows by construction.
+        with PL DDR4 present the buffer must live inside the DDR4 window,
+        which is the only range the capture master decodes.
         """
         why = arm_fault(addr, nbytes, buffer_nbytes, hp0=self._noddr)
+        if why is None and not self._noddr:
+            base, size = self._pl_window()
+            a, nb = int(addr), int(nbytes)
+            if not (base <= a and a + nb <= base + size):
+                why = (f'{nb} B at {a:#x} is outside the PL DDR4 window '
+                       f'[{base:#x}, {base + size:#x}); arming axis2mm with '
+                       'it would DECERR with no visible symptom')
         if why is not None:
             raise RuntimeError(why)
 
@@ -383,6 +533,10 @@ class CaptureHierarchy(DefaultHierarchy):
                 self._committed_route = slave
         if n % 64:
             raise ValueError('Can only capture in multiples of 64 bytes')
+        # Every arm goes through here, so every arm gets the destination
+        # check: an address outside what this build's capture master decodes
+        # must raise, never start a DMA that DECERRs into silence.
+        self._check_arm(buffer_addr, n)
         if not self.axis2mm.ready:
             raise IOError("capture core not ready, this shouldn't happen."
                           " Try calling .axis2mm.abort() followed by .axis2mm.clear_error()"
@@ -400,6 +554,28 @@ class CaptureHierarchy(DefaultHierarchy):
 
     def is_ready(self):
         return self.axis2mm.ready
+
+    def _raise_capture_errors(self, what, capture_buffer=None):
+        """Raise if the DMA latched an error, freeing the buffer first.
+
+        The silent-zeros failure mode (bead dqyi): a capture whose write
+        bursts error still sets the completion flag, so a caller that only
+        polls completion returns an unfilled buffer indistinguishable from
+        real data. Every waited capture must end with this check.
+        """
+        errors = self.axis2mm.errors()
+        if not errors:
+            return
+        self.axis2mm.clear_error()
+        if capture_buffer is not None:
+            try:
+                capture_buffer.freebuffer()
+            except Exception:
+                pass
+        raise IOError(
+            f'{what} completed with DMA errors {errors}; the buffer was '
+            'never filled. decode_error means the armed address is outside '
+            "what this build's capture master decodes.")
 
     def keep_channels(self, tap, channels):
         if isinstance(channels, str):
@@ -453,6 +629,7 @@ class CaptureHierarchy(DefaultHierarchy):
         if wait:
             errors = self.axis2mm.errors()
             if errors:
+                buf.freebuffer()
                 del buf
                 self.axis2mm.clear_error()
                 return errors
@@ -509,6 +686,7 @@ class CaptureHierarchy(DefaultHierarchy):
             if 'duration' not in wait:
                 wait['duration'] = captime
             self.wait(**wait)
+            self._raise_capture_errors('IQ capture', buffer)
 
         buffer.invalidate()
 
@@ -679,6 +857,10 @@ class CaptureHierarchy(DefaultHierarchy):
                         f'switch-to-FIFO leg as a gateware question.')
                 time.sleep(0.0005)
             writing[0] = False   # completed on its own: nothing is writing
+            # A completed-with-errors sweep is the silent-zeros mode: the
+            # completion flag sets even when every burst DECERRed. The finally
+            # block below owns the buffer either way.
+            self._raise_capture_errors('sweep sum capture')
             # The burst carries one channel per beat, so a transfer framed off a
             # TLAST boundary returns every channel's sums under the wrong index.
             # That is indistinguishable from real data downstream -- refuse it here.
@@ -831,6 +1013,7 @@ class CaptureHierarchy(DefaultHierarchy):
             if 'duration' not in wait or (complex and wait['duration'] < captime):
                 wait['duration'] = captime
             self.wait(**wait)
+            self._raise_capture_errors('ADC capture', buffer)
 
         buffer.invalidate()
 
@@ -838,6 +1021,7 @@ class CaptureHierarchy(DefaultHierarchy):
             d = np.zeros(n, dtype=np.complex64)
             d.real[:] = buffer[:, 0]
             d.imag[:] = buffer[:, 1]
+            buffer.freebuffer()
             del buffer
             return d
         else:
@@ -906,6 +1090,7 @@ class CaptureHierarchy(DefaultHierarchy):
             if 'duration' not in wait:
                 wait['duration'] = captime
             self.wait(**wait)
+            self._raise_capture_errors('phase capture', buffer)
 
         buffer.invalidate()
 
