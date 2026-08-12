@@ -33,6 +33,7 @@ class FakeTransform(IQTransform):
         self.pending_frames = 0          # commits left un-taken by the fabric
         self.writes = []                 # (offset, value) trace
         self._ro = {0x10: version, 0x14: fmt, 0x18: fmt2}
+        self._control_shadow = 0         # the driver's __init__ seeds this
 
     def read(self, offset):
         if offset in self._ro:
@@ -64,6 +65,8 @@ class FakeTransform(IQTransform):
         """One frame of streaming: the fabric takes one step of the commit."""
         if self.pending_frames:
             self.pending_frames -= 1
+            if self.pending_frames == 0:
+                self.control ^= 0b1000   # every lane swapped: bank flips
 
 
 def a_valid_table():
@@ -199,6 +202,25 @@ def test_commit_polls_until_pending_clears():
 def test_commit_timeout_names_the_clock_trap():
     t = FakeTransform()   # never ticks: no TLAST, so pending never clears
     with pytest.raises(TimeoutError, match='512 MHz'):
+        t.commit(timeout_s=0.05)
+
+
+def test_an_ineffective_commit_write_is_caught_by_the_bank_flip():
+    """The pending poll alone proves nothing: a commit write the fabric
+    ignores never raises pending, so the poll exits instantly reporting
+    success while the table sits inert in the write bank -- how every
+    set_transform since bring-up ran against power-on zeros (2026-08-12).
+    The write_bank verification is what catches it."""
+    t = FakeTransform()
+    real_write = t.write
+
+    def write(offset, value):
+        if offset == 0x00:
+            value = int(value) & ~0b10   # the fabric never sees commit
+        real_write(offset, value)
+
+    t.write = write
+    with pytest.raises(RuntimeError, match='did not swap banks'):
         t.commit(timeout_s=0.05)
 
 

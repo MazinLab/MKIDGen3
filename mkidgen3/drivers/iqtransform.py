@@ -169,6 +169,15 @@ class IQTransform(DefaultIP):
     def __init__(self, description):
         super().__init__(description=description)
         self.check_identity()
+        # Software shadow of the writable Control bits (bypass[0],
+        # manual_index[4]). Every Control write below is an ABSOLUTE write
+        # of this shadow: three registers on this board have already
+        # punished read-modify-write with garbage readbacks (valve, tap
+        # gate, tx_threshold), and an RMW commit whose read lies is
+        # invisible -- pending never rises, the poll exits instantly, and
+        # the "committed" table sits inert in the write bank. Seeded once
+        # from the reset state: bypass 0, manual_index 0 (auto-increment).
+        self._control_shadow = 0
 
     # ---------- identity ----------
     def check_identity(self):
@@ -202,8 +211,8 @@ class IQTransform(DefaultIP):
 
     @bypass.setter
     def bypass(self, value):
-        cur = self.read(CONTROL) & _CONTROL_WRITABLE
-        self.write(CONTROL, (cur & ~1) | (1 if value else 0))
+        self._control_shadow = (self._control_shadow & ~1) | (1 if value else 0)
+        self.write(CONTROL, self._control_shadow)
 
     @property
     def pending(self):
@@ -249,18 +258,28 @@ class IQTransform(DefaultIP):
         and TableIndex auto-increments, so one index write starts it.
         """
         words = vet_table(rows)
-        if self.manual_index:
-            cur = self.read(CONTROL) & _CONTROL_WRITABLE
-            self.write(CONTROL, cur & ~(1 << 4))
+        # Absolute write of the shadow with manual_index CLEAR (plain 0 =
+        # auto-increment ON; the sense is inverted deliberately).
+        self._control_shadow &= ~(1 << 4)
+        self.write(CONTROL, self._control_shadow)
         self.write(TABLE_INDEX, 0)
         write = self.write
         for w in words.reshape(-1).tolist():
             write(TABLE_DATA, int(w))
 
     def commit(self, timeout_s=1.0):
-        """Arm the bank swap and wait for every lane to take it."""
-        cur = self.read(CONTROL) & _CONTROL_WRITABLE
-        self.write(CONTROL, cur | (1 << 1))
+        """Arm the bank swap, wait for every lane to take it, PROVE it took.
+
+        The write is the shadow plus the self-clearing commit bit -- never a
+        read-modify-write (see __init__). The pending poll alone is not
+        proof of anything: an ineffective commit write never raises pending,
+        so the poll exits instantly reporting success while the table sits
+        inert in the write bank -- which is exactly how every set_transform
+        since bring-up ran against a power-on all-zeros active bank
+        (found 2026-08-12). The write_bank flip is the proof.
+        """
+        before = decode_control(self.read(CONTROL))['write_bank']
+        self.write(CONTROL, self._control_shadow | (1 << 1))
         deadline = time.monotonic() + float(timeout_s)
         while decode_control(self.read(CONTROL))['pending']:
             if time.monotonic() > deadline:
@@ -271,3 +290,10 @@ class IQTransform(DefaultIP):
                     'pipeline is streaming. Program the clocks and start the '
                     'pipeline before committing.')
             time.sleep(0.001)
+        after = decode_control(self.read(CONTROL))['write_bank']
+        if after == before:
+            raise RuntimeError(
+                f'IQ transform commit did not swap banks (write_bank still '
+                f'{int(after)}, pending clear): the commit write was '
+                f'ineffective and the active bank still holds the previous '
+                f'table. The constants just written are NOT live.')
