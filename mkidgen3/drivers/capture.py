@@ -1096,6 +1096,73 @@ class CaptureHierarchy(DefaultHierarchy):
 
         return buffer
 
+    def capture_phase_pairs(self, n, groups='all', duration=False, tap_location='filtphase',
+                            wait: (bool, dict) = True):
+        """Capture the paired TH2/D2 discriminant tap (th2d2tap builds).
+
+        On those builds the phase0 lane carries 4 bytes per channel per
+        sample instead of 2: 64-bit beat b holds channels 2b/2b+1 as
+        [TH2(2b), TH2(2b+1), D2(2b), D2(2b+1)] int16, LSB 2^-9 rad. This
+        method only sizes the capture for that width and returns the RAW
+        beat buffer shaped (n, n_beats, 4) int16 -- beat-order decode to
+        per-channel planes is the daemon's job, where it is testable
+        off-board. Group semantics match capture_phase (16 channels per
+        keep group, even group count), so group g contributes beats
+        8g..8g+7. The caller is responsible for knowing the lane actually
+        carries this format; on any other build the same capture returns
+        matched-phase beats misread as pairs.
+        """
+        if self.filter_phase.get(tap_location, None) is None:
+            raise CaptureNotSupported(
+                f'no phase capture tap {tap_location!r} in this overlay '
+                f'(NODDR builds carry no filter_phase); available: '
+                f'{sorted(str(k) for k, v in self.filter_phase.items() if v is not None)}')
+
+        if duration:
+            n = int(np.floor(n * 1e-3 * 1e6))
+
+        if n <= 0:
+            raise ValueError('Must request at least 1 sample')
+
+        if groups is not None:
+            self.filter_phase[tap_location].keep = groups
+        n_groups = len(self.filter_phase[tap_location].keep)
+
+        # each group is 16 channels x 4 bytes = 8 beats of 8 bytes
+        capture_bytes = n * 4 * n_groups * 16
+
+        try:
+            buffer = self._allocate((n, n_groups * 8, 4), 'i2',
+                                    cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
+        except RuntimeError:
+            getLogger(__name__).warning(f'Insufficient space for requested samples.')
+            raise RuntimeError('Insufficient free space')
+        addr = buffer.device_address
+
+        datavolume_mb = capture_bytes / 1024 ** 2
+        # Same beat rate as capture_phase but twice the bytes per beat. The
+        # figure is only the wait-duration estimate; completion is polled.
+        datarate_mbps = 64 * 512 / 4 * n_groups / 128
+        captime = datavolume_mb / datarate_mbps
+
+        getLogger(__name__).debug(
+            f"Capturing ~{datavolume_mb:.2f} MB of paired TH2/D2 data @ "
+            f"{datarate_mbps:.1f} MBps. ETA {captime * 1000:.0f} ms")
+
+        self._capture(tap_location, capture_bytes, addr)
+
+        if wait:
+            if isinstance(wait, bool):
+                wait = {}
+            if 'duration' not in wait:
+                wait['duration'] = captime
+            self.wait(**wait)
+            self._raise_capture_errors('paired phase capture', buffer)
+
+        buffer.invalidate()
+
+        return buffer
+
     def ddc_compare_cap(self, n_points=1024):
         """A helper function to capture data just after bin2res and after the ddc"""
         x = self.capture_iq(n_points, 'all', tap_location='rawiq')
