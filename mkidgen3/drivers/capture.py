@@ -1100,17 +1100,20 @@ class CaptureHierarchy(DefaultHierarchy):
                             wait: (bool, dict) = True):
         """Capture the paired TH2/D2 discriminant tap (th2d2tap builds).
 
-        On those builds the phase0 lane carries 4 bytes per channel per
-        sample instead of 2: 64-bit beat b holds channels 2b/2b+1 as
-        [TH2(2b), TH2(2b+1), D2(2b), D2(2b+1)] int16, LSB 2^-9 rad. This
+        filter_phase packs four 64-bit tap beats per 256-bit word and only
+        opens a word at an 8-beat group boundary (the tap's user tag
+        advances every TWO beats, so ``user % 4 == 0`` aligns only there;
+        gateware, 2026-08-13). Each kept 16-channel group therefore lands
+        as exactly 4 chunks carrying its LOWER 8 channels; the upper 8
+        never reach the capture bus on this build family. Chunk c holds
+        [TH2(ch), TH2(ch+1), D2(ch), D2(ch+1)] int16 with
+        ch = 16*(c//4) + 2*(c%4) within the kept-group sequence. This
         method only sizes the capture for that width and returns the RAW
-        beat buffer shaped (n, n_beats, 4) int16 -- beat-order decode to
+        chunk buffer shaped (n, 4*n_groups, 4) int16 -- decode to
         per-channel planes is the daemon's job, where it is testable
         off-board. Group semantics match capture_phase (16 channels per
-        keep group, even group count), so group g contributes beats
-        8g..8g+7. The caller is responsible for knowing the lane actually
-        carries this format; on any other build the same capture returns
-        matched-phase beats misread as pairs.
+        keep group, even group count). The caller is responsible for
+        knowing the lane actually carries this format.
         """
         if self.filter_phase.get(tap_location, None) is None:
             raise CaptureNotSupported(
@@ -1128,11 +1131,12 @@ class CaptureHierarchy(DefaultHierarchy):
             self.filter_phase[tap_location].keep = groups
         n_groups = len(self.filter_phase[tap_location].keep)
 
-        # each group is 16 channels x 4 bytes = 8 beats of 8 bytes
-        capture_bytes = n * 4 * n_groups * 16
+        # each kept group survives as 4 chunks of 8 bytes (its lower 8
+        # channels); the upper 8 are dropped at the filter_phase packer
+        capture_bytes = n * 32 * n_groups
 
         try:
-            buffer = self._allocate((n, n_groups * 8, 4), 'i2',
+            buffer = self._allocate((n, n_groups * 4, 4), 'i2',
                                     cacheable=self.USE_CACHEABLE_BUFFERS if wait else False)
         except RuntimeError:
             getLogger(__name__).warning(f'Insufficient space for requested samples.')
@@ -1140,9 +1144,10 @@ class CaptureHierarchy(DefaultHierarchy):
         addr = buffer.device_address
 
         datavolume_mb = capture_bytes / 1024 ** 2
-        # Same beat rate as capture_phase but twice the bytes per beat. The
-        # figure is only the wait-duration estimate; completion is polled.
-        datarate_mbps = 64 * 512 / 4 * n_groups / 128
+        # Same beat rate as capture_phase, half the survivors per group (the
+        # packer drops the upper 8 channels). Only the wait-duration
+        # estimate; completion is polled.
+        datarate_mbps = 32 * 512 / 4 * n_groups / 128
         captime = datavolume_mb / datarate_mbps
 
         getLogger(__name__).debug(
