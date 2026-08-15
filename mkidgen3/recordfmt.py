@@ -85,7 +85,7 @@ def record_info(version):
 
 
 # --- matched filter bank geometry -----------------------------------------
-# Four 30-tap banks, 1024 coefficient sets each, two reload slots each,
+# Four matched-filter banks, 1024 coefficient sets each, two reload slots each,
 # routed by TDEST through the reload switch at 0x800E_0000:
 #
 #   TDEST 0 = TH2 lane 0    TDEST 2 = D2 lane 0
@@ -95,6 +95,9 @@ def record_info(version):
 # of a channel must be reloaded together and committed by the same config
 # packet or the two planes briefly carry templates from different loads.
 # A v2 build has one quadrature on four lanes: lane = r % 4, set = r // 4.
+# The historical builds use 30 taps in every bank. New stage-2 builds may use
+# a different width for the D2 pair, so C_NUM_TAPS from each FIR core in the
+# hierarchy description is the authority for a loaded overlay.
 FIR_TAPS = 30
 N_RES = 2048
 FIR_LANES_BY_VERSION = {2: 4, 3: 2}
@@ -156,26 +159,124 @@ def fir_config_packet(version):
     return pack16_to_32(np.arange(FIR_SETS_BY_VERSION[v], dtype=np.uint16))
 
 
-def fir_reload_packet(res_id, taps, version):
-    """Build one reload packet: set number, then the 30 taps reversed.
+def fir_taps_from_description(description):
+    """Return ``C_NUM_TAPS`` for reload TDEST 0..3.
+
+    PYNQ's hierarchy description carries the four direct FIR instances as
+    ``matched_filter_512x0`` through ``matched_filter_512x3``. The parameter
+    is read from every core rather than inferred from the record version:
+    record-v3 covers both the historical 30/30 banks and mixed-width builds.
+
+    Missing or partial metadata is a refusal. Falling back to ``FIR_TAPS``
+    here would make a 15-tap destination receive a 31-word reload packet,
+    overflowing its per-channel reload FIFO and desynchronizing every packet
+    after it.
+    """
+    try:
+        ips = description['ip']
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            'phasematch hierarchy description has no direct IP metadata'
+        ) from error
+    if not isinstance(ips, dict):
+        raise ValueError('phasematch hierarchy IP metadata is not a mapping')
+
+    counts = {}
+    prefix = 'matched_filter_512x'
+    for name, core in ips.items():
+        leaf = str(name).rsplit('/', 1)[-1]
+        if not leaf.startswith(prefix):
+            continue
+        suffix = leaf[len(prefix):]
+        if suffix not in ('0', '1', '2', '3'):
+            continue
+        tdest = int(suffix)
+        try:
+            taps = int(core['parameters']['C_NUM_TAPS'])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                f'FIR reload TDEST {tdest} has no valid C_NUM_TAPS metadata'
+            ) from error
+        if taps <= 0:
+            raise ValueError(
+                f'FIR reload TDEST {tdest} reports invalid C_NUM_TAPS={taps}'
+            )
+        counts[tdest] = taps
+
+    missing = [tdest for tdest in range(4) if tdest not in counts]
+    if missing:
+        raise ValueError(
+            'phasematch hierarchy is missing C_NUM_TAPS for reload TDEST '
+            + ', '.join(str(tdest) for tdest in missing)
+        )
+    return tuple(counts[tdest] for tdest in range(4))
+
+
+def fir_taps_by_quadrature(taps_by_tdest, version):
+    """Collapse per-destination widths after proving each plane rectangular."""
+    v = check_version(version)
+    taps_by_tdest = tuple(int(taps) for taps in taps_by_tdest)
+    if len(taps_by_tdest) != 4 or any(taps <= 0 for taps in taps_by_tdest):
+        raise ValueError(
+            f'need four positive FIR tap counts, got {taps_by_tdest}'
+        )
+    result = {}
+    n_lanes = FIR_LANES_BY_VERSION[v]
+    for plane, quadrature in enumerate(FIR_QUADRATURES_BY_VERSION[v]):
+        destinations = range(plane * n_lanes, (plane + 1) * n_lanes)
+        widths = {taps_by_tdest[tdest] for tdest in destinations}
+        if len(widths) != 1:
+            details = ', '.join(
+                f'TDEST {tdest}={taps_by_tdest[tdest]}'
+                for tdest in destinations
+            )
+            raise ValueError(
+                f'{quadrature.upper()} FIR lanes have unequal tap counts: '
+                f'{details}'
+            )
+        result[quadrature] = widths.pop()
+    return result
+
+
+def fir_reload_last_bytes(n_taps):
+    """Valid bytes in the final u32 of a set-word-plus-taps packet."""
+    n_taps = int(n_taps)
+    if n_taps <= 0:
+        raise ValueError(f'FIR tap count must be positive, got {n_taps}')
+    return 2 if (n_taps + 1) % 2 else 4
+
+
+def fir_reload_packet(res_id, taps, version, expected_taps=FIR_TAPS,
+                      tdest=None):
+    """Build one reload packet: set number, then destination taps reversed.
 
     ``taps`` are already in coefficient word form (plain signed 16-bit
     integers -- the FIRs are configured with Coefficient_Fractional_Bits 0,
-    so the IP does no rescaling). Send with ``last_bytes=2``.
+    so the IP does no rescaling). Use :func:`fir_reload_last_bytes` for the
+    FIFO transfer's final-word byte count.
     """
     v = check_version(version)
     t = np.asarray(taps)
-    if t.size != FIR_TAPS:
-        raise ValueError(f'need exactly {FIR_TAPS} taps, got {t.size}')
-    words = np.zeros(FIR_TAPS + 1, dtype=np.uint16)
+    expected_taps = int(expected_taps)
+    if t.ndim != 1 or t.size != expected_taps:
+        destination = '' if tdest is None else f' for TDEST {int(tdest)}'
+        raise ValueError(
+            f'FIR reload{destination} expected {expected_taps} taps '
+            f'({expected_taps + 1} words), got {t.size} taps '
+            f'({t.size + 1} words)'
+        )
+    words = np.zeros(expected_taps + 1, dtype=np.uint16)
     words[0] = fir_set(res_id, v)
     words[1:] = (t.astype(np.int64)[::-1] & 0xffff).astype(np.uint16)
     return pack16_to_32(words)
 
 
-def unity_coefficient_sets(n, version, n_res=N_RES):
-    """(n_res, 30) int16 taps: unity on the first ``n`` channels, else zero."""
+def unity_coefficient_sets(n, version, n_res=N_RES, n_taps=FIR_TAPS):
+    """Rectangular int16 bank: unity on the first ``n`` channels, else zero."""
     v = check_version(version)
-    c = np.zeros((int(n_res), FIR_TAPS), dtype=np.int16)
+    n_taps = int(n_taps)
+    if n_taps <= 0:
+        raise ValueError(f'FIR tap count must be positive, got {n_taps}')
+    c = np.zeros((int(n_res), n_taps), dtype=np.int16)
     c[:int(n), 0] = UNITY_TAP_BY_VERSION[v]
     return c

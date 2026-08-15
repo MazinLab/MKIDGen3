@@ -6,6 +6,9 @@ deterministically on every v3 commit, which is exactly how the ipfA
 bring-up found it on 2026-08-11.
 """
 import pathlib
+import importlib
+import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -85,3 +88,47 @@ def test_send_config_uses_the_chunked_path():
     send_config = source.split("def _send_config", 1)[1].split("\n    def ")[0]
     assert "tx_chunked(fir_config_packet" in send_config
     assert "self.fifo.tx(" not in send_config
+
+
+def test_mixed_width_driver_sends_native_packets_and_tlast(monkeypatch):
+    """One channel emits 31 TH2 halfwords and 16 D2 halfwords, independently."""
+    monkeypatch.setitem(
+        sys.modules, "pynq", SimpleNamespace(DefaultHierarchy=object)
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "mkidgen3.fixedpoint",
+        SimpleNamespace(fp_factory=lambda *_args, **_kwargs: None),
+    )
+    sys.modules.pop("mkidgen3.drivers.phasematch", None)
+    module = importlib.import_module("mkidgen3.drivers.phasematch")
+    driver = object.__new__(module.PhasematchDriver)
+    driver._record_version = 3
+    driver._taps_by_tdest = (30, 30, 15, 15)
+    driver._pending = {}
+
+    class RecordingFifo:
+        def __init__(self):
+            self.frames = []
+
+        def tx(self, data, destination=0, last_bytes=4, wait=False):
+            self.frames.append(
+                (np.asarray(data).copy(), destination, last_bytes, wait)
+            )
+
+    driver.fifo = RecordingFifo()
+    th2 = np.arange(30, dtype=np.int16)
+    d2 = np.arange(100, 115, dtype=np.int16)
+
+    driver.load_coeff(
+        0,
+        th2,
+        d2_coeffs=d2,
+        raw=True,
+        defer_commit=True,
+    )
+
+    assert [(data.size, dest, last) for data, dest, last, _ in driver.fifo.frames] == [
+        (16, 0, 2),
+        (8, 2, 4),
+    ]

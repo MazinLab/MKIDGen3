@@ -80,7 +80,21 @@ from mkidgen3.recordfmt import (FIR_TAPS, N_RES, FIR_LANES_BY_VERSION,
                                 FIR_QUADRATURES_BY_VERSION,
                                 UNITY_TAP_BY_VERSION, fir_lane, fir_set,
                                 fir_tdest, pack16_to_32, fir_config_packet,
-                                fir_reload_packet, unity_coefficient_sets)
+                                fir_reload_last_bytes, fir_reload_packet,
+                                fir_taps_by_quadrature,
+                                fir_taps_from_description,
+                                unity_coefficient_sets)
+
+
+def fir_description(*tap_counts):
+    return {
+        'ip': {
+            f'matched_filter_512x{tdest}': {
+                'parameters': {'C_NUM_TAPS': str(taps)}
+            }
+            for tdest, taps in enumerate(tap_counts)
+        }
+    }
 
 
 def test_pack16_to_32_keeps_the_high_half():
@@ -157,8 +171,42 @@ def test_reload_packet_v2_matches_the_pre_stage2_construction():
 
 
 def test_reload_packet_rejects_the_wrong_tap_count():
-    with pytest.raises(ValueError, match='30'):
+    with pytest.raises(ValueError, match=r'expected 30 taps .* got 29 taps'):
         fir_reload_packet(0, np.zeros(29, dtype=np.int16), 3)
+
+
+def test_mixed_width_reload_packet_ends_on_a_full_word():
+    taps = np.arange(200, 215, dtype=np.int16)
+    packet = fir_reload_packet(
+        5, taps, 3, expected_taps=15, tdest=3
+    )
+    assert packet.dtype == np.uint32 and packet.size == 8
+    words = np.frombuffer(packet.tobytes(), dtype=np.uint16)
+    assert words[0] == 2
+    np.testing.assert_array_equal(words[1:], taps[::-1].astype(np.uint16))
+    assert fir_reload_last_bytes(30) == 2
+    assert fir_reload_last_bytes(15) == 4
+
+
+def test_fir_taps_resolve_per_destination_and_plane():
+    mixed = fir_taps_from_description(fir_description(30, 30, 15, 15))
+    assert mixed == (30, 30, 15, 15)
+    assert fir_taps_by_quadrature(mixed, 3) == {'th2': 30, 'd2': 15}
+    uniform = fir_taps_from_description(fir_description(30, 30, 30, 30))
+    assert fir_taps_by_quadrature(uniform, 3) == {'th2': 30, 'd2': 30}
+    assert fir_taps_by_quadrature(uniform, 2) == {'th2': 30}
+
+
+def test_fir_tap_metadata_refuses_partial_or_nonrectangular_planes():
+    partial = fir_description(30, 30, 15)
+    with pytest.raises(ValueError, match='TDEST 3'):
+        fir_taps_from_description(partial)
+    with pytest.raises(ValueError, match=r'D2.*TDEST 2=15, TDEST 3=14'):
+        fir_taps_by_quadrature((30, 30, 15, 14), 3)
+    malformed = fir_description(30, 30, 15, 15)
+    malformed['ip']['matched_filter_512x2']['parameters']['C_NUM_TAPS'] = 'x'
+    with pytest.raises(ValueError, match=r'TDEST 2.*C_NUM_TAPS'):
+        fir_taps_from_description(malformed)
 
 
 def test_unity_coefficient_sets():
@@ -169,3 +217,6 @@ def test_unity_coefficient_sets():
     assert (c3[:, 1:] == 0).all()
     c2 = unity_coefficient_sets(7, 2)
     assert (c2[:7, 0] == 32767).all()
+    d2 = unity_coefficient_sets(7, 3, n_taps=15)
+    assert d2.shape == (N_RES, 15)
+    assert (d2[:7, 0] == -32768).all() and (d2[:, 1:] == 0).all()
