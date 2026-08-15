@@ -20,6 +20,9 @@ Nothing in this module applies to it.
 
 Source: the stage-2 driver handoff, 2026-08-10, ss3.2-3.3 and s4.
 """
+from pathlib import Path
+from xml.etree import ElementTree
+
 import numpy as np
 
 # --- record version CSR (trigger subsystem, byte offset 0x40) --------------
@@ -162,22 +165,27 @@ def fir_config_packet(version):
 def fir_taps_from_description(description):
     """Return ``C_NUM_TAPS`` for reload TDEST 0..3.
 
-    PYNQ's hierarchy description carries the four direct FIR instances as
-    ``matched_filter_512x0`` through ``matched_filter_512x3``. The parameter
-    is read from every core rather than inferred from the record version:
-    record-v3 covers both the historical 30/30 banks and mixed-width builds.
+    PYNQ omits the four FIR Compiler instances from a hierarchy description
+    because they have no addressable control interface.  The HWH paired with
+    the overlay bitfile still carries each direct instance and its
+    ``C_NUM_TAPS`` parameter, so that XML is the live-overlay authority.  A
+    populated direct ``ip`` mapping is retained for metadata fakes and older
+    PYNQ parsers, but a partial mapping is an error rather than a reason to
+    silently switch sources.
+
+    The parameter is read from every ``matched_filter_512x0`` through
+    ``matched_filter_512x3`` core rather than inferred from the record
+    version: record-v3 covers both the historical 30/30 banks and mixed-width
+    builds.
 
     Missing or partial metadata is a refusal. Falling back to ``FIR_TAPS``
     here would make a 15-tap destination receive a 31-word reload packet,
     overflowing its per-channel reload FIFO and desynchronizing every packet
     after it.
     """
-    try:
-        ips = description['ip']
-    except (KeyError, TypeError) as error:
-        raise ValueError(
-            'phasematch hierarchy description has no direct IP metadata'
-        ) from error
+    if not isinstance(description, dict):
+        raise ValueError('phasematch hierarchy description is not a mapping')
+    ips = description.get('ip', {})
     if not isinstance(ips, dict):
         raise ValueError('phasematch hierarchy IP metadata is not a mapping')
 
@@ -203,6 +211,9 @@ def fir_taps_from_description(description):
             )
         counts[tdest] = taps
 
+    if not counts:
+        counts = _fir_taps_from_hwh(description, prefix)
+
     missing = [tdest for tdest in range(4) if tdest not in counts]
     if missing:
         raise ValueError(
@@ -210,6 +221,56 @@ def fir_taps_from_description(description):
             + ', '.join(str(tdest) for tdest in missing)
         )
     return tuple(counts[tdest] for tdest in range(4))
+
+
+def _fir_taps_from_hwh(description, prefix):
+    """Read the non-addressable FIR cores from this hierarchy's HWH."""
+    overlay = description.get('overlay')
+    bitfile = getattr(overlay, 'bitfile_name', None)
+    fullpath = description.get('fullpath')
+    if not bitfile or not isinstance(fullpath, str) or not fullpath.strip('/'):
+        raise ValueError(
+            'phasematch hierarchy description has neither direct FIR IP '
+            'metadata nor an overlay bitfile/fullpath for HWH lookup'
+        )
+
+    hwh = Path(bitfile).with_suffix('.hwh')
+    try:
+        root = ElementTree.parse(hwh).getroot()
+    except (OSError, ElementTree.ParseError) as error:
+        raise ValueError(
+            f'cannot read phasematch FIR geometry from {hwh}: {error}'
+        ) from error
+
+    hierarchy = '/' + fullpath.strip('/') + '/'
+    expected = {
+        hierarchy + prefix + str(tdest): tdest for tdest in range(4)
+    }
+    counts = {}
+    for core in root.iter():
+        if core.tag.rsplit('}', 1)[-1] != 'MODULE':
+            continue
+        fullname = core.attrib.get('FULLNAME')
+        tdest = expected.get(fullname)
+        if tdest is None:
+            continue
+        parameters = {
+            parameter.attrib.get('NAME'): parameter.attrib.get('VALUE')
+            for parameter in core.iter()
+            if parameter.tag.rsplit('}', 1)[-1] == 'PARAMETER'
+        }
+        try:
+            taps = int(parameters['C_NUM_TAPS'])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                f'FIR reload TDEST {tdest} has no valid C_NUM_TAPS metadata'
+            ) from error
+        if taps <= 0:
+            raise ValueError(
+                f'FIR reload TDEST {tdest} reports invalid C_NUM_TAPS={taps}'
+            )
+        counts[tdest] = taps
+    return counts
 
 
 def fir_taps_by_quadrature(taps_by_tdest, version):

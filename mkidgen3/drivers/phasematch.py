@@ -38,9 +38,14 @@ class PhasematchDriver(pynq.DefaultHierarchy):
     COEFF_FORMAT = (1, 15)
 
     def __init__(self, description):
+        # Resolve before DefaultHierarchy consumes the description.  PYNQ's
+        # hierarchy mapping omits these non-addressable FIR Compiler cores,
+        # so the resolver may need the overlay/fullpath references to inspect
+        # the paired HWH.
+        taps_by_tdest = fir_taps_from_description(description)
         super().__init__(description)
         self.fifo = self.reload.axi_fifo_mm_s_0
-        self._taps_by_tdest = fir_taps_from_description(description)
+        self._taps_by_tdest = taps_by_tdest
         self._record_version = DEFAULT_RECORD_VERSION
         self._pending = {}          # reload TDEST -> pending reload slots
 

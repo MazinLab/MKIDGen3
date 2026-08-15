@@ -2,6 +2,8 @@
 
 Values come from the stage-2 driver handoff, 2026-08-10.
 """
+from types import SimpleNamespace
+
 import pytest
 
 from mkidgen3.recordfmt import (RECORD_VERSION_OFFSET, DEFAULT_RECORD_VERSION,
@@ -94,6 +96,32 @@ def fir_description(*tap_counts):
             }
             for tdest, taps in enumerate(tap_counts)
         }
+    }
+
+
+def hwh_description(tmp_path, *tap_counts):
+    bitfile = tmp_path / 'mixed.bit'
+    bitfile.write_bytes(b'not used by the metadata resolver')
+    modules = ''.join(
+        '<MODULE FULLNAME="/photon_pipe/phasematch/'
+        f'matched_filter_512x{tdest}">'
+        '<PARAMETERS><PARAMETER NAME="C_NUM_TAPS" '
+        f'VALUE="{taps}"/></PARAMETERS></MODULE>'
+        for tdest, taps in enumerate(tap_counts)
+    )
+    # Same leaf name under another hierarchy must not satisfy this bank.
+    modules += (
+        '<MODULE FULLNAME="/other/phasematch/matched_filter_512x3">'
+        '<PARAMETERS><PARAMETER NAME="C_NUM_TAPS" VALUE="99"/>'
+        '</PARAMETERS></MODULE>'
+    )
+    bitfile.with_suffix('.hwh').write_text(
+        '<SYSTEM><MODULES>' + modules + '</MODULES></SYSTEM>'
+    )
+    return {
+        'ip': {},
+        'fullpath': 'photon_pipe/phasematch',
+        'overlay': SimpleNamespace(bitfile_name=str(bitfile)),
     }
 
 
@@ -195,6 +223,25 @@ def test_fir_taps_resolve_per_destination_and_plane():
     uniform = fir_taps_from_description(fir_description(30, 30, 30, 30))
     assert fir_taps_by_quadrature(uniform, 3) == {'th2': 30, 'd2': 30}
     assert fir_taps_by_quadrature(uniform, 2) == {'th2': 30}
+
+
+def test_fir_taps_resolve_from_real_pynq_hierarchy_shape(tmp_path):
+    # Real PYNQ hierarchy_dict has an empty direct-IP map because FIR Compiler
+    # has no addressable control interface.  The paired HWH is authoritative.
+    description = hwh_description(tmp_path, 30, 30, 15, 15)
+    mixed = fir_taps_from_description(description)
+    assert mixed == (30, 30, 15, 15)
+    assert fir_taps_by_quadrature(mixed, 3) == {'th2': 30, 'd2': 15}
+
+
+def test_fir_tap_hwh_metadata_refuses_partial_or_malformed(tmp_path):
+    partial = hwh_description(tmp_path, 30, 30, 15)
+    with pytest.raises(ValueError, match='TDEST 3'):
+        fir_taps_from_description(partial)
+
+    malformed = hwh_description(tmp_path, 30, 30, 'x', 15)
+    with pytest.raises(ValueError, match=r'TDEST 2.*C_NUM_TAPS'):
+        fir_taps_from_description(malformed)
 
 
 def test_fir_tap_metadata_refuses_partial_or_nonrectangular_planes():
