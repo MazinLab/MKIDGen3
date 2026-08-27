@@ -82,7 +82,7 @@ def a_valid_table():
 
 
 def test_decoders_match_the_bitstream():
-    assert decode_version(VERSION_WORD) == EXPECTED_VERSION
+    assert decode_version(VERSION_WORD) == dict(EXPECTED_VERSION, latency=24)
     assert decode_version(VERSION_WORD) == dict(version=1, lanes=4, beat_bits=9,
                                                 columns=8, latency=24)
     assert decode_format(FORMAT_WORD) == EXPECTED_FORMAT
@@ -106,6 +106,21 @@ def test_decode_control():
 
 def test_check_identity_accepts_this_bitstream():
     FakeTransform().check_identity()
+
+
+def test_check_identity_accepts_the_latency_25_finish_stage():
+    # 2026-08-27 BxBFFT v6 build: one more register in the finish stage,
+    # same arithmetic, TRANSFORM_VERSION still 1. Latency is bits 27:20.
+    word_25 = (VERSION_WORD & ~(0xff << 20)) | (25 << 20)
+    t = FakeTransform(version=word_25)
+    t.check_identity()
+    assert t.status()['latency'] == 25
+
+
+def test_check_identity_rejects_an_unknown_latency():
+    word_26 = (VERSION_WORD & ~(0xff << 20)) | (26 << 20)
+    with pytest.raises(RuntimeError, match='latency=26'):
+        FakeTransform(version=word_26).check_identity()
 
 
 @pytest.mark.parametrize('reg,word', [('version', 0x01889402),

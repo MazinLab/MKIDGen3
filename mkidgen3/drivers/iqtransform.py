@@ -57,7 +57,15 @@ CLAMP_THRESHOLD_RESET = 256
 # read-only status that must never be written back.
 _CONTROL_WRITABLE = 0b1_0001
 
-EXPECTED_VERSION = dict(version=1, lanes=4, beat_bits=9, columns=8, latency=24)
+EXPECTED_VERSION = dict(version=1, lanes=4, beat_bits=9, columns=8)
+# Pipeline depth of the transform, informational: the 2026-08-27 BxBFFT v6
+# build registered the finish stage's offset/rounding add ahead of the
+# saturation mux and advertises 25 where every earlier build said 24. The
+# arithmetic and Q-format contract are unchanged (TRANSFORM_VERSION stays 1),
+# so the driver accepts either and reports which one it found. A depth
+# outside this set is a build this driver has never seen, and the same
+# refusal applies.
+ACCEPTED_LATENCIES = (24, 25)
 EXPECTED_FORMAT = dict(in_frac=15, out_frac_rad=13, c_frac=12, off_frac=4,
                        guard=10, recip_frac=22)
 EXPECTED_FORMAT2 = dict(lut_addr_bits=8, mant_bits=24, c_bits=27, off_bits=24,
@@ -194,7 +202,11 @@ class IQTransform(DefaultIP):
         expect.update(EXPECTED_VERSION)
         expect.update(EXPECTED_FORMAT)
         expect.update(EXPECTED_FORMAT2)
-        bad = {k: (v, expect[k]) for k, v in got.items() if v != expect[k]}
+        bad = {k: (v, expect[k]) for k, v in got.items()
+               if k in expect and v != expect[k]}
+        if got['latency'] not in ACCEPTED_LATENCIES:
+            bad['latency'] = (got['latency'],
+                              ' or '.join(map(str, ACCEPTED_LATENCIES)))
         if bad:
             detail = ', '.join(f'{k}={v} (expected {e})'
                                for k, (v, e) in sorted(bad.items()))
